@@ -1,13 +1,68 @@
-Character Select+:
+# **Character Select+**   
+**Effortless OC Switching at the Click of a Button**  
 
-Are you tired of the constant back and forth it takes to swap between your OCs? Switching between Penumbra, Glamourer, Customize, and Honorifics just to get everything set up the way you want? The Character Select+ turns all of this into a one-click automated swap—no hassle, no wasted time.
+Do you have multiple OCs and get frustrated switching between them manually?  
+Constantly reapplying settings, adjusting profiles, and trying to keep everything organized?  
 
-•    Instantly swap between your OCs with a single click!
+With **Character Select+**, all of this is handled **instantly**—no hassle, no wasted time.  
 
-•    Works with Penumbra Collections, Glamourer Designs, Customize Profiles, Honorifics, Job switching, and even what idles stances (which cpose for standing, sitting, etc.)
+---
 
-•    Choose between a radial menu or a hotbar setup —whichever best fits your playstyle and aesthetic
+## **Features**  
+Character Select+ provides a **one-click solution** for swapping between your OCs.  
 
-•    Perfect for role-players & multi-OC users
+### 🔹 **Core Features**  
+- ✅ **One-Click Character Swaps** – Automatically applies all saved settings.  
+- ✅ **Fully Manages:**  
+  - 🔹 **Penumbra Collections**  
+  - 🔹 **Glamourer Designs**  
+  - 🔹 **Customize+ Profiles**  
+  - 🔹 **Honorifics**  
+- ✅ **Sorting Options** – Organize by **favorites, alphabetical, most recent, or oldest**.  
+- ✅ **Advanced Mode** – Customize macros for additional control.  
 
-With the Character Select+, you can seamlessly swap between characters, adjust their aesthetics, and fine-tune every detail without breaking immersion or getting lost in menus. Whether you’re deep in roleplay, managing multiple OCs, or just want a faster, more efficient way to customize, this makes it all effortless.
+🔹 **Perfect for Role-players & Multi-OC Users** – Quickly swap between characters without navigating multiple menus.  
+
+---
+
+## **How It Works**  
+With **Character Select+**, you can:  
+🔹 **Save multiple characters** with their unique settings.  
+🔹 **Instantly swap between them** with a single click.  
+🔹 **Fine-tune every detail** in the editor, from visual elements to macro commands.  
+
+---
+
+## **Settings & Customization**  
+- **Profile Display Options:** Adjust icon size, spacing, and layout.  
+- **Favorite Your OCs:** Keep frequently used characters at the top.  
+- **Advanced Mode:** Customize macros manually for even more control.  
+- **Edit & Update On the Fly:** Modify character setups.  
+
+---
+
+## **Why Character Select+?**  
+### **Before:**  
+- Manually switching between character setups.  
+- Wasting time adjusting settings in menus.  
+
+### **After:**  
+✔ A **single button press** applies everything instantly.  
+✔ Just **play and enjoy**—without breaking immersion.  
+
+---
+
+## **Preview**  
+*(Insert screenshots or GIFs here to showcase the UI!)*  
+
+---
+
+## **Installation**  
+🔹 **Coming Soon** – This plugin is currently in private distribution.  
+
+---
+
+## **🔒 Availability**  
+Character Select+ is **privately distributed** and requires access approval.  
+
+**For inquiries, contact Kid Icarus.**  
