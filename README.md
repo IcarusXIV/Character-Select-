@@ -1,4 +1,5 @@
 Character Select+:
+
 Are you tired of the constant back and forth it takes to swap between your OCs? Switching between Penumbra, Glamourer, Customize, and Honorifics just to get everything set up the way you want? The Character Select+ turns all of this into a one-click automated swap—no hassle, no wasted time.
 
 •    Instantly swap between your OCs with a single click!
