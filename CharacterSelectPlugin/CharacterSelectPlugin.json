@@ -1,0 +1,21 @@
+{
+  "Author": "Kid Icarus",
+  "Name": "Character Select+",
+  "InternalName": "CharacterSelectPlugin",
+  "AssemblyVersion": "1.0",
+  "Description": "Character Select+ allows you to create, save, and instantly apply fully customized character profiles with the press of a button. Switch between your OCs effortlessly using /select CharacterName, applying Penumbra Collections, Glamourer Designs, Customize+ Profiles, and Honorific Titles in one command.\n\nWhile profile switching is its core purpose, Character Select+ includes additional features:\n✔ Advanced Mode – Create custom macro setups for deeper character customization.\n✔ Profile-Specific Designs – Use multiple outfits, styles, and looks per character.\n✔ Favorites & Sorting – Keep profiles organized by name, date, or importance.\n✔ Optional Auto-Switch on Job Change (Planned Feature!)\n✔ One-Click Macro Execution – Run predefined commands instantly when selecting a character.\n\nWhether you're roleplaying, gposing, or just love quick customization, Character Select+ makes switching between characters faster, easier, and seamless.\n\nCommand Prefix: /select\n/select [CharacterName]\n/select [CharacterName] [DesignName]\n",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "character",
+    "select",
+    "ocs"
+  ],
+  "DalamudApiLevel": 11,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "Punchline": "Swap between your OCs with a single click",
+  "AcceptsFeedback": true,
+  "IconUrl": ""
+}
