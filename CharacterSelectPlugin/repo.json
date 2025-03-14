@@ -1,0 +1,18 @@
+{
+    "Author": "Kid Icarus",
+    "Name": "Character Select+",
+    "Punchline": "Swap between your OCs with a single click",
+    "Description": "Character Select+ allows you to create, save, and instantly apply fully customized character profiles with the press of a button.",
+    "InternalName": "CharacterSelectPlugin",
+    "AssemblyVersion": "1.0.0",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/repo.json",
+    "DownloadUrl": "https://github.com/IcarusXIV/Character-Select-/releases/latest/download/CharacterSelectPlugin.zip",
+    "IconUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/Assets/Default.png",
+    "Tags": ["character", "select", "ocs"],
+    "DalamudApiLevel": 11,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0
+}
