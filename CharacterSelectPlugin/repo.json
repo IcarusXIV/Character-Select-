@@ -7,7 +7,7 @@
     "AssemblyVersion": "1.0.0",
     "ApplicableVersion": "any",
     "RepoUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/repo.json",
-    "DownloadUrl": "https://github.com/IcarusXIV/Character-Select-/releases/latest/download/CharacterSelectPlugin.zip",
+    "DownloadUrl": "https://github.com/IcarusXIV/Character-Select-/releases/download/v1.0/CharacterSelectPlugin.zip",
     "IconUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/Assets/Default.png",
     "Tags": ["character", "select", "ocs"],
     "DalamudApiLevel": 11,
