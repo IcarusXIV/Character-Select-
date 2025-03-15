@@ -51,6 +51,7 @@ namespace CharacterSelectPlugin
         private List<string> knownHonorifics = new List<string>();
 
 
+
         public bool IsAddCharacterWindowOpen { get; set; } = false;
         // 🔹 Settings Variables
         public bool IsSettingsOpen { get; set; } = false;  // Tracks if settings panel is open
@@ -64,6 +65,20 @@ namespace CharacterSelectPlugin
         {
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
+            
+            try
+            {
+                var assembly = System.Reflection.Assembly.Load("System.Windows.Forms");
+                if (assembly != null)
+                {
+                    Plugin.Log.Info("✅ System.Windows.Forms successfully loaded.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"❌ Failed to load System.Windows.Forms: {ex.Message}");
+            }
+
 
 
             // Initialize the MainWindow and ConfigWindow properly

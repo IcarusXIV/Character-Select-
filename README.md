@@ -7,6 +7,9 @@ Constantly reapplying settings, adjusting profiles, and trying to keep everythin
 With **Character Select+**, all of this is handled **instantly**—no hassle, no wasted time.  
 
 ---
+## **Installation**  
+🔹 https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/CharacterSelectPlugin/repo.json
+---
 
 ## **Features**  
 Character Select+ provides a **one-click solution** for swapping between your OCs.  
@@ -19,7 +22,8 @@ Character Select+ provides a **one-click solution** for swapping between your OC
   - 🔹 **Customize+ Profiles**  
   - 🔹 **Honorifics**  
 - ✅ **Sorting Options** – Organize by **favorites, alphabetical, most recent, or oldest**.  
-- ✅ **Advanced Mode** – Customize macros for additional control.  
+- ✅ **Advanced Mode** – Customize macros for additional control.
+- ✅ **Commands** – use chat commands to swap between Characters & Designs.  
 
 🔹 **Perfect for Role-players & Multi-OC Users** – Quickly swap between characters without navigating multiple menus.  
 
@@ -55,14 +59,11 @@ With **Character Select+**, you can:
 ## **Preview**  
 *(Insert screenshots or GIFs here to showcase the UI!)*  
 
----
+## **Support Character Select+**  
+If you love **Character Select+** and would like to show your support, you can do so here:  
 
-## **Installation**  
-🔹 **Coming Soon** – This plugin is currently in private distribution.  
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/icarusxiv)  
 
----
-
-## **🔒 Availability**  
-Character Select+ is **privately distributed** and requires access approval.  
+Any support is very appreciated and helps keep the plugin updated and improves future features! 💙
 
 **For inquiries, contact Kid Icarus.**  

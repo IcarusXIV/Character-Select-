@@ -17,6 +17,9 @@
             <Visible>false</Visible>
         </Content>
     </ItemGroup>
+    <ItemGroup>
+        <Reference Include="System.Windows.Forms" />
+    </ItemGroup>
 
     <ItemGroup>
         <Folder Include="Header Files\" />

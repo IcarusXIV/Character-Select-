@@ -1303,53 +1303,55 @@ if (isAdvancedModeCharacter)
             character.PenumbraCollection = editedCharacterPenumbra;
             character.GlamourerDesign = editedCharacterGlamourer;
             character.CustomizeProfile = editedCharacterCustomize;
+
             // 🔹 Store old honorific before updating
             string oldHonorific = character.Honorific;
 
             // 🔹 Update to the new honorific
             character.Honorific = editedCharacterHonorific;
 
-            // 🔹 Check if an honorific was removed
-            if (!string.IsNullOrWhiteSpace(oldHonorific) && string.IsNullOrWhiteSpace(editedCharacterHonorific))
-            {
-                // 🔹 See if ANY character is still using the removed honorific
-                bool stillUsed = plugin.Characters.Any(c => c.Honorific == oldHonorific);
-
-                if (!stillUsed)
-                {
-                    // 🔹 Remove from known honorifics if no other character uses it
-                    knownHonorifics.Remove(oldHonorific);
-
-                    // 🔹 Update all character macros to remove disable lines for this honorific
-                    foreach (var c in plugin.Characters)
-                    {
-                        c.Macros = GenerateMacro();
-                    }
-                }
-            }
-
-            character.NameplateColor = editedCharacterColor;
-
-            // ✅ Preserve Advanced Mode Text if it exists
-            if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(character.Macros))
-            {
-                character.Macros = advancedCharacterMacroText; // ✅ Save Advanced Mode changes ONLY if already in use
-            }
-            else if (!isAdvancedModeCharacter)
-            {
-                character.Macros = editedCharacterMacros; // ✅ Otherwise, save normal macro edits
-            }
-
-            // 🔹 FIX: Save selected image properly without removing core functions
-            if (!string.IsNullOrEmpty(editedCharacterImagePath))
-            {
-                character.ImagePath = editedCharacterImagePath;
-            }
+            // 🔹 If a new honorific was added, ensure it's stored in knownHonorifics
             if (!string.IsNullOrWhiteSpace(editedCharacterHonorific))
             {
                 knownHonorifics.Add(editedCharacterHonorific);
             }
 
+            // 🔹 Check if an honorific was removed (i.e., it had one before but is now empty)
+            if (!string.IsNullOrWhiteSpace(oldHonorific) && string.IsNullOrWhiteSpace(editedCharacterHonorific))
+            {
+                // 🔹 Check if ANY other character is still using the removed honorific
+                bool stillUsed = plugin.Characters.Any(c => c.Honorific == oldHonorific);
+
+                if (!stillUsed)
+                {
+                    // 🔹 Remove it from knownHonorifics if no other character has it
+                    knownHonorifics.Remove(oldHonorific);
+                }
+            }
+
+            // 🔹 Update **all** characters' macros to ensure honorific changes are reflected everywhere
+            foreach (var c in plugin.Characters)
+            {
+                c.Macros = GenerateMacro();
+            }
+
+            character.NameplateColor = editedCharacterColor;
+
+            // ✅ If Advanced Mode is ON, use custom macro text. Otherwise, regenerate macro.
+            if (isAdvancedModeCharacter)
+            {
+                character.Macros = advancedCharacterMacroText;
+            }
+            else
+            {
+                character.Macros = GenerateMacro();  // 🔹 Regenerate macro for normal mode!
+            }
+
+            // ✅ Ensure new image is saved if changed
+            if (!string.IsNullOrEmpty(editedCharacterImagePath))
+            {
+                character.ImagePath = editedCharacterImagePath;
+            }
 
             plugin.SaveConfiguration();
             isEditCharacterWindowOpen = false;
