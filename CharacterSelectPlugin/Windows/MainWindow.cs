@@ -569,26 +569,41 @@ if (isAdvancedModeCharacter)
 
             if (ImGui.Button("Choose Image"))
             {
-                Thread thread = new Thread(() =>
+                try
                 {
-                    using (OpenFileDialog openFileDialog = new OpenFileDialog())
+                    Thread thread = new Thread(() =>
                     {
-                        openFileDialog.Filter = "PNG files (*.png)|*.png";
-                        openFileDialog.Title = "Select Character Image";
-
-                        if (openFileDialog.ShowDialog() == DialogResult.OK)
+                        try
                         {
-                            lock (this) // ✅ Prevent threading issues
+                            using (OpenFileDialog openFileDialog = new OpenFileDialog())
                             {
-                                pendingImagePath = openFileDialog.FileName; // ✅ Store path to apply next frame
+                                openFileDialog.Filter = "PNG files (*.png)|*.png";
+                                openFileDialog.Title = "Select Character Image";
+
+                                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                                {
+                                    lock (this) // Prevent race conditions
+                                    {
+                                        pendingImagePath = openFileDialog.FileName;
+                                    }
+                                }
                             }
                         }
-                    }
-                });
+                        catch (Exception ex)
+                        {
+                            Plugin.Log.Error($"Error opening file picker: {ex.Message}");
+                        }
+                    });
 
-                thread.SetApartmentState(ApartmentState.STA); // ✅ Required for OpenFileDialog
-                thread.Start(); // ✅ Run in a separate thread to prevent freezing
+                    thread.SetApartmentState(ApartmentState.STA); // Required for OpenFileDialog
+                    thread.Start();
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error($"Critical file picker error: {ex.Message}");
+                }
             }
+
 
 
 
