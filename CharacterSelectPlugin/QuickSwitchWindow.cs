@@ -160,15 +160,11 @@ namespace CharacterSelectPlugin.Windows
             {
                 var character = plugin.Characters[selectedCharacterIndex];
 
-                if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
-                {
-                    plugin.ExecuteMacro(character.Designs[selectedDesignIndex].Macro);
-                }
-                else
-                {
-                    plugin.ExecuteMacro(character.Macros);
-                }
+                // ✅ Call the exact method used in the Main Window
+                plugin.ApplyProfile(character, selectedDesignIndex);
             }
         }
+
     }
 }
+

@@ -119,8 +119,8 @@ namespace CharacterSelectPlugin.Windows
             currentSort = (SortType)plugin.Configuration.CurrentSortIndex;
             SortCharacters(); // ✅ Apply sorting on startup
                               // 🔹 Gather all existing honorifics at startup
-            
-            
+
+
 
         }
 
@@ -166,13 +166,22 @@ namespace CharacterSelectPlugin.Windows
             // 🔹 Ensure proper bottom-left alignment
             ImGui.SetCursorPos(new Vector2(10, ImGui.GetWindowHeight() - 30));
 
-            // 🔹 Use a gear icon for better UI clarity
+            // 🔹 Settings Button (⚙)
             ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button("\uf013")) // ⚙ Gear icon with NO extra text
+            if (ImGui.Button("\uf013")) // ⚙ Gear icon (Settings)
             {
                 plugin.IsSettingsOpen = !plugin.IsSettingsOpen;
             }
             ImGui.PopFont();
+
+            ImGui.SameLine(); // ✅ Forces the next item to be in the same line
+
+            // 🔹 Quick Switch Button (🌀)
+            if (ImGui.Button("Quick Switch"))
+            {
+                plugin.QuickSwitchWindow.IsOpen = !plugin.QuickSwitchWindow.IsOpen; // ✅ Toggle Quick Switch Window
+            }
+
             if (plugin.IsSettingsOpen)
             {
                 ImGui.SetNextWindowSize(new Vector2(300, 180), ImGuiCond.FirstUseEver); // ✅ Adjusted for new setting
@@ -537,7 +546,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.EndTooltip();
             }
 
-            
+
 
             ImGui.Separator();
 

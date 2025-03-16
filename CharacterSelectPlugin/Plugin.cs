@@ -32,7 +32,7 @@ namespace CharacterSelectPlugin
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
         private ConfigWindow ConfigWindow { get; init; }
         private MainWindow MainWindow { get; init; }
-        private QuickSwitchWindow QuickSwitchWindow { get; init; } // ✅ New Quick Switch Window
+        public QuickSwitchWindow QuickSwitchWindow { get; init; } // ✅ New Quick Switch Window
 
 
         // Character data storage
@@ -49,6 +49,7 @@ namespace CharacterSelectPlugin
         public string NewCustomizeProfile { get; set; } = "";
         public string PluginPath => PluginInterface.GetPluginConfigDirectory();
         public string PluginDirectory => PluginInterface.AssemblyLocation.DirectoryName ?? "";
+
 
 
 
@@ -117,6 +118,20 @@ namespace CharacterSelectPlugin
         {
             QuickSwitchWindow.IsOpen = !QuickSwitchWindow.IsOpen; // ✅ Toggle Window On/Off
         }
+        public void ApplyProfile(Character character, int designIndex)
+        {
+            if (character == null) return;
+
+            // ✅ Apply the character's macro
+            ExecuteMacro(character.Macros);
+
+            // ✅ If a design is selected, apply that too
+            if (designIndex >= 0 && designIndex < character.Designs.Count)
+            {
+                ExecuteMacro(character.Designs[designIndex].Macro);
+            }
+        }
+
 
 
         private void EnsureConfigurationDefaults()
