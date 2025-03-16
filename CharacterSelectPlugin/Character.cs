@@ -14,7 +14,6 @@ namespace CharacterSelectPlugin
         public string PenumbraCollection { get; set; } = "";
         public string GlamourerDesign { get; set; } = "";
         public string CustomizeProfile { get; set; } = "";
-        public string Honorific { get; set; } = "";
         public bool IsFavorite { get; set; } = false; // Allows favoriting
         public DateTime DateAdded { get; set; } = DateTime.Now; // Tracks when the character was added
         public int SortOrder { get; set; } = 0; // Tracks manual drag-drop order
@@ -28,8 +27,7 @@ namespace CharacterSelectPlugin
             Vector3 nameplateColor,
             string penumbraCollection,
             string glamourerDesign,
-            string customizeProfile,
-            string honorific)
+            string customizeProfile)
         {
             Name = name;
             Macros = macros ?? ""; // ✅ Prevents null macros
@@ -39,7 +37,6 @@ namespace CharacterSelectPlugin
             PenumbraCollection = penumbraCollection;
             GlamourerDesign = glamourerDesign;
             CustomizeProfile = customizeProfile;
-            Honorific = honorific;
         }
     }
 

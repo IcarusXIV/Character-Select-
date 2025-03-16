@@ -32,6 +32,8 @@ namespace CharacterSelectPlugin
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
         private ConfigWindow ConfigWindow { get; init; }
         private MainWindow MainWindow { get; init; }
+        private QuickSwitchWindow QuickSwitchWindow { get; init; } // ✅ New Quick Switch Window
+
 
         // Character data storage
         public List<Character> Characters => Configuration.Characters;
@@ -45,10 +47,8 @@ namespace CharacterSelectPlugin
         public string NewPenumbraCollection { get; set; } = "";
         public string NewGlamourerDesign { get; set; } = "";
         public string NewCustomizeProfile { get; set; } = "";
-        public string NewHonorific { get; set; } = "";
         public string PluginPath => PluginInterface.GetPluginConfigDirectory();
         public string PluginDirectory => PluginInterface.AssemblyLocation.DirectoryName ?? "";
-        private List<string> knownHonorifics = new List<string>();
 
 
 
@@ -65,7 +65,7 @@ namespace CharacterSelectPlugin
         {
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
-            
+
             try
             {
                 var assembly = System.Reflection.Assembly.Load("System.Windows.Forms");
@@ -84,25 +84,40 @@ namespace CharacterSelectPlugin
             // Initialize the MainWindow and ConfigWindow properly
             MainWindow = new MainWindow(this);
             ConfigWindow = new ConfigWindow(this);
+            QuickSwitchWindow = new QuickSwitchWindow(this); // ✅ Add Quick Switch Window
+
 
             WindowSystem.AddWindow(ConfigWindow);
             WindowSystem.AddWindow(MainWindow);
+            WindowSystem.AddWindow(QuickSwitchWindow); // ✅ Register the Quick Switch Window
+
+
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
             {
                 HelpMessage = "Opens the Character Select+ UI"
             });
+            CommandManager.AddHandler("/selectswitch", new CommandInfo(OnQuickSwitchCommand)
+            {
+                HelpMessage = "Opens the Quick Character Switcher UI."
+            });
+
 
             PluginInterface.UiBuilder.Draw += DrawUI;
             PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
-            
+
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
             {
                 HelpMessage = "Use /select <Character Name> to apply a profile."
             });
 
         }
+        private void OnQuickSwitchCommand(string command, string args)
+        {
+            QuickSwitchWindow.IsOpen = !QuickSwitchWindow.IsOpen; // ✅ Toggle Window On/Off
+        }
+
 
         private void EnsureConfigurationDefaults()
         {
@@ -252,18 +267,26 @@ namespace CharacterSelectPlugin
                     NewCharacterColor,
                     NewPenumbraCollection,
                     NewGlamourerDesign,
-                    NewCustomizeProfile,
-                    NewHonorific
+                    NewCustomizeProfile
                 );
 
-                Configuration.Characters.Add(newCharacter);
-
-                // ✅ Update known honorifics list when a new character is added
-                if (!string.IsNullOrWhiteSpace(NewHonorific) && !knownHonorifics.Contains(NewHonorific))
+                // ✅ Auto-create a Design based on Glamourer Design if available
+                if (!string.IsNullOrWhiteSpace(NewGlamourerDesign))
                 {
-                    knownHonorifics.Add(NewHonorific);
+                    string defaultDesignName = $"{NewCharacterName} {NewGlamourerDesign}";
+                    string defaultMacro = $"/glamour apply {NewGlamourerDesign} | self\n/penumbra redraw self";
+
+                    var defaultDesign = new CharacterDesign(
+                        defaultDesignName,
+                        defaultMacro,
+                        false,  // Not in Advanced Mode
+                        ""
+                    );
+
+                    newCharacter.Designs.Add(defaultDesign); // ✅ Automatically add the default design
                 }
 
+                Configuration.Characters.Add(newCharacter);
                 SaveConfiguration();
 
                 // ✅ Reset Fields AFTER Saving
@@ -274,9 +297,9 @@ namespace CharacterSelectPlugin
                 NewPenumbraCollection = "";
                 NewGlamourerDesign = "";
                 NewCustomizeProfile = "";
-                NewHonorific = "";
             }
         }
+
 
 
 
@@ -292,7 +315,6 @@ namespace CharacterSelectPlugin
             NewPenumbraCollection = "";
             NewGlamourerDesign = "";
             NewCustomizeProfile = "";
-            NewHonorific = "";
         }
 
 
