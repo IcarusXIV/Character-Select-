@@ -57,7 +57,8 @@ With **Character Select+**, you can:
 ---
 
 ## **Preview**  
-*(Insert screenshots or GIFs here to showcase the UI!)*  
+![Character Select UI](https://github.com/user-attachments/assets/783fb4a4-0385-47da-a336-ab12235e8005)
+
 
 ## **Support Character Select+**  
 If you love **Character Select+** and would like to show your support, you can do so here:  
