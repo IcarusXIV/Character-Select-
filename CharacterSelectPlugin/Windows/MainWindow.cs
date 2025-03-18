@@ -109,7 +109,7 @@ namespace CharacterSelectPlugin.Windows
         {
             SizeConstraints = new WindowSizeConstraints
             {
-                MinimumSize = new Vector2(600, 700),
+                MinimumSize = new Vector2(850, 700),
                 MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
             };
 

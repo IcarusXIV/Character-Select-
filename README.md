@@ -19,8 +19,7 @@ Character Select+ provides a **one-click solution** for swapping between your OC
 - ✅ **Fully Manages:**  
   - 🔹 **Penumbra Collections**  
   - 🔹 **Glamourer Designs**  
-  - 🔹 **Customize+ Profiles**  
-  - 🔹 **Honorifics**  
+  - 🔹 **Customize+ Profiles** 
 - ✅ **Sorting Options** – Organize by **favorites, alphabetical, most recent, or oldest**.  
 - ✅ **Advanced Mode** – Customize macros for additional control.
 - ✅ **Commands** – use chat commands to swap between Characters & Designs.  
@@ -57,7 +56,8 @@ With **Character Select+**, you can:
 ---
 
 ## **Preview**  
-*(Insert screenshots or GIFs here to showcase the UI!)*  
+![Character Select UI](https://github.com/user-attachments/assets/783fb4a4-0385-47da-a336-ab12235e8005)
+
 
 ## **Support Character Select+**  
 If you love **Character Select+** and would like to show your support, you can do so here:  
