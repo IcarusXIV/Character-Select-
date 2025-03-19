@@ -10,7 +10,7 @@
     "InternalName": "CharacterSelectPlugin",
     "AssemblyVersion": "1.0.0.6",
     "TestingAssemblyVersion": "1.0.0.6",
-    "RepoUrl": "https://githubusercontent.com/IcarusXIV/Character-Select-",
+    "RepoUrl": "https://github.com/IcarusXIV/Character-Select-",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 11,
     "IsHide": "False",
