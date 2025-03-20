@@ -10,6 +10,10 @@ With **Character Select+**, all of this is handled **instantly**—no hassle, no
 ## **Installation**  
 🔹 https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/CharacterSelectPlugin/repo.json
 ---
+---
+## **Discord**  
+🔹 https://discord.gg/CQmH4X6h
+---
 
 ## **Features**  
 Character Select+ provides a **one-click solution** for swapping between your OCs.  
