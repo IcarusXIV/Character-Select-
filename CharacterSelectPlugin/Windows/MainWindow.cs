@@ -806,18 +806,28 @@ if (isAdvancedModeCharacter)
                 ImGuiWindowFlags.HorizontalScrollbar | ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
             // ✅ Begin column layout
-            ImGui.Columns(columnCount, "CharacterGrid", false);
+            if (columnCount > 1)
+            {
+                ImGui.Columns(columnCount, "CharacterGrid", false);
+            }
 
             for (int i = 0; i < plugin.Characters.Count; i++)
             {
                 var character = plugin.Characters[i];
 
                 // ✅ Ensure column width is properly set
-                ImGui.SetColumnWidth(i % columnCount, columnWidth);
+                if (columnCount > 1)
+                {
+                    int colIndex = i % columnCount;
+                    if (colIndex >= 0 && colIndex < ImGui.GetColumnsCount())
+                    {
+                        ImGui.SetColumnWidth(colIndex, columnWidth);
+                    }
+                }
 
                 // ✅ Image Scaling
                 float scale = plugin.ProfileImageScale;
-                float maxSize = 250 * scale;
+                float maxSize = Math.Clamp(250 * scale, 64, 512); // ✅ Prevents excessive scaling
                 float nameplateHeight = 30;
 
                 float displayWidth, displayHeight;
@@ -926,7 +936,11 @@ if (isAdvancedModeCharacter)
                 ImGui.NextColumn(); // ✅ Move to next column properly
             }
 
-            ImGui.Columns(1); // ✅ Ensure proper column closure
+            if (columnCount > 1)
+            {
+                ImGui.Columns(1);
+            }
+
             ImGui.EndChild(); // ✅ Close Outer Scrollable Container
         }
 

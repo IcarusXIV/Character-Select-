@@ -30,7 +30,6 @@ namespace CharacterSelectPlugin
 
         public Configuration Configuration { get; init; }
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
-        private ConfigWindow ConfigWindow { get; init; }
         private MainWindow MainWindow { get; init; }
         public QuickSwitchWindow QuickSwitchWindow { get; init; } // ✅ New Quick Switch Window
 
@@ -84,11 +83,9 @@ namespace CharacterSelectPlugin
 
             // Initialize the MainWindow and ConfigWindow properly
             MainWindow = new MainWindow(this);
-            ConfigWindow = new ConfigWindow(this);
             QuickSwitchWindow = new QuickSwitchWindow(this); // ✅ Add Quick Switch Window
 
 
-            WindowSystem.AddWindow(ConfigWindow);
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(QuickSwitchWindow); // ✅ Register the Quick Switch Window
 
@@ -105,7 +102,7 @@ namespace CharacterSelectPlugin
 
 
             PluginInterface.UiBuilder.Draw += DrawUI;
-            PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
+            PluginInterface.UiBuilder.OpenConfigUi += ToggleQuickSwitchUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
@@ -195,7 +192,6 @@ namespace CharacterSelectPlugin
         public void Dispose()
         {
             WindowSystem.RemoveAllWindows();
-            ConfigWindow.Dispose();
             MainWindow.Dispose();
             CommandManager.RemoveHandler(CommandName);
         }
@@ -262,7 +258,7 @@ namespace CharacterSelectPlugin
 
         private void DrawUI() => WindowSystem.Draw();
 
-        public void ToggleConfigUI() => ConfigWindow.Toggle();
+        public void ToggleQuickSwitchUI() => QuickSwitchWindow.Toggle();
         public void ToggleMainUI() => MainWindow.Toggle();
 
         public void OpenAddCharacterWindow()
