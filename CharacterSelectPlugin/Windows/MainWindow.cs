@@ -816,9 +816,8 @@ namespace CharacterSelectPlugin.Windows
             // Poses start from index 0
             string[] poseOptions = { "None", "0", "1", "2", "3", "4", "5", "6" };
             int idlePoseIndex = isEditCharacterWindowOpen
-                ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
+                ? (plugin.Characters[selectedCharacterIndex].IdlePoseIndex == 0 ? 7 : plugin.Characters[selectedCharacterIndex].IdlePoseIndex)
                 : (plugin.NewCharacterIdlePoseIndex == 0 ? 7 : plugin.NewCharacterIdlePoseIndex);
-
 
             if (ImGui.BeginCombo("##IdlePoseDropdown", idlePoseIndex == 7 ? "None" : idlePoseIndex.ToString()))
             {
@@ -833,9 +832,28 @@ namespace CharacterSelectPlugin.Windows
                             idlePoseIndex = i - 1;
 
                         if (isEditCharacterWindowOpen)
-                            plugin.Characters[selectedCharacterIndex].IdlePoseIndex = (byte)idlePoseIndex;
+                        {
+                            if (plugin.Characters[selectedCharacterIndex].IdlePoseIndex != (byte)idlePoseIndex)
+                            {
+                                plugin.Characters[selectedCharacterIndex].IdlePoseIndex = (byte)idlePoseIndex;
+                                if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                                {
+                                    advancedCharacterMacroText = GenerateMacro();
+                                }
+                            }
+                        }
                         else
-                            plugin.NewCharacterIdlePoseIndex = (byte)idlePoseIndex;
+                        {
+                            if (plugin.NewCharacterIdlePoseIndex != (byte)idlePoseIndex)
+                            {
+                                plugin.NewCharacterIdlePoseIndex = (byte)idlePoseIndex;
+                                if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                                {
+                                    plugin.NewCharacterMacros = advancedCharacterMacroText;
+                                }
+                            }
+                        }
+
                     }
 
                     if (isSelected)
@@ -858,10 +876,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.TextUnformatted("Choose 'None' if you don’t want Character Select+ to change your idle.");
                 ImGui.EndTooltip();
             }
-
-
-
-
 
             ImGui.Separator();
 
