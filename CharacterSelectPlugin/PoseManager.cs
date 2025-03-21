@@ -32,13 +32,6 @@ public unsafe class PoseManager
 
         // Apply CPoseState directly
         localChar->EmoteController.CPoseState = index;
-
-        // Refresh pose visually (optional but helpful)
-        commandManager.ProcessCommand("/cpose");
-        commandManager.ProcessCommand("/cpose");
-
-        // Confirm to chat
-        chatGui.Print($"[Character Select+] Applied pose {index} for {type}.");
     }
 
     public byte GetPose(EmoteController.PoseType type)

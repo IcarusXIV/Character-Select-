@@ -896,6 +896,23 @@ if (isAdvancedModeCharacter)
             }
 
             // ✅ Uses Advanced Mode if enabled
+            if (isEditCharacterWindowOpen)
+            {
+                // Warning Icon
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.2f, 1.0f), "\uf071"); // ⚠️ Icon in bright orange
+                ImGui.SameLine(0, 6);
+                ImGui.PopFont();
+
+                // Wrapped Warning Text
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + 600); // Adjust wrap width if needed
+                ImGui.TextColored(
+                    new Vector4(1.0f, 0.7f, 0.2f, 1.0f),
+                    "WARNING: If you're using Advanced Mode, be aware that editing any of the above fields will result in your macros being reset. Be sure to copy the macros you need before making any changes so you can paste them back in!"
+                );
+                ImGui.PopTextWrapPos();
+            }
+
 
 
             if (ImGui.Button("Choose Image"))
@@ -1065,17 +1082,6 @@ if (isAdvancedModeCharacter)
             // 🔹 Show Advanced Mode Editor When Enabled
             if (isAdvancedModeCharacter)
             {
-                // ⚠️ Only show this warning when editing an existing character
-                if (isEditCharacterWindowOpen)
-                {
-                    ImGui.PushFont(UiBuilder.IconFont);
-                    ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.5f, 1.0f), "\uf071"); // ⚠️ Icon
-                    ImGui.SameLine(0, 4); // 🔹 Reduce space between icon and text (adjust 4 as needed)
-                    ImGui.PopFont();
-                    ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.5f, 1.0f), "Warning: Editing the fields above will reset any changes you made to this macro!");
-
-                }
-
                 ImGui.Text("Edit Macro Manually:");
                 ImGui.InputTextMultiline("##AdvancedCharacterMacro", ref advancedCharacterMacroText, 2000, new Vector2(500, 150), ImGuiInputTextFlags.AllowTabInput);
             }
