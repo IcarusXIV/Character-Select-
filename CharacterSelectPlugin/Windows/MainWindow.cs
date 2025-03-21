@@ -44,6 +44,29 @@ namespace CharacterSelectPlugin.Windows
         private HashSet<string> knownHonorifics = new HashSet<string>();
         private string originalDesignName = ""; // Stores the original name before editing
         private bool isAdvancedModeWindowOpen = false; // Tracks if Advanced Mode window is open
+                                                       // 🔹 Honorific Fields
+        private string tempHonorificTitle = "";
+        private string tempHonorificPrefix = "Prefix"; // Default to Prefix
+        private string tempHonorificSuffix = "Suffix"; // Default to Suffix
+        private Vector3 tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f); // Default to White
+        private Vector3 tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f); // Default to White
+
+        // For Editing Characters
+        private string editedCharacterHonorificTitle = "";
+        private string editedCharacterHonorificPrefix = "Prefix";
+        private string editedCharacterHonorificSuffix = "Suffix";
+        private Vector3 editedCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
+        private Vector3 editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+
+        //MOODLES
+        public string MoodlePreset { get; set; } = "";
+        // Temporary storage for Moodle preset input in Add/Edit Character window
+        private string tempMoodlePreset = "";
+
+        // Stores the selected Moodle preset for an edited character
+        private string editedCharacterMoodlePreset = "";
+
+
 
 
         // 🔹 Add Sorting Function
@@ -324,6 +347,18 @@ namespace CharacterSelectPlugin.Windows
             plugin.NewCustomizeProfile = "";
             plugin.NewCharacterImagePath = null;
             plugin.NewCharacterDesigns.Clear();
+            plugin.NewCharacterHonorificTitle = "";
+            plugin.NewCharacterHonorificPrefix = "Prefix";
+            plugin.NewCharacterHonorificSuffix = "Suffix";
+            plugin.NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f); // Default White
+            plugin.NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);  // Default White
+            plugin.NewCharacterMoodlePreset = ""; // ✅ RESET Moodle Preset
+            tempHonorificTitle = "";
+            tempHonorificPrefix = "Prefix";
+            tempHonorificSuffix = "Suffix";
+            tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
+            tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            tempMoodlePreset = ""; // ✅ RESET Temporary Moodle Preset
 
             // ✅ Fix: Preserve Advanced Mode Macro when Resetting Fields
             if (!isAdvancedModeCharacter)
@@ -550,6 +585,286 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Separator();
 
+            // 🔹 Honorific Title Section (Proper Alignment)
+            ImGui.SetCursorPosX(10);
+            ImGui.Text("Honorific Title");
+            ImGui.SameLine();
+
+            // Move cursor for input alignment
+            ImGui.SetCursorPosX(labelWidth + inputOffset);
+            ImGui.SetNextItemWidth(inputWidth);
+
+            // 🔹 Honorific Title Input (Fix)
+            if (ImGui.InputText("##HonorificTitle", ref tempHonorificTitle, 50))
+            {
+                if (isEditCharacterWindowOpen)
+                {
+                    if (editedCharacterHonorificTitle != tempHonorificTitle)
+                    {
+                        editedCharacterHonorificTitle = tempHonorificTitle;
+
+                        if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                        {
+                            advancedCharacterMacroText = GenerateMacro();
+                        }
+                    }
+                }
+                else
+                {
+                    if (plugin.NewCharacterHonorificTitle != tempHonorificTitle)
+                    {
+                        plugin.NewCharacterHonorificTitle = tempHonorificTitle;
+
+                        if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                        {
+                            plugin.NewCharacterMacros = advancedCharacterMacroText;
+                        }
+                    }
+                }
+            }
+
+            ImGui.SameLine();
+
+            // 🔹 Honorific Placement Dropdown (Prefix/Suffix)
+            ImGui.SetNextItemWidth(80);
+            if (ImGui.BeginCombo("##HonorificPlacement", tempHonorificPrefix)) // ✅ Use correct prefix variable
+            {
+                string[] options = { "Prefix", "Suffix" };
+                foreach (var option in options)
+                {
+                    bool isSelected = tempHonorificPrefix == option;
+                    if (ImGui.Selectable(option, isSelected))
+                    {
+                        tempHonorificPrefix = option; // ✅ Set value properly
+                        tempHonorificSuffix = option; // ✅ Ensure compatibility with macros
+
+                        if (isEditCharacterWindowOpen)
+                        {
+                            if (editedCharacterHonorificPrefix != tempHonorificPrefix || editedCharacterHonorificSuffix != tempHonorificSuffix)
+                            {
+                                editedCharacterHonorificPrefix = tempHonorificPrefix;
+                                editedCharacterHonorificSuffix = tempHonorificSuffix;
+
+                                if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                                {
+                                    advancedCharacterMacroText = GenerateMacro();
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (plugin.NewCharacterHonorificPrefix != tempHonorificPrefix || plugin.NewCharacterHonorificSuffix != tempHonorificSuffix)
+                            {
+                                plugin.NewCharacterHonorificPrefix = tempHonorificPrefix;
+                                plugin.NewCharacterHonorificSuffix = tempHonorificSuffix;
+
+                                if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                                {
+                                    plugin.NewCharacterMacros = advancedCharacterMacroText;
+                                }
+                            }
+                        }
+                    }
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+            ImGui.SameLine();
+
+            // 🔹 Honorific Color Picker (Fix)
+            ImGui.SetNextItemWidth(40);
+            if (ImGui.ColorEdit3("##HonorificColor", ref tempHonorificColor, ImGuiColorEditFlags.NoInputs))
+            {
+                if (isEditCharacterWindowOpen)
+                {
+                    if (editedCharacterHonorificColor != tempHonorificColor)
+                    {
+                        editedCharacterHonorificColor = tempHonorificColor;
+
+                        if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                        {
+                            advancedCharacterMacroText = GenerateMacro();
+                        }
+                    }
+                }
+                else
+                {
+                    if (plugin.NewCharacterHonorificColor != tempHonorificColor)
+                    {
+                        plugin.NewCharacterHonorificColor = tempHonorificColor;
+
+                        if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                        {
+                            plugin.NewCharacterMacros = advancedCharacterMacroText;
+                        }
+                    }
+                }
+            }
+
+            ImGui.SameLine();
+
+            // 🔹 Honorific Glow Picker (Fix)
+            ImGui.SetNextItemWidth(40);
+            if (ImGui.ColorEdit3("##HonorificGlow", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs))
+            {
+                if (isEditCharacterWindowOpen)
+                {
+                    if (editedCharacterHonorificGlow != tempHonorificGlow)
+                    {
+                        editedCharacterHonorificGlow = tempHonorificGlow;
+
+                        if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                        {
+                            advancedCharacterMacroText = GenerateMacro();
+                        }
+                    }
+                }
+                else
+                {
+                    if (plugin.NewCharacterHonorificGlow != tempHonorificGlow)
+                    {
+                        plugin.NewCharacterHonorificGlow = tempHonorificGlow;
+
+                        if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                        {
+                            plugin.NewCharacterMacros = advancedCharacterMacroText;
+                        }
+                    }
+                }
+            }
+
+
+            ImGui.SameLine();
+
+            // ℹ Tooltip for Honorific Title (Correctly Positioned)
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.Text("\uf05a");
+            ImGui.PopFont();
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(300);
+                ImGui.TextUnformatted("This will set a forced title when you switch to this character.");
+                ImGui.TextUnformatted("The dropdown selects if the title appears above (prefix) or below (suffix) your name in-game.");
+                ImGui.TextUnformatted("Use the Honorific plug-in’s 'Clear' button if you need to remove it.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+
+            ImGui.Separator();
+
+            // 🔹 Moodle Preset Input
+            ImGui.SetCursorPosX(10);
+            ImGui.Text("Moodle Preset");
+            ImGui.SameLine();
+
+            ImGui.SetCursorPosX(labelWidth + inputOffset);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputText("##MoodlePreset", ref tempMoodlePreset, 50);
+
+            // ✅ Update stored preset value
+            if (isEditCharacterWindowOpen)
+            {
+                if (editedCharacterMoodlePreset != tempMoodlePreset)
+                {
+                    editedCharacterMoodlePreset = tempMoodlePreset;
+                    if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                    {
+                        advancedCharacterMacroText = GenerateMacro();
+                    }
+                }
+            }
+            else
+            {
+                if (plugin.NewCharacterMoodlePreset != tempMoodlePreset)
+                {
+                    plugin.NewCharacterMoodlePreset = tempMoodlePreset;
+                    if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                    {
+                        plugin.NewCharacterMacros = advancedCharacterMacroText;
+                    }
+                }
+            }
+
+            // ℹ Tooltip for Moodle Preset
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.Text("\uf05a");
+            ImGui.PopFont();
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(300);
+                ImGui.TextUnformatted("Enter the Moodle preset name exactly as saved in the Moodle plugin.");
+                ImGui.TextUnformatted("Example: 'HappyFawn' will apply the preset named 'HappyFawn'.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+
+            ImGui.Separator();
+
+            // Idle Pose Dropdown (None + 0–6)
+            ImGui.SetCursorPosX(10);
+            ImGui.Text("Idle Pose");
+            ImGui.SameLine();
+
+            ImGui.SetCursorPosX(labelWidth + inputOffset);
+            ImGui.SetNextItemWidth(inputWidth);
+
+            // Poses start from index 0
+            string[] poseOptions = { "None", "0", "1", "2", "3", "4", "5", "6" };
+            int idlePoseIndex = isEditCharacterWindowOpen
+                ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
+                : (plugin.NewCharacterIdlePoseIndex == 0 ? 7 : plugin.NewCharacterIdlePoseIndex);
+
+
+            if (ImGui.BeginCombo("##IdlePoseDropdown", idlePoseIndex == 7 ? "None" : idlePoseIndex.ToString()))
+            {
+                for (int i = 0; i < poseOptions.Length; i++)
+                {
+                    bool isSelected = i == (idlePoseIndex == 7 ? 0 : idlePoseIndex + 1); // Shifted by 1 for "None"
+                    if (ImGui.Selectable(poseOptions[i], isSelected))
+                    {
+                        if (i == 0) // None selected
+                            idlePoseIndex = 7;
+                        else
+                            idlePoseIndex = i - 1;
+
+                        if (isEditCharacterWindowOpen)
+                            plugin.Characters[selectedCharacterIndex].IdlePoseIndex = (byte)idlePoseIndex;
+                        else
+                            plugin.NewCharacterIdlePoseIndex = (byte)idlePoseIndex;
+                    }
+
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+
+            // ℹ Tooltip Icon
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextUnformatted("\uf05a");
+            ImGui.PopFont();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.TextUnformatted("Sets your character's idle pose (0–6).");
+                ImGui.TextUnformatted("Choose 'None' if you don’t want Character Select+ to change your idle.");
+                ImGui.EndTooltip();
+            }
+
+
+
+
+
+            ImGui.Separator();
+
             if (isEditCharacterWindowOpen)
                 editedCharacterMacros = tempMacros;
             else
@@ -736,10 +1051,19 @@ if (isAdvancedModeCharacter)
             // 🔹 Show Advanced Mode Editor When Enabled
             if (isAdvancedModeCharacter)
             {
+                // ⚠️ Only show this warning when editing an existing character
+                if (isEditCharacterWindowOpen)
+                {
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.5f, 1.0f), "\uf071"); // ⚠️ Icon
+                    ImGui.SameLine(0, 4); // 🔹 Reduce space between icon and text (adjust 4 as needed)
+                    ImGui.PopFont();
+                    ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.5f, 1.0f), "Warning: Editing the fields above will reset any changes you made to this macro!");
+
+                }
 
                 ImGui.Text("Edit Macro Manually:");
                 ImGui.InputTextMultiline("##AdvancedCharacterMacro", ref advancedCharacterMacroText, 2000, new Vector2(500, 150), ImGuiInputTextFlags.AllowTabInput);
-
             }
             // Check if required fields are filled
             bool canSaveCharacter = !string.IsNullOrWhiteSpace(tempName) &&
@@ -994,26 +1318,58 @@ if (isAdvancedModeCharacter)
             string penumbra = isEditCharacterWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
             string glamourer = isEditCharacterWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
             string customize = isEditCharacterWindowOpen ? editedCharacterCustomize : plugin.NewCustomizeProfile;
+            string honorificTitle = isEditCharacterWindowOpen ? editedCharacterHonorificTitle : plugin.NewCharacterHonorificTitle;
+            string honorificPrefix = isEditCharacterWindowOpen ? editedCharacterHonorificPrefix : plugin.NewCharacterHonorificPrefix;
+            string honorificSuffix = isEditCharacterWindowOpen ? editedCharacterHonorificSuffix : plugin.NewCharacterHonorificSuffix;
+            Vector3 honorificColor = isEditCharacterWindowOpen ? editedCharacterHonorificColor : plugin.NewCharacterHonorificColor;
+            Vector3 honorificGlow = isEditCharacterWindowOpen ? editedCharacterHonorificGlow : plugin.NewCharacterHonorificGlow;
 
             if (string.IsNullOrWhiteSpace(penumbra) || string.IsNullOrWhiteSpace(glamourer))
-                return "/penumbra redraw self"; // Prevents blank macro
+                return "/penumbra redraw self";
 
             string macro = $"/penumbra collection individual | {penumbra} | self\n" +
-                           $"/glamour apply {glamourer} | self\n";
+                           $"/glamour apply {glamourer} | self\n" +
+                           "/customize profile disable <me>\n";
 
-            // 🔹 Always disable Customize+ before enabling a new profile
-            macro += "/customize profile disable <me>\n";
-
-            // 🔹 Add Customize+ profile if set
             if (!string.IsNullOrWhiteSpace(customize))
-            {
                 macro += $"/customize profile enable <me>, {customize}\n";
+
+            // ✅ Ensure honorific is always cleared before setting a new one
+            macro += "/honorific force clear\n";
+
+            // ✅ Apply Honorifics (Only if a title is provided)
+            if (!string.IsNullOrWhiteSpace(honorificTitle))
+            {
+                string colorHex = $"#{(int)(honorificColor.X * 255):X2}{(int)(honorificColor.Y * 255):X2}{(int)(honorificColor.Z * 255):X2}";
+                string glowHex = $"#{(int)(honorificGlow.X * 255):X2}{(int)(honorificGlow.Y * 255):X2}{(int)(honorificGlow.Z * 255):X2}";
+
+                macro += $"/honorific force set {honorificTitle} | {honorificPrefix} | {colorHex} | {glowHex}\n";
             }
+
+            // ✅ Always remove ALL existing Moodles before applying a new one
+            macro += "/moodle remove self preset all\n";
+
+            // 🔹 Apply Moodle Preset if set
+            string moodlePreset = isEditCharacterWindowOpen ? editedCharacterMoodlePreset : tempMoodlePreset;
+            if (!string.IsNullOrWhiteSpace(moodlePreset))
+            {
+                macro += $"/moodle apply self preset \"{moodlePreset}\"\n";
+            }
+            // Set idle pose only if not set to "None" (7)
+            int idlePose = isEditCharacterWindowOpen ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex : plugin.NewCharacterIdlePoseIndex;
+
+            if (idlePose != 7)
+            {
+                macro += $"/spose {idlePose}\n"; // ✅ Only apply idle command when an idle is chosen
+            }
+
 
             macro += "/penumbra redraw self";
 
             return macro;
         }
+
+
 
         // 🔹 Add ExtractGlamourerDesignFromMacro BELOW GenerateMacro()
         private string ExtractGlamourerDesignFromMacro(string macro)// Store old honorific before updating
@@ -1423,15 +1779,6 @@ if (isAdvancedModeCharacter)
             if (index < 0 || index >= plugin.Characters.Count)
                 return;
 
-            // 🔹 ✅ Force Close the Add Design Menu COMPLETELY
-            isEditDesignWindowOpen = false;
-            isAdvancedModeDesign = false;
-            isAdvancedModeWindowOpen = false; // ✅ Also close Advanced Mode pop-up
-            editedDesignName = "";
-            editedGlamourerDesign = "";
-            editedDesignMacro = "";
-            advancedDesignMacroText = "";
-
             selectedCharacterIndex = index;
             var character = plugin.Characters[index];
 
@@ -1446,6 +1793,28 @@ if (isAdvancedModeCharacter)
             editedCharacterMacros = character.Macros;
             editedCharacterImagePath = !string.IsNullOrEmpty(character.ImagePath) ? character.ImagePath : defaultImagePath;
 
+
+            // ✅ Load Honorific Fields Properly
+            editedCharacterHonorificTitle = character.HonorificTitle ?? "";
+            editedCharacterHonorificPrefix = character.HonorificPrefix ?? "Prefix";
+            editedCharacterHonorificSuffix = character.HonorificSuffix ?? "Suffix";
+            editedCharacterHonorificColor = character.HonorificColor;
+            editedCharacterHonorificGlow = character.HonorificGlow;
+            editedCharacterMoodlePreset = character.MoodlePreset;
+
+            // ✅ Check if MoodlePreset exists in older profiles
+            editedCharacterMoodlePreset = character.MoodlePreset ?? ""; // Prevents null values
+
+            character.IdlePoseIndex = plugin.Characters[selectedCharacterIndex].IdlePoseIndex;
+
+
+            tempHonorificTitle = editedCharacterHonorificTitle;
+            tempHonorificPrefix = editedCharacterHonorificPrefix;
+            tempHonorificSuffix = editedCharacterHonorificSuffix;
+            tempHonorificColor = editedCharacterHonorificColor;
+            tempHonorificGlow = editedCharacterHonorificGlow;
+            tempMoodlePreset = editedCharacterMoodlePreset;
+
             if (isAdvancedModeCharacter)
             {
                 advancedCharacterMacroText = !string.IsNullOrWhiteSpace(character.Macros)
@@ -1455,6 +1824,7 @@ if (isAdvancedModeCharacter)
 
             isEditCharacterWindowOpen = true;
         }
+
 
         private void SaveEditedCharacter()
         {
@@ -1469,10 +1839,21 @@ if (isAdvancedModeCharacter)
             character.CustomizeProfile = editedCharacterCustomize;
             character.NameplateColor = editedCharacterColor;
 
-            // ✅ If Advanced Mode is ON, use custom macro text. Otherwise, regenerate macro.
+            // ✅ Save Honorific Fields
+            character.HonorificTitle = editedCharacterHonorificTitle;
+            character.HonorificPrefix = editedCharacterHonorificPrefix;
+            character.HonorificSuffix = editedCharacterHonorificSuffix;
+            character.HonorificColor = editedCharacterHonorificColor;
+            character.HonorificGlow = editedCharacterHonorificGlow;
+            character.MoodlePreset = editedCharacterMoodlePreset;
+
+            // ✅ Ensure MoodlePreset is saved even if previously missing
+            character.MoodlePreset = string.IsNullOrWhiteSpace(editedCharacterMoodlePreset) ? "" : editedCharacterMoodlePreset;
+
+
+            // ✅ Ensure Macro Updates Correctly
             character.Macros = isAdvancedModeCharacter ? advancedCharacterMacroText : GenerateMacro();
 
-            // ✅ If the image path was changed, update it
             if (!string.IsNullOrEmpty(editedCharacterImagePath))
             {
                 character.ImagePath = editedCharacterImagePath;
@@ -1481,6 +1862,7 @@ if (isAdvancedModeCharacter)
             plugin.SaveConfiguration();
             isEditCharacterWindowOpen = false;
         }
+
 
     }
 }

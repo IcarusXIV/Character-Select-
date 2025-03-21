@@ -11,6 +11,8 @@ using ImGuiNET;
 using System.Linq;
 using Dalamud.Game.Gui;
 using System;
+using CharacterSelectPlugin.Managers;
+using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
 namespace CharacterSelectPlugin
 {
@@ -23,6 +25,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
         [PluginService] internal static IPluginLog Log { get; private set; } = null!;
         [PluginService] private static IChatGui ChatGui { get; set; } = null!;
+        [PluginService] internal static IFramework Framework { get; private set; } = null!;
 
 
 
@@ -48,6 +51,17 @@ namespace CharacterSelectPlugin
         public string NewCustomizeProfile { get; set; } = "";
         public string PluginPath => PluginInterface.GetPluginConfigDirectory();
         public string PluginDirectory => PluginInterface.AssemblyLocation.DirectoryName ?? "";
+        public string NewCharacterHonorificTitle { get; set; } = "";
+        public string NewCharacterHonorificPrefix { get; set; } = "";
+        public string NewCharacterHonorificSuffix { get; set; } = "";
+        public Vector3 NewCharacterHonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
+        public Vector3 NewCharacterHonorificGlow { get; set; } = new Vector3(0.0f, 0.0f, 0.0f); // Default to no glow
+        public string NewCharacterMoodlePreset { get; set; } = "";
+        public PoseManager PoseManager { get; private set; } = null!;
+        public byte NewCharacterIdlePoseIndex { get; set; } = 0;
+
+
+
 
 
 
@@ -79,7 +93,7 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Error($"❌ Failed to load System.Windows.Forms: {ex.Message}");
             }
 
-
+            PoseManager = new PoseManager(ClientState, Framework, ChatGui, CommandManager);
 
             // Initialize the MainWindow and ConfigWindow properly
             MainWindow = new MainWindow(this);
@@ -109,6 +123,22 @@ namespace CharacterSelectPlugin
             {
                 HelpMessage = "Use /select <Character Name> to apply a profile."
             });
+            CommandManager.AddHandler("/spose", new CommandInfo((_, args) =>
+            {
+                if (byte.TryParse(args, out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.Idle, poseIndex);
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Usage: /spose <0-6>");
+                }
+            })
+            {
+                HelpMessage = "Set your character’s Idle pose to a specific index."
+            });
+
+
 
         }
         private void OnQuickSwitchCommand(string command, string args)
@@ -126,6 +156,12 @@ namespace CharacterSelectPlugin
             if (designIndex >= 0 && designIndex < character.Designs.Count)
             {
                 ExecuteMacro(character.Designs[designIndex].Macro);
+            }
+
+            // ✅ Only apply idle pose if it's NOT "None"
+            if (character.IdlePoseIndex < 7)
+            {
+                PoseManager.ApplyPose(EmoteController.PoseType.Idle, character.IdlePoseIndex);
             }
         }
 
@@ -194,6 +230,8 @@ namespace CharacterSelectPlugin
             WindowSystem.RemoveAllWindows();
             MainWindow.Dispose();
             CommandManager.RemoveHandler(CommandName);
+            CommandManager.RemoveHandler("/spose");
+
         }
 
         private void OnCommand(string command, string args)
@@ -278,8 +316,19 @@ namespace CharacterSelectPlugin
                     NewCharacterColor,
                     NewPenumbraCollection,
                     NewGlamourerDesign,
-                    NewCustomizeProfile
-                );
+                    NewCustomizeProfile,
+
+                    // 🔹 Add Honorific Fields
+                    NewCharacterHonorificTitle,
+                    NewCharacterHonorificPrefix,
+                    NewCharacterHonorificSuffix,
+                    NewCharacterHonorificColor,
+                    NewCharacterHonorificGlow,
+                    NewCharacterMoodlePreset //MOODLES
+                )
+                {
+                    IdlePoseIndex = NewCharacterIdlePoseIndex // ✅ IdLES
+                };
 
                 // ✅ Auto-create a Design based on Glamourer Design if available
                 if (!string.IsNullOrWhiteSpace(NewGlamourerDesign))
@@ -308,26 +357,16 @@ namespace CharacterSelectPlugin
                 NewPenumbraCollection = "";
                 NewGlamourerDesign = "";
                 NewCustomizeProfile = "";
+
+                // 🔹 Reset Honorific Fields
+                NewCharacterHonorificTitle = "";
+                NewCharacterHonorificPrefix = "";
+                NewCharacterHonorificSuffix = "";
+                NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
+                NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
+                NewCharacterMoodlePreset = ""; //MOODLES
             }
         }
-
-
-
-
-
-
-        // ✅ Move Reset Fields into its own function
-        private void ResetCharacterFields()
-        {
-            NewCharacterName = "";
-            NewCharacterMacros = "";
-            NewCharacterImagePath = null;
-            NewCharacterDesigns.Clear(); // ✅ Clears AFTER saving
-            NewPenumbraCollection = "";
-            NewGlamourerDesign = "";
-            NewCustomizeProfile = "";
-        }
-
 
         public void CloseAddCharacterWindow()
         {

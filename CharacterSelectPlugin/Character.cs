@@ -17,6 +17,14 @@ namespace CharacterSelectPlugin
         public bool IsFavorite { get; set; } = false; // Allows favoriting
         public DateTime DateAdded { get; set; } = DateTime.Now; // Tracks when the character was added
         public int SortOrder { get; set; } = 0; // Tracks manual drag-drop order
+        public string HonorificTitle { get; set; } = "";
+        public string HonorificPrefix { get; set; } = "";
+        public string HonorificSuffix { get; set; } = "";
+        public Vector3 HonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
+        public Vector3 HonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
+        public string MoodlePreset { get; set; } = ""; // MOODLES
+        public byte IdlePoseIndex { get; set; } = 0; // Idles!
+
 
 
         public Character(
@@ -27,7 +35,13 @@ namespace CharacterSelectPlugin
             Vector3 nameplateColor,
             string penumbraCollection,
             string glamourerDesign,
-            string customizeProfile)
+            string customizeProfile,
+            string honorificTitle,
+            string honorificPrefix,
+            string honorificSuffix,
+            Vector3 honorificColor,
+            Vector3 honorificGlow,
+            string moodlePreset)
         {
             Name = name;
             Macros = macros ?? ""; // ✅ Prevents null macros
@@ -37,6 +51,12 @@ namespace CharacterSelectPlugin
             PenumbraCollection = penumbraCollection;
             GlamourerDesign = glamourerDesign;
             CustomizeProfile = customizeProfile;
+            HonorificTitle = honorificTitle;
+            HonorificPrefix = honorificPrefix;
+            HonorificSuffix = honorificSuffix;
+            HonorificColor = honorificColor;
+            HonorificGlow = honorificGlow;
+            MoodlePreset = moodlePreset;
         }
     }
 
