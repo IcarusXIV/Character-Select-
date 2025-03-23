@@ -22,7 +22,7 @@ public unsafe class PoseManager
 
     public void ApplyPose(EmoteController.PoseType type, byte index)
     {
-        if (index >= 8 || clientState.LocalPlayer == null) return;
+        if (index >= 7 || clientState.LocalPlayer == null) return;
 
         // Update selected pose
         PlayerState.Instance()->SelectedPoses[(int)type] = index;

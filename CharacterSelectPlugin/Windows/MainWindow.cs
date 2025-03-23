@@ -152,6 +152,8 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            // 🔒 Force global UI scaling off
+            ImGui.GetIO().FontGlobalScale = 1.0f;
             ImGui.Text("Choose your character");
             ImGui.Separator();
 
@@ -815,45 +817,42 @@ namespace CharacterSelectPlugin.Windows
 
             // Poses start from index 0
             string[] poseOptions = { "None", "0", "1", "2", "3", "4", "5", "6" };
-            int idlePoseIndex = isEditCharacterWindowOpen
-                ? (plugin.Characters[selectedCharacterIndex].IdlePoseIndex == 0 ? 7 : plugin.Characters[selectedCharacterIndex].IdlePoseIndex)
-                : (plugin.NewCharacterIdlePoseIndex == 0 ? 7 : plugin.NewCharacterIdlePoseIndex);
+            // Get the actual stored pose index (can be 0–6 or 7 for None)
+            byte storedIndex = isEditCharacterWindowOpen
+                ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
+                : plugin.NewCharacterIdlePoseIndex;
 
-            if (ImGui.BeginCombo("##IdlePoseDropdown", idlePoseIndex == 7 ? "None" : idlePoseIndex.ToString()))
+            // Convert to dropdown index: "None" (7) → 0, others shift by +1
+            int dropdownIndex = storedIndex == 7 ? 0 : storedIndex + 1;
+
+            if (ImGui.BeginCombo("##IdlePoseDropdown", poseOptions[dropdownIndex]))
             {
                 for (int i = 0; i < poseOptions.Length; i++)
                 {
-                    bool isSelected = i == (idlePoseIndex == 7 ? 0 : idlePoseIndex + 1); // Shifted by 1 for "None"
+                    bool isSelected = i == dropdownIndex;
+
                     if (ImGui.Selectable(poseOptions[i], isSelected))
                     {
-                        if (i == 0) // None selected
-                            idlePoseIndex = 7;
-                        else
-                            idlePoseIndex = i - 1;
+                        byte newPoseIndex = (byte)(i == 0 ? 7 : i - 1); // "None" → 7, others shift down
 
                         if (isEditCharacterWindowOpen)
                         {
-                            if (plugin.Characters[selectedCharacterIndex].IdlePoseIndex != (byte)idlePoseIndex)
+                            if (plugin.Characters[selectedCharacterIndex].IdlePoseIndex != newPoseIndex)
                             {
-                                plugin.Characters[selectedCharacterIndex].IdlePoseIndex = (byte)idlePoseIndex;
+                                plugin.Characters[selectedCharacterIndex].IdlePoseIndex = newPoseIndex;
                                 if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
-                                {
                                     advancedCharacterMacroText = GenerateMacro();
-                                }
                             }
                         }
                         else
                         {
-                            if (plugin.NewCharacterIdlePoseIndex != (byte)idlePoseIndex)
+                            if (plugin.NewCharacterIdlePoseIndex != newPoseIndex)
                             {
-                                plugin.NewCharacterIdlePoseIndex = (byte)idlePoseIndex;
+                                plugin.NewCharacterIdlePoseIndex = newPoseIndex;
                                 if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
-                                {
                                     plugin.NewCharacterMacros = advancedCharacterMacroText;
-                                }
                             }
                         }
-
                     }
 
                     if (isSelected)
@@ -1344,6 +1343,7 @@ if (isAdvancedModeCharacter)
             Vector3 honorificColor = isEditCharacterWindowOpen ? editedCharacterHonorificColor : plugin.NewCharacterHonorificColor;
             Vector3 honorificGlow = isEditCharacterWindowOpen ? editedCharacterHonorificGlow : plugin.NewCharacterHonorificGlow;
 
+
             if (string.IsNullOrWhiteSpace(penumbra) || string.IsNullOrWhiteSpace(glamourer))
                 return "/penumbra redraw self";
 
@@ -1382,6 +1382,9 @@ if (isAdvancedModeCharacter)
             {
                 macro += $"/spose {idlePose}\n"; // ✅ Only apply idle command when an idle is chosen
             }
+            
+            // ✅ Commit persistent poses after setting them
+            macro += "/savepose\n";
 
 
             macro += "/penumbra redraw self";

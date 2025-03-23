@@ -13,6 +13,11 @@ using Dalamud.Game.Gui;
 using System;
 using CharacterSelectPlugin.Managers;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
+using System.Text.RegularExpressions;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using static FFXIVClientStructs.FFXIV.Client.UI.Misc.BannerHelper.Delegates;
+using System.Threading.Tasks;
+
 
 namespace CharacterSelectPlugin
 {
@@ -59,6 +64,8 @@ namespace CharacterSelectPlugin
         public string NewCharacterMoodlePreset { get; set; } = "";
         public PoseManager PoseManager { get; private set; } = null!;
         public byte NewCharacterIdlePoseIndex { get; set; } = 0;
+        public PoseRestorer PoseRestorer { get; private set; } = null!;
+
 
 
 
@@ -75,10 +82,24 @@ namespace CharacterSelectPlugin
 
 
 
-        public Plugin()
+        public unsafe Plugin()
         {
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
+            Configuration = Configuration.Load(PluginInterface);
+            EnsureConfigurationDefaults();
+
+            // 🛠 Patch macros only after loading config + setting defaults
+            foreach (var character in Configuration.Characters)
+            {
+                var newMacro = SanitizeMacro(character.Macros, character);
+                if (character.Macros != newMacro)
+                    character.Macros = newMacro;
+            }
+
+            // Optionally save once
+            Configuration.Save();
+
 
             try
             {
@@ -94,6 +115,7 @@ namespace CharacterSelectPlugin
             }
 
             PoseManager = new PoseManager(ClientState, Framework, ChatGui, CommandManager);
+            PoseRestorer = new PoseRestorer(ClientState, this);
 
             // Initialize the MainWindow and ConfigWindow properly
             MainWindow = new MainWindow(this);
@@ -118,11 +140,14 @@ namespace CharacterSelectPlugin
             PluginInterface.UiBuilder.Draw += DrawUI;
             PluginInterface.UiBuilder.OpenConfigUi += ToggleQuickSwitchUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
+            ClientState.Login += OnLogin;
+
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
             {
                 HelpMessage = "Use /select <Character Name> to apply a profile."
             });
+            // Idles
             CommandManager.AddHandler("/spose", new CommandInfo((_, args) =>
             {
                 if (byte.TryParse(args, out var poseIndex))
@@ -137,10 +162,117 @@ namespace CharacterSelectPlugin
             {
                 HelpMessage = "Set your character’s Idle pose to a specific index."
             });
+            // Chair Sits
+            CommandManager.AddHandler("/sitpose", new CommandInfo((_, args) =>
+            {
+                if (byte.TryParse(args, out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.Sit, poseIndex);
+                    ChatGui.Print($"[Character Select+] Sitting pose set to {poseIndex}.");
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Usage: /sitpose <0–6>");
+                }
+            })
+            {
+                HelpMessage = "Set your character's Sitting pose to a specific index."
+            });
+            // Ground Sits
+            CommandManager.AddHandler("/groundsitpose", new CommandInfo((_, args) =>
+            {
+                if (byte.TryParse(args, out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.GroundSit, poseIndex);
+                    ChatGui.Print($"[Character Select+] Ground Sit pose set to {poseIndex}.");
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Usage: /groundsitpose <0–6>");
+                }
+            })
+            {
+                HelpMessage = "Set your character's Ground Sitting pose to a specific index."
+            });
+            // Doze Poses
+            CommandManager.AddHandler("/dozepose", new CommandInfo((_, args) =>
+            {
+                if (byte.TryParse(args, out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.Doze, poseIndex);
+                    ChatGui.Print($"[Character Select+] Dozing pose set to {poseIndex}.");
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Usage: /dozepose <0–6>");
+                }
+            })
+            {
+                HelpMessage = "Set your character's Dozing pose to a specific index."
+            });
 
 
+
+            CommandManager.AddHandler("/savepose", new CommandInfo((_, _) =>
+            {
+                var state = PlayerState.Instance();
+
+                // Save current poses into your config
+                Configuration.DefaultPoses.Idle = state->SelectedPoses[(int)EmoteController.PoseType.Idle];
+                Configuration.DefaultPoses.Sit = state->SelectedPoses[(int)EmoteController.PoseType.Sit];
+                Configuration.DefaultPoses.GroundSit = state->SelectedPoses[(int)EmoteController.PoseType.GroundSit];
+                Configuration.DefaultPoses.Doze = state->SelectedPoses[(int)EmoteController.PoseType.Doze];
+
+                Configuration.Save();
+                ChatGui.Print("[Character Select+] Saved current poses for persistence.");
+            })
+            {
+                HelpMessage = "Saves your current idle/sit/ground/doze poses persistently."
+            });
 
         }
+        private void OnLogin()
+        {
+            Task.Run(() =>
+            {
+                Task.Delay(1500).Wait(); // Wait for game state to settle
+                ApplyStoredPoses();
+            });
+        }
+        private unsafe void ApplyStoredPoses()
+        {
+            if (ClientState.LocalPlayer == null)
+                return;
+
+            var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+
+            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Idle] = Configuration.DefaultPoses.Idle;
+            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Sit] = Configuration.DefaultPoses.Sit;
+            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.GroundSit] = Configuration.DefaultPoses.GroundSit;
+            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Doze] = Configuration.DefaultPoses.Doze;
+
+            // Only set CPoseState if currently in that pose mode
+            byte mode = character->ModeParam;
+            EmoteController.PoseType currentType = mode switch
+            {
+                1 => EmoteController.PoseType.GroundSit,
+                2 => EmoteController.PoseType.Sit,
+                3 => EmoteController.PoseType.Doze,
+                _ => EmoteController.PoseType.Idle,
+            };
+
+            byte stored = currentType switch
+            {
+                EmoteController.PoseType.Idle => Configuration.DefaultPoses.Idle,
+                EmoteController.PoseType.Sit => Configuration.DefaultPoses.Sit,
+                EmoteController.PoseType.GroundSit => Configuration.DefaultPoses.GroundSit,
+                EmoteController.PoseType.Doze => Configuration.DefaultPoses.Doze,
+                _ => 0,
+            };
+
+            character->EmoteController.CPoseState = stored;
+        }
+
         private void OnQuickSwitchCommand(string command, string args)
         {
             QuickSwitchWindow.IsOpen = !QuickSwitchWindow.IsOpen; // ✅ Toggle Window On/Off
@@ -163,6 +295,8 @@ namespace CharacterSelectPlugin
             {
                 PoseManager.ApplyPose(EmoteController.PoseType.Idle, character.IdlePoseIndex);
             }
+            PoseRestorer.RestorePosesFor(character);
+
         }
 
 
@@ -231,6 +365,7 @@ namespace CharacterSelectPlugin
             MainWindow.Dispose();
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler("/spose");
+            CommandManager.RemoveHandler("/savepose");
 
         }
 
@@ -250,16 +385,26 @@ namespace CharacterSelectPlugin
 
         private void OnSelectCommand(string command, string args)
         {
-            string[] splitArgs = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            if (string.IsNullOrWhiteSpace(args))
+            {
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name]");
+                return;
+            }
 
-            if (splitArgs.Length < 1)
+            // Match either "quoted strings" or bare words
+            var matches = Regex.Matches(args, "\"([^\"]+)\"|\\S+")
+                .Cast<Match>()
+                .Select(m => m.Groups[1].Success ? m.Groups[1].Value : m.Value)
+                .ToArray();
+
+            if (matches.Length < 1)
             {
                 ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name]");
                 return;
             }
 
-            string characterName = splitArgs[0];
-            string? designName = splitArgs.Length > 1 ? splitArgs[1] : null;
+            string characterName = matches[0];
+            string? designName = matches.Length > 1 ? string.Join(" ", matches.Skip(1)) : null;
 
             var character = Characters.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
 
@@ -269,15 +414,13 @@ namespace CharacterSelectPlugin
                 return;
             }
 
-            if (designName == null)
+            if (string.IsNullOrWhiteSpace(designName))
             {
-                // Normal Character Selection
                 ChatGui.Print($"[Character Select+] Applying profile: {character.Name}");
                 ExecuteMacro(character.Macros);
             }
             else
             {
-                // Apply a specific design WITHOUT switching characters
                 var design = character.Designs.FirstOrDefault(d => d.Name.Equals(designName, StringComparison.OrdinalIgnoreCase));
 
                 if (design != null)
@@ -412,6 +555,54 @@ namespace CharacterSelectPlugin
             }
 
             Configuration.Save();
+        }
+        public static string SanitizeMacro(string macro, Character character)
+        {
+            var lines = macro.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).ToList();
+
+            void AddOrReplace(string command, string? fullLine = null, bool insertAtTop = false)
+            {
+                if (!lines.Any(l => l.StartsWith(command, StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (insertAtTop)
+                        lines.Insert(0, fullLine ?? command);
+                    else
+                        lines.Add(fullLine ?? command);
+                }
+            }
+
+            // Always ensure these are present
+            AddOrReplace("/customize profile disable <me>");
+            AddOrReplace("/honorific force clear");
+            AddOrReplace("/moodle remove self preset all");
+
+            if (!lines.Any(l => l.Contains("/penumbra redraw self")))
+                lines.Add("/penumbra redraw self");
+
+            if (!string.IsNullOrWhiteSpace(character.CustomizeProfile))
+            {
+                string enableLine = $"/customize profile enable <me>, {character.CustomizeProfile}";
+                if (!lines.Any(l => l.Equals(enableLine, StringComparison.OrdinalIgnoreCase)))
+                {
+                    int disableIndex = lines.FindIndex(l => l.StartsWith("/customize profile disable", StringComparison.OrdinalIgnoreCase));
+                    if (disableIndex != -1)
+                        lines.Insert(disableIndex + 1, enableLine);
+                    else
+                        lines.Insert(0, enableLine);
+                }
+            }
+
+            // ➕ /savepose should go right before /penumbra redraw self
+            int redrawIndex = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
+            if (!lines.Any(l => l.StartsWith("/savepose", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (redrawIndex != -1)
+                    lines.Insert(redrawIndex, "/savepose");
+                else
+                    lines.Add("/savepose");
+            }
+
+            return string.Join("\n", lines);
         }
 
 

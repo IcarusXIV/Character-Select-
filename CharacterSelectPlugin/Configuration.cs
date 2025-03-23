@@ -24,6 +24,7 @@ namespace CharacterSelectPlugin
 
         private IDalamudPluginInterface pluginInterface; // ✅ Fixed naming rule issue
         public int CurrentSortIndex { get; set; } = 0; // Default to Manual (SortType.Manual = 0)
+        public PersistentPoseSet DefaultPoses { get; set; } = new();
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)
@@ -41,6 +42,14 @@ namespace CharacterSelectPlugin
                 config.CurrentSortIndex = 0;
 
             return config;
+        }
+        [Serializable]
+        public class PersistentPoseSet
+        {
+            public byte Idle { get; set; } = 255;
+            public byte Sit { get; set; } = 255;
+            public byte GroundSit { get; set; } = 255;
+            public byte Doze { get; set; } = 255;
         }
 
 

@@ -4,6 +4,7 @@ using System.Numerics;
 
 namespace CharacterSelectPlugin
 {
+    [Serializable]
     public class Character
     {
         public string Name { get; set; }
@@ -24,6 +25,10 @@ namespace CharacterSelectPlugin
         public Vector3 HonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
         public string MoodlePreset { get; set; } = ""; // MOODLES
         public byte IdlePoseIndex { get; set; } = 0; // Idles!
+        public byte SitPoseIndex { get; set; } = 255;
+        public byte GroundSitPoseIndex { get; set; } = 255;
+        public byte DozePoseIndex { get; set; } = 255;
+
 
 
 
