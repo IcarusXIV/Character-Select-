@@ -508,6 +508,7 @@ namespace CharacterSelectPlugin
                 NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
                 NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
                 NewCharacterMoodlePreset = ""; //MOODLES
+                NewCharacterIdlePoseIndex = 8; // IDLES
             }
         }
 

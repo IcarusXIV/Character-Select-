@@ -8,16 +8,16 @@
       "Select"
     ],
     "InternalName": "CharacterSelectPlugin",
-    "AssemblyVersion": "1.0.1.3",
-    "TestingAssemblyVersion": "1.0.1.3",
+    "AssemblyVersion": "1.0.1.4",
+    "TestingAssemblyVersion": "1.0.1.4",
     "RepoUrl": "https://github.com/IcarusXIV/Character-Select-",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 11,
     "IsHide": "False",
     "IsTestingExclusive": "False",
-    "DownloadLinkInstall": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.3/CharacterSelectPlugin.zip",
-    "DownloadLinkTesting": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.3/CharacterSelectPlugin.zip",
-    "DownloadLinkUpdate": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.3/CharacterSelectPlugin.zip",
+    "DownloadLinkInstall": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.4/CharacterSelectPlugin.zip",
+    "DownloadLinkTesting": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.4/CharacterSelectPlugin.zip",
+    "DownloadLinkUpdate": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.4/CharacterSelectPlugin.zip",
     "IconUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/CharacterSelectPlugin/Assets/Icon.png"
   }
 ]

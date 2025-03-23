@@ -69,6 +69,7 @@ namespace CharacterSelectPlugin.Windows
 
 
 
+
         // 🔹 Add Sorting Function
         private enum SortType { Favorites, Alphabetical, Recent, Oldest }
         private SortType currentSort;
@@ -152,7 +153,8 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
-            // 🔒 Force global UI scaling off
+            // Save original scale
+            float originalScale = ImGui.GetIO().FontGlobalScale;
             ImGui.GetIO().FontGlobalScale = 1.0f;
             ImGui.Text("Choose your character");
             ImGui.Separator();
@@ -334,6 +336,8 @@ namespace CharacterSelectPlugin.Windows
             // Tooltip on hover
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Enjoy Character Select+? Consider supporting development!");
+            // ✅ Restore original global scale so it doesn't affect other plugins
+            ImGui.GetIO().FontGlobalScale = originalScale;
 
         }
 
@@ -355,12 +359,15 @@ namespace CharacterSelectPlugin.Windows
             plugin.NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f); // Default White
             plugin.NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);  // Default White
             plugin.NewCharacterMoodlePreset = ""; // ✅ RESET Moodle Preset
+            plugin.NewCharacterIdlePoseIndex = 7; // 7 = None
+
             tempHonorificTitle = "";
             tempHonorificPrefix = "Prefix";
             tempHonorificSuffix = "Suffix";
             tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
             tempMoodlePreset = ""; // ✅ RESET Temporary Moodle Preset
+            
 
             // ✅ Fix: Preserve Advanced Mode Macro when Resetting Fields
             if (!isAdvancedModeCharacter)
@@ -1382,7 +1389,7 @@ if (isAdvancedModeCharacter)
             {
                 macro += $"/spose {idlePose}\n"; // ✅ Only apply idle command when an idle is chosen
             }
-            
+
             // ✅ Commit persistent poses after setting them
             macro += "/savepose\n";
 
