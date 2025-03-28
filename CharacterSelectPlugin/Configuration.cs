@@ -25,6 +25,7 @@ namespace CharacterSelectPlugin
         private IDalamudPluginInterface pluginInterface; // ✅ Fixed naming rule issue
         public int CurrentSortIndex { get; set; } = 0; // Default to Manual (SortType.Manual = 0)
         public PersistentPoseSet DefaultPoses { get; set; } = new();
+        public bool IsQuickSwitchWindowOpen { get; set; } = false;
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)

@@ -12,6 +12,7 @@ namespace CharacterSelectPlugin.Windows
         private readonly Plugin plugin;
         private int selectedCharacterIndex = -1;
         private int selectedDesignIndex = -1;
+        private int lastAppliedCharacterIndex = -1;
 
         public QuickSwitchWindow(Plugin plugin)
             : base("Quick Character Switch", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoResize)
@@ -49,7 +50,20 @@ namespace CharacterSelectPlugin.Windows
                     if (ImGui.Selectable(character.Name, isSelected))
                     {
                         tempCharacterIndex = i;
-                        selectedDesignIndex = -1;
+
+                        if (character.Designs.Count > 0)
+                        {
+                            var ordered = character.Designs
+                                .Select((d, index) => new { Design = d, Index = index })
+                                .OrderBy(x => x.Design.Name, StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+
+                            selectedDesignIndex = ordered[0].Index;
+                        }
+                        else
+                        {
+                            selectedDesignIndex = -1;
+                        }
                     }
 
                     if (isSelected)
@@ -69,20 +83,27 @@ namespace CharacterSelectPlugin.Windows
                 int tempDesignIndex = selectedDesignIndex;
 
                 ImGui.SetNextItemWidth(dropdownWidth);
-                if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightLargest))
+                if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightRegular))
                 {
-                    for (int i = 0; i < selectedCharacter.Designs.Count; i++)
-                    {
-                        bool isSelected = (tempDesignIndex == i);
+                    var orderedDesigns = selectedCharacter.Designs
+    .Select((d, index) => new { Design = d, OriginalIndex = index })
+    .OrderBy(x => x.Design.Name, StringComparer.OrdinalIgnoreCase)
+    .ToList();
 
-                        if (ImGui.Selectable(selectedCharacter.Designs[i].Name, isSelected))
+                    for (int j = 0; j < orderedDesigns.Count; j++)
+                    {
+                        var entry = orderedDesigns[j];
+                        bool isSelected = (tempDesignIndex == entry.OriginalIndex);
+
+                        if (ImGui.Selectable(entry.Design.Name, isSelected))
                         {
-                            tempDesignIndex = i;
+                            tempDesignIndex = entry.OriginalIndex; // store original index to stay consistent
                         }
 
                         if (isSelected)
                             ImGui.SetItemDefaultFocus();
                     }
+
                     ImGui.EndCombo();
                 }
 
@@ -156,13 +177,31 @@ namespace CharacterSelectPlugin.Windows
 
         private void ApplySelection()
         {
-            if (selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
-            {
-                var character = plugin.Characters[selectedCharacterIndex];
+            if (selectedCharacterIndex < 0 || selectedCharacterIndex >= plugin.Characters.Count)
+                return;
 
-                // ✅ Call the exact method used in the Main Window
-                plugin.ApplyProfile(character, selectedDesignIndex);
+            var character = plugin.Characters[selectedCharacterIndex];
+
+            // ✅ Only reapply character macro if different from last
+            if (selectedCharacterIndex != lastAppliedCharacterIndex)
+            {
+                plugin.ExecuteMacro(character.Macros);
+                lastAppliedCharacterIndex = selectedCharacterIndex;
             }
+
+            // ✅ Always apply the design if selected
+            if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
+            {
+                plugin.ExecuteMacro(character.Designs[selectedDesignIndex].Macro);
+            }
+
+            // ✅ Always apply idle pose
+            if (character.IdlePoseIndex < 7)
+            {
+                plugin.PoseManager.ApplyPose(FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController.PoseType.Idle, character.IdlePoseIndex);
+            }
+
+            plugin.PoseRestorer.RestorePosesFor(character);
         }
 
     }

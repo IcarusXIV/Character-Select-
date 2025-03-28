@@ -120,6 +120,7 @@ namespace CharacterSelectPlugin
             // Initialize the MainWindow and ConfigWindow properly
             MainWindow = new MainWindow(this);
             QuickSwitchWindow = new QuickSwitchWindow(this); // ✅ Add Quick Switch Window
+            QuickSwitchWindow.IsOpen = Configuration.IsQuickSwitchWindowOpen; // ✅ Restore last open state
 
 
             WindowSystem.AddWindow(MainWindow);
@@ -437,7 +438,19 @@ namespace CharacterSelectPlugin
 
 
 
-        private void DrawUI() => WindowSystem.Draw();
+        private void DrawUI()
+        {
+            WindowSystem.Draw();
+
+            // Track and persist Quick Switch window state
+            bool currentState = QuickSwitchWindow.IsOpen;
+            if (Configuration.IsQuickSwitchWindowOpen != currentState)
+            {
+                Configuration.IsQuickSwitchWindowOpen = currentState;
+                Configuration.Save();
+            }
+        }
+
 
         public void ToggleQuickSwitchUI() => QuickSwitchWindow.Toggle();
         public void ToggleMainUI() => MainWindow.Toggle();
