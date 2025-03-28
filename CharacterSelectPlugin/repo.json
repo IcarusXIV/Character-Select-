@@ -12,7 +12,7 @@
     "TestingAssemblyVersion": "1.0.1.5",
     "RepoUrl": "https://github.com/IcarusXIV/Character-Select-",
     "ApplicableVersion": "any",
-    "DalamudApiLevel": 11,
+    "DalamudApiLevel": 12,
     "IsHide": "False",
     "IsTestingExclusive": "False",
     "DownloadLinkInstall": "https://github.com/IcarusXIV/Character-Select-/releases/download/1.0.1.5/CharacterSelectPlugin.zip",
