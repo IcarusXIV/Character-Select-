@@ -224,7 +224,7 @@ namespace CharacterSelectPlugin
                 Configuration.DefaultPoses.Doze = state->SelectedPoses[(int)EmoteController.PoseType.Doze];
 
                 Configuration.Save();
-                ChatGui.Print("[Character Select+] Saved current poses for persistence.");
+                // ChatGui.Print("[Character Select+] Saved current poses for persistence.");
             })
             {
                 HelpMessage = "Saves your current idle/sit/ground/doze poses persistently."
