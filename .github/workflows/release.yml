@@ -49,7 +49,10 @@ jobs:
           $json | ConvertTo-Json -AsArray | Set-Content -Path $path
 
       - name: Create Zip
-        run: Compress-Archive -Path "CharacterSelectPlugin/bin/x64/Release/CharacterSelectPlugin/*" -DestinationPath CharacterSelectPlugin.zip
+        run: |
+          $PluginName = "CharacterSelectPlugin"
+          $PluginPath = "CharacterSelectPlugin/bin/x64/Release"
+          Compress-Archive -Path "$PluginPath/$PluginName.dll", "$PluginPath/$PluginName.json" -DestinationPath CharacterSelectPlugin.zip
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1
