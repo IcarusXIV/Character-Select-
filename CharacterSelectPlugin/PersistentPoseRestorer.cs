@@ -21,11 +21,8 @@ public unsafe class PoseRestorer
     {
         if (clientState.LocalPlayer == null) return;
 
-        Task.Run(() =>
+        Plugin.Framework.RunOnTick(() =>
         {
-            // Wait before applying pose
-            Task.Delay(1000).Wait(); // Sync wait inside Task.Run is allowed here
-
             ApplyPose(character);
         });
     }

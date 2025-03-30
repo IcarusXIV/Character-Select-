@@ -1,0 +1,64 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.x.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Download Dalamud
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+
+      - name: Build
+        run: |
+          $ver = '${{ github.ref_name }}'
+          dotnet build --no-restore --configuration Release -p:Version=$ver -p:AssemblyVersion=$ver -p:FileVersion=$ver
+
+      - name: Update version in repo.json
+        run: |
+          $ver = '${{ github.ref_name }}'
+          $path = './CharacterSelectPlugin/repo.json'
+          $json = Get-Content -Raw $path | ConvertFrom-Json
+          $json[0].AssemblyVersion = $ver
+          $json[0].TestingAssemblyVersion = $ver
+          $json[0].DownloadLinkInstall = $json[0].DownloadLinkInstall -replace '[^/]+/CharacterSelectPlugin.zip',"$ver/CharacterSelectPlugin.zip"
+          $json[0].DownloadLinkTesting = $json[0].DownloadLinkTesting -replace '[^/]+/CharacterSelectPlugin.zip',"$ver/CharacterSelectPlugin.zip"
+          $json[0].DownloadLinkUpdate = $json[0].DownloadLinkUpdate -replace '[^/]+/CharacterSelectPlugin.zip',"$ver/CharacterSelectPlugin.zip"
+          $json | ConvertTo-Json -AsArray | Set-Content -Path $path
+
+      - name: Create Zip
+        run: Compress-Archive -Path "CharacterSelectPlugin/bin/x64/Release/CharacterSelectPlugin/*" -DestinationPath CharacterSelectPlugin.zip
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: CharacterSelectPlugin.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit repo.json
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add repo.json
+          git commit -m "Update repo.json for ${{ github.ref_name }}" || exit 0
+          git push origin master

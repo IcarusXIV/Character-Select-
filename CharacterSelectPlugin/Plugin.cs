@@ -65,6 +65,9 @@ namespace CharacterSelectPlugin
         public PoseManager PoseManager { get; private set; } = null!;
         public byte NewCharacterIdlePoseIndex { get; set; } = 0;
         public PoseRestorer PoseRestorer { get; private set; } = null!;
+        private bool shouldApplyPoses = false;
+        private DateTime loginTime;
+
 
 
 
@@ -234,11 +237,8 @@ namespace CharacterSelectPlugin
         }
         private void OnLogin()
         {
-            Task.Run(() =>
-            {
-                Task.Delay(1500).Wait(); // Wait for game state to settle
-                ApplyStoredPoses();
-            });
+            loginTime = DateTime.Now;
+            shouldApplyPoses = true;
         }
         private unsafe void ApplyStoredPoses()
         {
@@ -448,6 +448,42 @@ namespace CharacterSelectPlugin
             {
                 Configuration.IsQuickSwitchWindowOpen = currentState;
                 Configuration.Save();
+            }
+            // ✅ Apply stored poses safely once after login
+            if (shouldApplyPoses && ClientState.LocalPlayer != null && (DateTime.Now - loginTime).TotalSeconds > 2)
+            {
+                shouldApplyPoses = false;
+
+                unsafe
+                {
+                    var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+
+                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Idle] = Configuration.DefaultPoses.Idle;
+                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Sit] = Configuration.DefaultPoses.Sit;
+                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.GroundSit] = Configuration.DefaultPoses.GroundSit;
+                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Doze] = Configuration.DefaultPoses.Doze;
+
+                    // ✅ Only set CPoseState if currently in that pose mode
+                    byte mode = character->ModeParam;
+                    EmoteController.PoseType currentType = mode switch
+                    {
+                        1 => EmoteController.PoseType.GroundSit,
+                        2 => EmoteController.PoseType.Sit,
+                        3 => EmoteController.PoseType.Doze,
+                        _ => EmoteController.PoseType.Idle,
+                    };
+
+                    byte stored = currentType switch
+                    {
+                        EmoteController.PoseType.Idle => Configuration.DefaultPoses.Idle,
+                        EmoteController.PoseType.Sit => Configuration.DefaultPoses.Sit,
+                        EmoteController.PoseType.GroundSit => Configuration.DefaultPoses.GroundSit,
+                        EmoteController.PoseType.Doze => Configuration.DefaultPoses.Doze,
+                        _ => 0,
+                    };
+
+                    character->EmoteController.CPoseState = stored;
+                }
             }
         }
 
