@@ -2,7 +2,7 @@
   "Author": "Kid Icarus",
   "Name": "Character Select+",
   "InternalName": "CharacterSelectPlugin",
-  "AssemblyVersion": "1.0.1.6",
+  "AssemblyVersion": "1.0.1.14",
   "Description": "Character Select+ allows you to create, save, and instantly apply fully customized character profiles with the press of a button. Switch between your OCs effortlessly using /select CharacterName, applying Penumbra Collections, Glamourer Designs, Customize+ Profiles, Honorific Titles, Moodle Presets, and Idles in one command.\n\nWhile profile switching is its core purpose, Character Select+ includes additional features:\n✔ Advanced Mode – Create custom macro setups for deeper character customization.\n✔ Profile-Specific Designs – Use multiple outfits, styles, and looks per character.\n✔ Favorites & Sorting – Keep profiles organized by name, date, or importance.\n✔ Quick Swap Bar! \n✔ One-Click Macro Execution – Run predefined commands instantly when selecting a character.\n\nWhether you're roleplaying, gposing, or just love quick customization, Character Select+ makes switching between characters faster, easier, and seamless.\n",
   "ApplicableVersion": "any",
   "Tags": [
