@@ -52,7 +52,16 @@ jobs:
         run: |
           $PluginName = "CharacterSelectPlugin"
           $PluginPath = "CharacterSelectPlugin/bin/x64/Release"
-          Compress-Archive -Path "$PluginPath/$PluginName.dll", "$PluginPath/$PluginName.json" -DestinationPath CharacterSelectPlugin.zip
+          $Files = @(
+            "$PluginPath/$PluginName.dll",
+            "$PluginPath/$PluginName.json",
+            "$PluginPath/$PluginName.deps.json",
+            "$PluginPath/goat.png"
+          )
+          Compress-Archive -Path $Files -DestinationPath CharacterSelectPlugin.zip
+
+          # Add Assets folder (recursively)
+          Compress-Archive -Path "$PluginPath/Assets" -Update -DestinationPath CharacterSelectPlugin.zip
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1

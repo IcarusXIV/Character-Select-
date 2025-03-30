@@ -13,6 +13,7 @@ namespace CharacterSelectPlugin.Windows
         private int selectedCharacterIndex = -1;
         private int selectedDesignIndex = -1;
         private int lastAppliedCharacterIndex = -1;
+        private bool hasAppliedMacroThisSession = false;
 
         public QuickSwitchWindow(Plugin plugin)
             : base("Quick Character Switch", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoResize)
@@ -183,10 +184,11 @@ namespace CharacterSelectPlugin.Windows
             var character = plugin.Characters[selectedCharacterIndex];
 
             // ✅ Only reapply character macro if different from last
-            if (selectedCharacterIndex != lastAppliedCharacterIndex)
+            if (!hasAppliedMacroThisSession || selectedCharacterIndex != lastAppliedCharacterIndex)
             {
                 plugin.ExecuteMacro(character.Macros);
                 lastAppliedCharacterIndex = selectedCharacterIndex;
+                hasAppliedMacroThisSession = true;
             }
 
             // ✅ Always apply the design if selected
