@@ -58,7 +58,7 @@ jobs:
             "$PluginPath/CharacterSelectPlugin.deps.json",
             "$PluginPath/goat.png"
           )
-          Compress-Archive -Path $Files -DestinationPath $OutputZip
+          Compress-Archive -Path $Files -DestinationPath $OutputZip -Force
           Compress-Archive -Path "$PluginPath/Assets" -Update -DestinationPath $OutputZip
 
       - name: Upload Release
