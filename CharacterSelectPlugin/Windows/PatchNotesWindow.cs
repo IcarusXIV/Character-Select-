@@ -42,15 +42,15 @@ namespace CharacterSelectPlugin.Windows
 
             // Glamourer Automations
             ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf5c3"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Glamourer Automations for Designs");
-            ImGui.BulletText("Designs can now trigger specific Glamourer Automation profiles.");
+            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Glamourer Automations for Characters & Designs");
+            ImGui.BulletText("Characters & Designs can now trigger specific Glamourer Automation profiles.");
             ImGui.BulletText("This is *opt-in* — toggle it in plugin settings.");
             ImGui.BulletText("If no automation is assigned, the design defaults to 'None'.");
             ImGui.Spacing();
             ImGui.Text("To avoid errors, set up a 'None' automation:");
             ImGui.BulletText("1. Open Glamourer > Automations.");
             ImGui.BulletText("2. Create an Automation named 'None'.");
-            ImGui.BulletText("3. Add your in-game character name beside 'Any World'.");
+            ImGui.BulletText("3. Add your in-game character name beside 'Any World' then Set to Character.");
             ImGui.BulletText("4. That’s it. Don’t touch anything else, you’re done!");
             ImGui.Separator();
 
