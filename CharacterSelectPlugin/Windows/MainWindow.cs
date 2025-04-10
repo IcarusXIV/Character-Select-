@@ -1,19 +1,14 @@
 using System;
 using System.Numerics;
-using Dalamud.Interface.Utility;
-using System.Threading.Tasks;
 using Dalamud.Interface.Windowing;
 using ImGuiNET;
-using CharacterSelectPlugin;
 using System.Windows.Forms;
 using System.IO;
 using System.Collections.Generic;
 using System.Threading;
 using System.Linq;
-using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using Dalamud.Interface;
-using Dalamud.Plugin.Services;
-using System.Net.NetworkInformation;
+using System.Runtime.CompilerServices;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -66,8 +61,23 @@ namespace CharacterSelectPlugin.Windows
         // Stores the selected Moodle preset for an edited character
         private string editedCharacterMoodlePreset = "";
 
+        private string editedAutomation = "";
+        private string editedCustomizeProfile = "";
+        private bool showSearchBar = false;
+        private string searchQuery = "";
 
+        // Shared Designs
+        private bool isImportWindowOpen = false;
+        private Character? targetForDesignImport = null;
 
+        // Reordering
+        private bool isReorderWindowOpen = false;
+        private List<Character> reorderBuffer = new();
+        private Character? characterBeingDragged = null;
+        // Tags
+        private string selectedTag = "All";
+        private string editedCharacterTag = "";
+        private bool showTagFilter = false;
 
 
         // 🔹 Add Sorting Function
@@ -159,21 +169,83 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Text("Choose your character");
             ImGui.Separator();
 
-            if (ImGui.Button("Add Character"))
+            if (!plugin.IsAddCharacterWindowOpen && !isEditCharacterWindowOpen)
             {
-                var tempSavedDesigns = new List<CharacterDesign>(plugin.NewCharacterDesigns); // ✅ Store existing designs
-                ResetCharacterFields(); // ✅ Resets fields before opening window
-                plugin.NewCharacterDesigns = tempSavedDesigns; // ✅ Restore designs after reset
+                if (ImGui.Button("Add Character"))
+                {
+                    var tempSavedDesigns = new List<CharacterDesign>(plugin.NewCharacterDesigns);
+                    ResetCharacterFields();
+                    plugin.NewCharacterDesigns = tempSavedDesigns;
 
-                plugin.OpenAddCharacterWindow();
-                isEditCharacterWindowOpen = false;
-                isDesignPanelOpen = false;
-                isAdvancedModeCharacter = false; // ✅ Force Advanced Mode to be off
+                    plugin.OpenAddCharacterWindow();
+                    isEditCharacterWindowOpen = false;
+                    isDesignPanelOpen = false;
+                    isAdvancedModeCharacter = false;
+                }
+
+                // 📂 Tag Toggle + Dropdown (like Search)
+                float tagDropdownWidth = 200f;
+                float tagIconOffset = 70f;
+                float tagDropdownOffset = tagDropdownWidth + tagIconOffset + 10;
+
+                ImGui.SameLine(ImGui.GetWindowWidth() - tagIconOffset);
+                ImGui.PushFont(UiBuilder.IconFont);
+                if (ImGui.Button("\uf0b0")) // 🔍 filter icon
+                {
+                    showTagFilter = !showTagFilter;
+                }
+                ImGui.PopFont();
+
+                // ⬇ Tag Filter Dropdown (only shows if toggled)
+                if (showTagFilter)
+                {
+                    ImGui.SameLine(ImGui.GetWindowWidth() - tagDropdownOffset);
+                    ImGui.SetNextItemWidth(tagDropdownWidth);
+                    if (ImGui.BeginCombo("##TagFilter", selectedTag))
+                    {
+                        var allTags = plugin.Characters
+                            .SelectMany(c => c.Tags ?? new List<string>())
+                            .Distinct()
+                            .OrderBy(f => f)
+                            .Prepend("All")
+                            .ToList();
+
+                        foreach (var tag in allTags)
+                        {
+                            bool isSelected = tag == selectedTag;
+                            if (ImGui.Selectable(tag, isSelected))
+                                selectedTag = tag;
+
+                            if (isSelected)
+                                ImGui.SetItemDefaultFocus();
+                        }
+
+                        ImGui.EndCombo();
+                    }
+                }
             }
 
             if (plugin.IsAddCharacterWindowOpen || isEditCharacterWindowOpen)
             {
                 DrawCharacterForm();
+            }
+
+            // 🔍 Search Button (toggle)
+            ImGui.SameLine(ImGui.GetWindowWidth() - 35);
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button("\uf002")) // FontAwesome "search" icon
+            {
+                showSearchBar = !showSearchBar;
+                if (!showSearchBar) searchQuery = ""; // Clear when closed
+            }
+            ImGui.PopFont();
+
+            // 🔎 Search Input Field
+            if (showSearchBar)
+            {
+                ImGui.SameLine(ImGui.GetWindowWidth() - 250); // Adjust position
+                ImGui.SetNextItemWidth(210f); // Width of the input box
+                ImGui.InputTextWithHint("##SearchCharacters", "Search characters...", ref searchQuery, 100);
             }
 
             ImGui.BeginChild("CharacterGrid", new Vector2(isDesignPanelOpen ? -250 : 0, -30), true);
@@ -201,7 +273,16 @@ namespace CharacterSelectPlugin.Windows
             }
             ImGui.PopFont();
 
-            ImGui.SameLine(); // ✅ Forces the next item to be in the same line
+            ImGui.SameLine();
+
+            // 🔹 Reorder Button (🧩)
+            if (ImGui.Button("Reorder Characters"))
+            {
+                isReorderWindowOpen = true;
+                reorderBuffer = plugin.Characters.ToList();
+            }
+
+            ImGui.SameLine();
 
             // 🔹 Quick Switch Button (🌀)
             if (ImGui.Button("Quick Switch"))
@@ -253,13 +334,105 @@ namespace CharacterSelectPlugin.Windows
                     // Align label to the right of the slider
                     ImGui.SameLine();
                     ImGui.Text("Profile Spacing");
-                    // 🔹 Position "Sort By" Dropdown in the Bottom-Right
-                    ImGui.SetCursorPos(new Vector2(ImGui.GetWindowWidth() - 150, ImGui.GetWindowHeight() - 35)); // ✅ Adjust position
 
+                    // 🔹 Automation Opt-In Section
+                    ImGui.Separator();
+                    ImGui.Text("Glamourer Automations");
+
+                    // ℹ️ Tooltip Icon (always next to label)
+                    ImGui.SameLine();
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.TextUnformatted("\uf05a");
+                    ImGui.PopFont();
+
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.PushTextWrapPos(300);
+                        ImGui.TextUnformatted("Enable support for Glamourer Automations in Designs.");
+                        ImGui.Separator();
+                        ImGui.TextUnformatted("When enabled, you’ll be able to assign an Automation to each design.");
+                        ImGui.TextUnformatted("⚠️ Designs without automations will require a fallback Automation in Glamourer named:");
+                        ImGui.TextUnformatted("\"None\"");
+                        ImGui.TextUnformatted("You also must enter your in-game character name in Glamourer next to \"Any World\".");
+                        ImGui.PopTextWrapPos();
+                        ImGui.EndTooltip();
+                    }
+
+                    // 🔘 Automation Opt-In Checkbox (just below label)
+                    bool automationToggle = plugin.Configuration.EnableAutomations;
+                    if (ImGui.Checkbox("Enable Automations", ref automationToggle))
+                    {
+                        plugin.Configuration.EnableAutomations = automationToggle;
+
+                        bool changed = false;
+
+                        if (!automationToggle)
+                        {
+                            // 🧼 Remove automation lines from all macros
+                            foreach (var character in plugin.Characters)
+                            {
+                                foreach (var design in character.Designs)
+                                {
+                                    string macro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                                    if (string.IsNullOrWhiteSpace(macro))
+                                        continue;
+
+                                    var cleaned = string.Join("\n", macro
+                                        .Split('\n')
+                                        .Where(line => !line.TrimStart().StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase))
+                                        .Select(line => line.TrimEnd()));
+
+                                    if (design.IsAdvancedMode && cleaned != design.AdvancedMacro)
+                                    {
+                                        design.AdvancedMacro = cleaned;
+                                        changed = true;
+                                    }
+                                    else if (!design.IsAdvancedMode && cleaned != design.Macro)
+                                    {
+                                        design.Macro = cleaned;
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // 🔁 Re-add automation lines using SanitizeDesignMacro
+                            foreach (var character in plugin.Characters)
+                            {
+                                foreach (var design in character.Designs)
+                                {
+                                    string macro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                                    if (string.IsNullOrWhiteSpace(macro))
+                                        continue;
+
+                                    string updated = Plugin.SanitizeDesignMacro(macro, design, character, true);
+
+                                    if (design.IsAdvancedMode && updated != design.AdvancedMacro)
+                                    {
+                                        design.AdvancedMacro = updated;
+                                        changed = true;
+                                    }
+                                    else if (!design.IsAdvancedMode && updated != design.Macro)
+                                    {
+                                        design.Macro = updated;
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        // ✅ Save once at end if anything changed
+                        if (changed)
+                            plugin.SaveConfiguration();
+                    }
+
+                    // 🔹 Position "Sort By" Dropdown in the Bottom-Right
+                    ImGui.Separator();
                     ImGui.Text("Sort By:");
                     ImGui.SameLine();
 
-                    // Create the dropdown menu
                     if (ImGui.BeginCombo("##SortDropdown", currentSort.ToString()))
                     {
                         if (ImGui.Selectable("Favorites", currentSort == SortType.Favorites))
@@ -290,7 +463,8 @@ namespace CharacterSelectPlugin.Windows
                             plugin.Configuration.Save();
                             SortCharacters();
                         }
-                        ImGui.EndCombo(); // ✅ Close dropdown properly
+
+                        ImGui.EndCombo();
                     }
                     if (isAdvancedModeWindowOpen)
                     {
@@ -308,10 +482,6 @@ namespace CharacterSelectPlugin.Windows
                         }
                         ImGui.End();
                     }
-
-
-
-
 
                     ImGui.End();
                 }
@@ -338,6 +508,8 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SetTooltip("Enjoy Character Select+? Consider supporting development!");
             // ✅ Restore original global scale so it doesn't affect other plugins
             ImGui.GetIO().FontGlobalScale = originalScale;
+            DrawImportDesignWindow();
+            DrawReorderWindow();
 
         }
 
@@ -367,7 +539,7 @@ namespace CharacterSelectPlugin.Windows
             tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
             tempMoodlePreset = ""; // ✅ RESET Temporary Moodle Preset
-            
+
 
             // ✅ Fix: Preserve Advanced Mode Macro when Resetting Fields
             if (!isAdvancedModeCharacter)
@@ -390,6 +562,7 @@ namespace CharacterSelectPlugin.Windows
             string tempGlamourer = isEditCharacterWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
             string tempCustomize = isEditCharacterWindowOpen ? editedCharacterCustomize : plugin.NewCustomizeProfile;
             Vector3 tempColor = isEditCharacterWindowOpen ? editedCharacterColor : plugin.NewCharacterColor;
+            string tempTag = isEditCharacterWindowOpen ? editedCharacterTag : plugin.NewCharacterTag;
 
 
 
@@ -413,6 +586,37 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Text("\uf05a");
             ImGui.PopFont();
             if (ImGui.IsItemHovered()) { ImGui.SetTooltip("Enter your OC's name or nickname for profile here."); }
+
+            ImGui.Separator();
+
+            // 📁 Tags Input (comma-separated)
+            ImGui.SetCursorPosX(10);
+            ImGui.Text("Character Tags");
+            ImGui.SameLine(labelWidth);
+            ImGui.SetCursorPosX(labelWidth + inputOffset);
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputTextWithHint("##Tags", "e.g. Casual, Battle, Beach", ref tempTag, 100);
+
+            // ⬅ Save depending on Add/Edit mode
+            if (isEditCharacterWindowOpen)
+                editedCharacterTag = tempTag;
+            else
+                plugin.NewCharacterTag = tempTag;
+
+            // ℹ Tooltip Icon
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextUnformatted("\uf05a"); // info icon
+            ImGui.PopFont();
+
+            // 🧠 Tooltip Text
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.TextUnformatted("You can assign multiple tags by separating them with commas.");
+                ImGui.TextUnformatted("Examples: Casual, Favorites, Seasonal");
+                ImGui.EndTooltip();
+            }
 
             ImGui.Separator();
 
@@ -1161,128 +1365,214 @@ if (isAdvancedModeCharacter)
                 ImGui.Columns(columnCount, "CharacterGrid", false);
             }
 
-            for (int i = 0; i < plugin.Characters.Count; i++)
+            var visibleCharacters = plugin.Characters
+    .Where(c => selectedTag == "All" || (c.Tags?.Contains(selectedTag) ?? false))
+    .ToList();
+
+            for (int i = 0; i < visibleCharacters.Count; i++)
             {
-                var character = plugin.Characters[i];
+                var character = visibleCharacters[i];
 
-                // ✅ Ensure column width is properly set
-                if (columnCount > 1)
+                // 🔍 Apply Search Filter
+                if (!string.IsNullOrWhiteSpace(searchQuery) &&
+                    !character.Name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 {
-                    int colIndex = i % columnCount;
-                    if (colIndex >= 0 && colIndex < ImGui.GetColumnsCount())
+                    var filteredChar = visibleCharacters[i];
+
+                    // ✅ Ensure column width is properly set
+                    if (columnCount > 1)
                     {
-                        ImGui.SetColumnWidth(colIndex, columnWidth);
+                        int colIndex = i % columnCount;
+                        if (colIndex >= 0 && colIndex < ImGui.GetColumnsCount())
+                        {
+                            ImGui.SetColumnWidth(colIndex, columnWidth);
+                        }
                     }
-                }
 
-                // ✅ Image Scaling
-                float scale = plugin.ProfileImageScale;
-                float maxSize = Math.Clamp(250 * scale, 64, 512); // ✅ Prevents excessive scaling
-                float nameplateHeight = 30;
+                    // ✅ Image Scaling
+                    float scale = plugin.ProfileImageScale;
+                    float maxSize = Math.Clamp(250 * scale, 64, 512); // ✅ Prevents excessive scaling
+                    float nameplateHeight = 30;
 
-                float displayWidth, displayHeight;
+                    float displayWidth, displayHeight;
 
-                string pluginDirectory = plugin.PluginDirectory;
-                string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
+                    string pluginDirectory = plugin.PluginDirectory;
+                    string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
 
-                string finalImagePath = !string.IsNullOrEmpty(character.ImagePath) && File.Exists(character.ImagePath)
-                    ? character.ImagePath
-                    : (File.Exists(defaultImagePath) ? defaultImagePath : "");
+                    string finalImagePath = !string.IsNullOrEmpty(character.ImagePath) && File.Exists(character.ImagePath)
+                        ? character.ImagePath
+                        : (File.Exists(defaultImagePath) ? defaultImagePath : "");
 
-                if (!string.IsNullOrEmpty(finalImagePath) && File.Exists(finalImagePath))
-                {
-                    var texture = Plugin.TextureProvider.GetFromFile(finalImagePath).GetWrapOrDefault();
-
-                    if (texture != null)
+                    if (!string.IsNullOrEmpty(finalImagePath) && File.Exists(finalImagePath))
                     {
-                        float originalWidth = texture.Width;
-                        float originalHeight = texture.Height;
-                        float aspectRatio = originalWidth / originalHeight;
+                        var texture = Plugin.TextureProvider.GetFromFile(finalImagePath).GetWrapOrDefault();
 
-                        if (aspectRatio > 1) // Landscape
+                        if (texture != null)
                         {
-                            displayWidth = maxSize;
-                            displayHeight = maxSize / aspectRatio;
-                        }
-                        else // Portrait or Square
-                        {
-                            displayHeight = maxSize;
-                            displayWidth = maxSize * aspectRatio;
-                        }
+                            float originalWidth = texture.Width;
+                            float originalHeight = texture.Height;
+                            float aspectRatio = originalWidth / originalHeight;
 
-                        float paddingX = (maxSize - displayWidth) / 2;
-                        float paddingY = (maxSize - displayHeight) / 2;
-                        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + paddingX);
-                        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + paddingY);
-
-                        ImGui.Image(texture.ImGuiHandle, new Vector2(displayWidth, displayHeight));
-
-                        // ✅ Click Image to Execute Macro
-                        if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
-                        {
-                            if (activeDesignCharacterIndex != -1)
+                            if (aspectRatio > 1) // Landscape
                             {
-                                activeDesignCharacterIndex = -1;
-                                isDesignPanelOpen = false;
+                                displayWidth = maxSize;
+                                displayHeight = maxSize / aspectRatio;
                             }
-                            plugin.ExecuteMacro(character.Macros);
+                            else // Portrait or Square
+                            {
+                                displayHeight = maxSize;
+                                displayWidth = maxSize * aspectRatio;
+                            }
+
+                            float paddingX = (maxSize - displayWidth) / 2;
+                            float paddingY = (maxSize - displayHeight) / 2;
+                            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + paddingX);
+                            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + paddingY);
+
+                            ImGui.Image(texture.ImGuiHandle, new Vector2(displayWidth, displayHeight));
+
+                            // ✅ Left-click → normal macro execution
+                            if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+                            {
+                                if (activeDesignCharacterIndex != -1)
+                                {
+                                    activeDesignCharacterIndex = -1;
+                                    isDesignPanelOpen = false;
+                                }
+                                plugin.ExecuteMacro(character.Macros);
+                                plugin.SetActiveCharacter(character);
+
+                                var profileToSend = new RPProfile
+                                {
+                                    Pronouns = character.RPProfile?.Pronouns,
+                                    Gender = character.RPProfile?.Gender,
+                                    Age = character.RPProfile?.Age,
+                                    Orientation = character.RPProfile?.Orientation,
+                                    Relationship = character.RPProfile?.Relationship,
+                                    Occupation = character.RPProfile?.Occupation,
+                                    Abilities = character.RPProfile?.Abilities,
+                                    Bio = character.RPProfile?.Bio,
+                                    Tags = character.RPProfile?.Tags,
+                                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+                                        ? character.RPProfile.CustomImagePath
+                                        : character.ImagePath,
+                                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                                    CharacterName = character.Name,
+                                    NameplateColor = character.NameplateColor
+                                };
+
+                                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+                            }
+
+                            // 🖱️ Right-click → apply to <t>
+                            if (ImGui.BeginPopupContextItem($"##ContextMenu_{character.Name}"))
+                            {
+                                if (ImGui.Selectable("Apply to Target"))
+                                {
+                                    // Always run the target macro – this replaces self with <t>
+                                    string macro = Plugin.GenerateTargetMacro(character.Macros);
+
+                                    if (!string.IsNullOrWhiteSpace(macro))
+                                        plugin.ExecuteMacro(macro);
+                                }
+
+
+                                // 🔹 Colored line under "Apply to Target"
+                                ImGui.Spacing();
+                                ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(character.NameplateColor, 1.0f));
+                                ImGui.BeginChild($"##Separator_{character.Name}", new Vector2(ImGui.GetContentRegionAvail().X, 3), false);
+                                ImGui.EndChild();
+                                ImGui.PopStyleColor();
+                                ImGui.Spacing();
+
+                                // 🔽 Scrollable design list
+                                if (character.Designs.Count > 0)
+                                {
+                                    float itemHeight = ImGui.GetTextLineHeightWithSpacing();
+                                    float maxVisible = 10;
+                                    float scrollHeight = Math.Min(character.Designs.Count, maxVisible) * itemHeight + 8;
+
+                                    if (ImGui.BeginChild($"##DesignScroll_{character.Name}", new Vector2(300, scrollHeight)))
+                                    {
+                                        foreach (var design in character.Designs)
+                                        {
+                                            if (ImGui.Selectable($"Apply Design: {design.Name}"))
+                                            {
+                                                var macro = Plugin.GenerateTargetMacro(
+                                                    design.IsAdvancedMode ? design.AdvancedMacro : design.Macro
+                                                );
+                                                plugin.ExecuteMacro(macro);
+                                            }
+                                        }
+                                        ImGui.EndChild();
+                                    }
+                                }
+
+                                ImGui.EndPopup();
+                            }
+
+
                         }
                     }
-                }
 
-                // ✅ Nameplate Rendering (Keeps consistent alignment)
-                DrawNameplate(character, maxSize, nameplateHeight);
+                    // ✅ Nameplate Rendering (Keeps consistent alignment)
+                    DrawNameplate(character, maxSize, nameplateHeight);
 
-                // 🔹 Buttons Section (Proper Spacing)
-                float buttonWidth = maxSize / 3.1f;
-                float btnWidth = maxSize / 3.2f;
-                float btnHeight = 24;
-                float btnSpacing = 4;
+                    // 🔹 Buttons Section (Proper Spacing)
+                    float buttonWidth = maxSize / 3.1f;
+                    float btnWidth = maxSize / 3.2f;
+                    float btnHeight = 24;
+                    float btnSpacing = 4;
 
-                float btnStartX = ImGui.GetCursorPosX() + (maxSize - (3 * btnWidth + 2 * btnSpacing)) / 2;
-                ImGui.SetCursorPosX(btnStartX);
+                    float btnStartX = ImGui.GetCursorPosX() + (maxSize - (3 * btnWidth + 2 * btnSpacing)) / 2;
+                    ImGui.SetCursorPosX(btnStartX);
 
-                // ✅ "Designs" Button
-                if (ImGui.Button($"Designs##{i}", new Vector2(btnWidth, btnHeight)))
-                {
-                    if (activeDesignCharacterIndex == i && isDesignPanelOpen)
+                    // ✅ "Designs" Button
+                    if (ImGui.Button($"Designs##{i}", new Vector2(btnWidth, btnHeight)))
                     {
-                        activeDesignCharacterIndex = -1;
+                        if (activeDesignCharacterIndex == i && isDesignPanelOpen)
+                        {
+                            activeDesignCharacterIndex = -1;
+                            isDesignPanelOpen = false;
+                        }
+                        else
+                        {
+                            activeDesignCharacterIndex = i;
+                            isDesignPanelOpen = true;
+                        }
+                    }
+
+                    ImGui.SameLine(0, btnSpacing);
+                    if (ImGui.Button($"Edit##{i}", new Vector2(btnWidth, btnHeight)))
+                    {
+                        OpenEditCharacterWindow(i);
                         isDesignPanelOpen = false;
                     }
-                    else
+
+                    ImGui.SameLine(0, btnSpacing);
+                    bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+                    if (ImGui.Button($"Delete##{i}", new Vector2(btnWidth, btnHeight)))
                     {
-                        activeDesignCharacterIndex = i;
-                        isDesignPanelOpen = true;
+                        if (isCtrlShiftPressed)
+                        {
+                            plugin.Characters.RemoveAt(i);
+                            plugin.Configuration.Save();
+                        }
+                    }
+
+                    // ✅ Tooltip for Delete Button
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.Text("Hold Ctrl + Shift and click to delete.");
+                        ImGui.EndTooltip();
                     }
                 }
-
-                ImGui.SameLine(0, btnSpacing);
-                if (ImGui.Button($"Edit##{i}", new Vector2(btnWidth, btnHeight)))
-                {
-                    OpenEditCharacterWindow(i);
-                    isDesignPanelOpen = false;
-                }
-
-                ImGui.SameLine(0, btnSpacing);
-                bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
-                if (ImGui.Button($"Delete##{i}", new Vector2(btnWidth, btnHeight)))
-                {
-                    if (isCtrlShiftPressed)
-                    {
-                        plugin.Characters.RemoveAt(i);
-                        plugin.Configuration.Save();
-                    }
-                }
-
-                // ✅ Tooltip for Delete Button
-                if (ImGui.IsItemHovered())
-                {
-                    ImGui.BeginTooltip();
-                    ImGui.Text("Hold Ctrl + Shift and click to delete.");
-                    ImGui.EndTooltip();
-                }
-
                 ImGui.NextColumn(); // ✅ Move to next column properly
             }
 
@@ -1333,6 +1623,34 @@ if (isAdvancedModeCharacter)
                 plugin.SaveConfiguration();
                 SortCharacters(); // ✅ Resort after toggling
             }
+
+            // RP Profile Button — ID Card Icon
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.SetWindowFontScale(0.85f); // ⬇️ Shrink to match star size
+
+            string icon = "\uf2c2"; // ID Card
+            var iconSize = ImGui.CalcTextSize(icon);
+            var iconPos = new Vector2(cursorPos.X + width - iconSize.X - 12, cursorPos.Y + 6);
+            var iconColor = ImGui.GetColorU32(ImGuiCol.Text);
+
+            // Draw the icon at reduced scale
+            drawList.AddText(iconPos, iconColor, icon);
+
+            // Reset scale and font
+            ImGui.SetWindowFontScale(1.0f);
+            ImGui.PopFont();
+
+            // 🖱️ Clickable area
+            var iconHitMin = iconPos;
+            var iconHitMax = iconPos + iconSize + new Vector2(4, 4);
+
+            if (ImGui.IsMouseHoveringRect(iconHitMin, iconHitMax) && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                plugin.OpenRPProfileViewWindow(character);
+            }
+
+
+
 
             ImGui.Dummy(new Vector2(width, height)); // ✅ Maintain proper positioning
         }
@@ -1387,12 +1705,9 @@ if (isAdvancedModeCharacter)
 
             if (idlePose != 7)
             {
-                macro += $"/spose {idlePose}\n"; // ✅ Only apply idle command when an idle is chosen
+                macro += $"/spose {idlePose}\n";
+                macro += "/savepose\n";
             }
-
-            // ✅ Commit persistent poses after setting them
-            macro += "/savepose\n";
-
 
             macro += "/penumbra redraw self";
 
@@ -1442,15 +1757,39 @@ if (isAdvancedModeCharacter)
 
             // 🔹 Plus Button (Green)
             ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetColorU32(new Vector4(0.27f, 1.07f, 0.27f, 1.0f)));
+            bool shiftHeld = ImGui.GetIO().KeyShift;
+
             if (ImGui.Button("+##AddDesign"))
             {
-                isEditDesignWindowOpen = true;
-                editedDesignName = "";
-                editedGlamourerDesign = "";
-                editedDesignMacro = "";
-                isAdvancedModeDesign = false;
-                isAdvancedModeWindowOpen = false;
-                advancedDesignMacroText = "";
+                if (shiftHeld)
+                {
+                    isImportWindowOpen = true;
+                    targetForDesignImport = plugin.Characters[activeDesignCharacterIndex];
+                }
+                else
+                {
+                    AddNewDesign();
+                }
+            }
+            ImGui.PopStyleColor();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Click to add a new design\nHold Shift to import from another character");
+                ImGui.EndTooltip();
+            }
+
+            // 🔹 Close Button (Red)
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(ImGui.GetWindowContentRegionMax().X - 20);
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetColorU32(new Vector4(1.0f, 0.27f, 0.27f, 1.0f)));
+            if (ImGui.Button("x##CloseDesignPanel"))
+            {
+                activeDesignCharacterIndex = -1;
+                isDesignPanelOpen = false;
+                isEditDesignWindowOpen = false;
+                isAdvancedModeWindowOpen = false; // ✅ Close pop-up window too
             }
             ImGui.PopStyleColor();
 
@@ -1508,21 +1847,146 @@ if (isAdvancedModeCharacter)
                 // 🔹 Input Field
                 ImGui.SetCursorPosX(10);
                 ImGui.SetNextItemWidth(inputWidth);
-                ImGui.InputText("##GlamourerDesign", ref editedGlamourerDesign, 100);
+                if (ImGui.InputText("##GlamourerDesign", ref editedGlamourerDesign, 100))
+                {
+                    if (!isAdvancedModeDesign)
+                        editedDesignMacro = GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex])
+;
+                    else
+                        advancedDesignMacroText = GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]);
+                }
 
+                if (plugin.Configuration.EnableAutomations)
+                {
+                    // 🔹 Automation Label
+                    ImGui.Text("Glamourer Automation");
+
+                    ImGui.SameLine();
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.Text("\uf05a"); // Info icon
+                    ImGui.PopFont();
+
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.PushTextWrapPos(300);
+                        ImGui.TextUnformatted("Optional: Enter the name of a Glamourer automation to use with this design.");
+                        ImGui.Separator();
+                        ImGui.TextUnformatted("⚠️ This must match the name of the automation EXACTLY.");
+                        ImGui.TextUnformatted("Just like with Glamourer Designs, capitalization and spacing matter.");
+                        ImGui.Separator();
+                        ImGui.TextUnformatted("If you don't want to use an automation here, create one in Glamourer called:");
+                        ImGui.TextUnformatted("None");
+                        ImGui.TextUnformatted("and leave it completely empty.");
+                        ImGui.Separator();
+                        ImGui.TextUnformatted("Why? Character Select+ always includes an automation line.");
+                        ImGui.TextUnformatted("This makes sure your macro is still valid even when no automation is intended.");
+                        ImGui.PopTextWrapPos();
+                        ImGui.EndTooltip();
+                    }
+
+                    // 🔹 Automation Input Field
+                    ImGui.SetCursorPosX(10);
+                    ImGui.SetNextItemWidth(inputWidth);
+                    if (ImGui.InputText("##GlamourerAutomation", ref editedAutomation, 100))
+                    {
+                        if (!isAdvancedModeDesign)
+                            editedDesignMacro = GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]);
+                        else
+                            advancedDesignMacroText = GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]);
+                    }
+                }
+                // 🔹 Customize+ Label
+                ImGui.Text("Customize+ Profile");
+
+                ImGui.SameLine();
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.Text("\uf05a"); // Info icon
+                ImGui.PopFont();
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(300);
+                    ImGui.TextUnformatted("Optional: Enter the name of a Customize+ profile to apply with this design.");
+                    ImGui.Separator();
+                    ImGui.TextUnformatted("If left blank:");
+                    ImGui.TextUnformatted("• Uses the Customize+ profile set for the character (if any).");
+                    ImGui.TextUnformatted("• Otherwise disables all Customize+ profiles.");
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
+                }
+
+                // 🔹 Input Field
+                ImGui.SetCursorPosX(10);
+                ImGui.SetNextItemWidth(200);
+                if (ImGui.InputText("##CustomizePlus", ref editedCustomizeProfile, 100))
+                {
+                    if (!isAdvancedModeDesign)
+                        editedDesignMacro = GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]);
+                    else
+                        advancedDesignMacroText = GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]);
+                }
 
                 ImGui.Separator();
+                // 🔹 Identify whether we're adding or editing
+                bool isAddMode = string.IsNullOrWhiteSpace(editedDesignName);
 
-                // 🔹 Advanced Mode Button
+                // 🔹 Add spacing
+                ImGui.Dummy(new Vector2(0, 3));
+
+                // 🔹 Conditionally show caution icon
+                if (!isAddMode || plugin.Configuration.EnableAutomations)
+                {
+                    ImGui.SameLine();
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.3f, 1f));
+                    ImGui.PushFont(UiBuilder.IconFont);
+
+                    // ✅ Scoped unique ID to avoid tooltip crossover AND icon stacking
+                    ImGui.PushID(isAddMode ? "AddWarning" : "EditWarning");
+                    ImGui.TextUnformatted("\uf071");
+                    ImGui.PopID();
+
+                    ImGui.PopFont();
+                    ImGui.PopStyleColor();
+
+                    // 🔹 Show tooltip
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.PushTextWrapPos(300);
+
+                        if (isAddMode)
+                        {
+                            if (plugin.Configuration.EnableAutomations)
+                            {
+                                ImGui.TextUnformatted("Don't forget to create an Automation in Glamourer named \"None\" and enter your in-game character name next to \"Any World\".");
+                                ImGui.Separator();
+                            }
+                        }
+                        else
+                        {
+                            ImGui.TextUnformatted("If you're using Advanced Mode, editing any of the above fields will reset your macros.");
+                            ImGui.TextUnformatted("Be sure to copy them before making changes.");
+                        }
+
+                        ImGui.PopTextWrapPos();
+                        ImGui.EndTooltip();
+                    }
+                }
+
+
                 if (ImGui.Button(isAdvancedModeDesign ? "Exit Advanced Mode" : "Advanced Mode"))
                 {
                     isAdvancedModeDesign = !isAdvancedModeDesign;
                     isAdvancedModeWindowOpen = isAdvancedModeDesign;
+
+                    // ✅ Always update macro preview with latest edits when toggling ON
                     if (isAdvancedModeDesign)
                     {
                         advancedDesignMacroText = !string.IsNullOrWhiteSpace(editedDesignMacro)
                             ? editedDesignMacro
-                            : GenerateDesignMacro();
+                            : GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]);
                     }
                 }
 
@@ -1540,24 +2004,7 @@ if (isAdvancedModeCharacter)
                     ImGui.EndTooltip();
                 }
 
-                // 🔹 Restore Advanced Mode Text Box INSIDE the Design Panel
-                if (isAdvancedModeDesign)
-                {
-                    ImGui.Separator();
-                    ImGui.Text("Edit Macro Manually:");
 
-                    float totalHeight = ImGui.GetContentRegionAvail().Y - 55;
-                    float minHeight = 110;
-                    float maxHeight = 160;
-                    float inputHeight = Math.Clamp(totalHeight, minHeight, maxHeight);
-
-                    ImGui.BeginChild("AdvancedModeSection", new Vector2(0, inputHeight), true, ImGuiWindowFlags.NoScrollbar);
-                    ImGui.InputTextMultiline("##AdvancedDesignMacro", ref advancedDesignMacroText, 2000, new Vector2(-1, inputHeight - 10), ImGuiInputTextFlags.AllowTabInput);
-                    ImGui.EndChild();
-
-                    // ✅ Auto-save Advanced Mode edits inside the panel
-                    editedDesignMacro = advancedDesignMacroText;
-                }
 
                 ImGui.Separator();
 
@@ -1735,6 +2182,8 @@ if (isAdvancedModeCharacter)
                     ImGui.InputTextMultiline("##AdvancedDesignMacroPopup", ref advancedDesignMacroText, 2000, new Vector2(-1, -1), ImGuiInputTextFlags.AllowTabInput);
                 }
                 ImGui.End();
+                if (!isAdvancedModeWindowOpen)
+                    isAdvancedModeDesign = false;
             }
         }
 
@@ -1746,19 +2195,24 @@ if (isAdvancedModeCharacter)
             editedGlamourerDesign = ""; // ✅ Reset for new design
             editedDesignMacro = ""; // ✅ Clear macro for new design
             isAdvancedModeDesign = false; // ✅ Ensure Advanced Mode starts OFF
+            editedAutomation = ""; // ✅ Reset for new automation
         }
 
         private void OpenEditDesignWindow(Character character, CharacterDesign design)
         {
             isEditDesignWindowOpen = true;
-            originalDesignName = design.Name; // ✅ Save original name before editing
             editedDesignName = design.Name;
             editedDesignMacro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
-            editedGlamourerDesign = ExtractGlamourerDesignFromMacro(design.Macro);
+            editedGlamourerDesign = !string.IsNullOrWhiteSpace(design.GlamourerDesign)
+    ? design.GlamourerDesign
+    : ExtractGlamourerDesignFromMacro(design.Macro);
+
+            editedAutomation = design.Automation;
+            editedCustomizeProfile = design.CustomizePlusProfile;
             isAdvancedModeDesign = design.IsAdvancedMode;
+            isAdvancedModeWindowOpen = design.IsAdvancedMode; // ✅ Ensure popup state matches
             advancedDesignMacroText = design.AdvancedMacro;
         }
-
 
         private void SaveDesign(Character character)
         {
@@ -1772,18 +2226,36 @@ if (isAdvancedModeCharacter)
             {
                 // ✅ Update the existing design
                 existingDesign.Name = editedDesignName;
-                existingDesign.Macro = isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro();
-                existingDesign.AdvancedMacro = isAdvancedModeDesign ? advancedDesignMacroText : "";
-                existingDesign.IsAdvancedMode = isAdvancedModeDesign;
+
+                bool wasPreviouslyAdvanced = existingDesign.IsAdvancedMode;
+                bool keepAdvanced = wasPreviouslyAdvanced && !isAdvancedModeDesign;
+
+                existingDesign.Macro = keepAdvanced
+                    ? existingDesign.AdvancedMacro
+                    : (isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]));
+
+                existingDesign.AdvancedMacro = isAdvancedModeDesign || keepAdvanced
+                    ? advancedDesignMacroText
+                    : "";
+
+                existingDesign.IsAdvancedMode = isAdvancedModeDesign || keepAdvanced;
+
+                existingDesign.Automation = editedAutomation;
+                existingDesign.GlamourerDesign = editedGlamourerDesign;
+                existingDesign.CustomizePlusProfile = editedCustomizeProfile;
             }
+
             else
             {
                 // ✅ Fallback: If the design was deleted or not found, create a new one
                 character.Designs.Add(new CharacterDesign(
                     editedDesignName,
-                    isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro(),
+                    isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro(plugin.Characters[activeDesignCharacterIndex]),
                     isAdvancedModeDesign,
-                    isAdvancedModeDesign ? advancedDesignMacroText : ""
+                    isAdvancedModeDesign ? advancedDesignMacroText : "",
+                    editedGlamourerDesign,
+                    editedAutomation,
+                    editedCustomizeProfile
                 )
                 {
                     DateAdded = DateTime.UtcNow // ✅ Set DateAdded when creating a new design
@@ -1795,12 +2267,38 @@ if (isAdvancedModeCharacter)
         }
 
 
-        private string GenerateDesignMacro()
+        private string GenerateDesignMacro(Character character)
         {
             if (string.IsNullOrWhiteSpace(editedGlamourerDesign))
                 return "";
 
-            return $"/glamour apply {editedGlamourerDesign} | self\n/penumbra redraw self";
+            string macro = $"/glamour apply {editedGlamourerDesign} | self";
+
+            // 🔹 Conditionally include automation line
+            if (plugin.Configuration.EnableAutomations)
+            {
+                string automationToUse = string.IsNullOrWhiteSpace(editedAutomation) ? "None" : editedAutomation;
+                macro += $"\n/glamour automation enable {automationToUse}";
+            }
+
+            // 🔹 Always disable Customize+ first
+            macro += "\n/customize profile disable <me>";
+
+            // 🔹 Determine Customize+ profile
+            string customizeProfileToUse = !string.IsNullOrWhiteSpace(editedCustomizeProfile)
+                ? editedCustomizeProfile
+                : !string.IsNullOrWhiteSpace(character.CustomizeProfile)
+                    ? character.CustomizeProfile
+                    : string.Empty;
+
+            // 🔹 Enable only if needed
+            if (!string.IsNullOrWhiteSpace(customizeProfileToUse))
+                macro += $"\n/customize profile enable <me>, {customizeProfileToUse}";
+
+            // 🔹 Redraw line
+            macro += "\n/penumbra redraw self";
+
+            return macro;
         }
 
 
@@ -1822,6 +2320,10 @@ if (isAdvancedModeCharacter)
             editedCharacterColor = character.NameplateColor;
             editedCharacterMacros = character.Macros;
             editedCharacterImagePath = !string.IsNullOrEmpty(character.ImagePath) ? character.ImagePath : defaultImagePath;
+            editedCharacterTag = character.Tags != null && character.Tags.Count > 0
+    ? string.Join(", ", character.Tags)
+    : "";
+
 
 
             // ✅ Load Honorific Fields Properly
@@ -1864,6 +2366,9 @@ if (isAdvancedModeCharacter)
             var character = plugin.Characters[selectedCharacterIndex];
 
             character.Name = editedCharacterName;
+            character.Tags = string.IsNullOrWhiteSpace(editedCharacterTag)
+    ? new List<string>()
+    : editedCharacterTag.Split(',').Select(f => f.Trim()).ToList();
             character.PenumbraCollection = editedCharacterPenumbra;
             character.GlamourerDesign = editedCharacterGlamourer;
             character.CustomizeProfile = editedCharacterCustomize;
@@ -1892,7 +2397,166 @@ if (isAdvancedModeCharacter)
             plugin.SaveConfiguration();
             isEditCharacterWindowOpen = false;
         }
+        private void DrawImportDesignWindow()
+        {
+            if (!isImportWindowOpen || targetForDesignImport == null)
+                return;
 
+            ImGui.SetNextWindowSize(new Vector2(600, 500), ImGuiCond.FirstUseEver);
+            if (ImGui.Begin("Import Designs", ref isImportWindowOpen, ImGuiWindowFlags.NoCollapse))
+            {
+                var grouped = plugin.Characters
+                    .Where(c => c != targetForDesignImport && c.Designs.Count > 0)
+                    .OrderBy(c => c.Name)
+                    .ToList();
+
+                foreach (var character in grouped)
+                {
+                    float barWidth = 6f;
+                    float barHeight = ImGui.GetTextLineHeight();
+                    var color = new Vector4(character.NameplateColor, 1.0f);
+
+                    // Horizontal layout: bar + header
+                    ImGui.BeginGroup();
+
+                    // Left-colored bar
+                    ImGui.PushStyleColor(ImGuiCol.ChildBg, color);
+                    ImGui.BeginChild($"##ColorAccent_{character.Name}", new Vector2(barWidth, barHeight), false);
+                    ImGui.EndChild();
+                    ImGui.PopStyleColor();
+
+                    ImGui.SameLine();
+
+                    // CollapsingHeader without extra flags = starts collapsed
+                    if (ImGui.CollapsingHeader(character.Name))
+                    {
+                        ImGui.Indent();
+
+                        foreach (var design in character.Designs)
+                        {
+                            ImGui.TextUnformatted($"• {design.Name}");
+                            ImGui.SameLine();
+
+                            if (ImGui.Button($"+##Import_{character.Name}_{design.Name}"))
+                            {
+                                var clone = new CharacterDesign(
+                                    name: design.Name + " (Copy)",
+                                    macro: design.Macro,
+                                    isAdvancedMode: design.IsAdvancedMode,
+                                    advancedMacro: design.AdvancedMacro,
+                                    glamourerDesign: design.GlamourerDesign ?? "",
+                                    automation: design.Automation ?? "",
+                                    customizePlusProfile: design.CustomizePlusProfile ?? ""
+                                );
+
+                                targetForDesignImport.Designs.Add(clone);
+                                plugin.SaveConfiguration();
+                            }
+
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.BeginTooltip();
+                                ImGui.Text("Click to import this design");
+                                ImGui.EndTooltip();
+                            }
+                        }
+                        ImGui.Unindent();
+                        ImGui.Spacing();
+                    }
+                    ImGui.EndGroup();
+                    ImGui.Spacing();
+                }
+            }
+            ImGui.End();
+        }
+
+        private unsafe void DrawReorderWindow()
+        {
+            if (!isReorderWindowOpen)
+                return;
+
+            ImGui.SetNextWindowSize(new Vector2(500, 600), ImGuiCond.FirstUseEver);
+            if (ImGui.Begin("Reorder Characters", ref isReorderWindowOpen, ImGuiWindowFlags.NoCollapse))
+            {
+                ImGui.BeginChild("CharacterReorderScroll", new Vector2(0, -45), true); // scrollable list area
+
+                for (int i = 0; i < reorderBuffer.Count; i++)
+                {
+                    var character = reorderBuffer[i];
+                    ImGui.PushID(i);
+
+                    float iconSize = 36;
+                    if (!string.IsNullOrEmpty(character.ImagePath) && File.Exists(character.ImagePath))
+                    {
+                        var texture = Plugin.TextureProvider.GetFromFile(character.ImagePath).GetWrapOrDefault();
+                        if (texture != null)
+                        {
+                            ImGui.Image(texture.ImGuiHandle, new Vector2(iconSize, iconSize));
+                            ImGui.SameLine();
+                        }
+                    }
+
+                    ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(6, 6));
+                    ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 4); // Optional tweak to center text better
+                    ImGui.Selectable(character.Name, false, ImGuiSelectableFlags.AllowDoubleClick);
+                    ImGui.PopStyleVar();
+
+
+                    // 🔽 Drag Source
+                    if (ImGui.BeginDragDropSource())
+                    {
+                        int dragIndex = i;
+                        ImGui.SetDragDropPayload("CHARACTER_REORDER", new nint(Unsafe.AsPointer(ref dragIndex)), (uint)sizeof(int));
+                        ImGui.Text($"Moving: {character.Name}");
+                        ImGui.EndDragDropSource();
+                    }
+
+                    // 🔼 Drop Target
+                    if (ImGui.BeginDragDropTarget())
+                    {
+                        var payload = ImGui.AcceptDragDropPayload("CHARACTER_REORDER");
+                        if (payload.NativePtr != null)
+                        {
+                            int dragIndex = *(int*)payload.Data;
+                            if (dragIndex >= 0 && dragIndex < reorderBuffer.Count && dragIndex != i)
+                            {
+                                var item = reorderBuffer[dragIndex];
+                                reorderBuffer.RemoveAt(dragIndex);
+                                reorderBuffer.Insert(i, item);
+                            }
+                        }
+                        ImGui.EndDragDropTarget();
+                    }
+
+                    ImGui.PopID();
+                }
+
+                ImGui.EndChild(); // end scrollable region
+
+                // 🧾 Buttons fixed at the bottom
+                float buttonWidth = 120;
+                float spacing = 20;
+                float totalWidth = (buttonWidth * 2) + spacing;
+                float centerX = (ImGui.GetWindowContentRegionMax().X - totalWidth) / 2f;
+
+                ImGui.SetCursorPosX(centerX);
+
+                if (ImGui.Button("Save Order", new Vector2(buttonWidth, 0)))
+                {
+                    plugin.Characters.Clear();
+                    plugin.Characters.AddRange(reorderBuffer);
+                    plugin.SaveConfiguration();
+                    isReorderWindowOpen = false;
+                }
+
+                ImGui.SameLine();
+                if (ImGui.Button("Cancel", new Vector2(buttonWidth, 0)))
+                {
+                    isReorderWindowOpen = false;
+                }
+                ImGui.End();
+            }
+        }
 
     }
 }

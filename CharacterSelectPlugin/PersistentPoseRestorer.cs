@@ -2,7 +2,6 @@
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
-using System.Threading.Tasks;
 
 namespace CharacterSelectPlugin.Managers;
 

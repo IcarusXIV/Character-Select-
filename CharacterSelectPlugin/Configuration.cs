@@ -26,6 +26,11 @@ namespace CharacterSelectPlugin
         public int CurrentSortIndex { get; set; } = 0; // Default to Manual (SortType.Manual = 0)
         public PersistentPoseSet DefaultPoses { get; set; } = new();
         public bool IsQuickSwitchWindowOpen { get; set; } = false;
+        public bool EnableAutomations { get; set; } = false;
+        public string LastSeenVersion { get; set; } = "";
+        public ProfileSharing RPSharingMode { get; set; } = ProfileSharing.AlwaysShare;
+        public List<string> KnownTags { get; set; } = new();
+
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)

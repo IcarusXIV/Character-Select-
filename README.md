@@ -12,7 +12,7 @@ With **Character Select+**, all of this is handled **instantly**—no hassle, no
 ---
 ---
 ## **Discord**  
-🔹 https://discord.gg/kQNuw5pn
+🔹 https://discord.gg/8JykGErcX4
 ---
 
 ## **Features**  

@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
-using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 
 namespace CharacterSelectPlugin.Windows
@@ -187,8 +186,32 @@ namespace CharacterSelectPlugin.Windows
             if (!hasAppliedMacroThisSession || selectedCharacterIndex != lastAppliedCharacterIndex)
             {
                 plugin.ExecuteMacro(character.Macros);
+                plugin.SetActiveCharacter(character);
                 lastAppliedCharacterIndex = selectedCharacterIndex;
                 hasAppliedMacroThisSession = true;
+                var profileToSend = new RPProfile
+                {
+                    Pronouns = character.RPProfile?.Pronouns,
+                    Gender = character.RPProfile?.Gender,
+                    Age = character.RPProfile?.Age,
+                    Orientation = character.RPProfile?.Orientation,
+                    Relationship = character.RPProfile?.Relationship,
+                    Occupation = character.RPProfile?.Occupation,
+                    Abilities = character.RPProfile?.Abilities,
+                    Bio = character.RPProfile?.Bio,
+                    Tags = character.RPProfile?.Tags,
+                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+    ? character.RPProfile.CustomImagePath
+    : character.ImagePath,
+                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                    CharacterName = character.Name, // ✅ force correct name
+                    NameplateColor = character.NameplateColor // ✅ force correct color
+                };
+
+                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
             }
 
             // ✅ Always apply the design if selected

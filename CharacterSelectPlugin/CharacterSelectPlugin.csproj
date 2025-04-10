@@ -1,9 +1,9 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/12.0.2">
     <PropertyGroup>
         <TargetFramework>net9.0-windows</TargetFramework>
-        <!-- Windows-specific target framework -->
-        <Version>1.0.1.5</Version>
+        <Version>1.1.0.0</Version>
+        <AssemblyVersion>1.1.0.0</AssemblyVersion>
+        <FileVersion>1.1.0.0</FileVersion>
         <Description>Character Select+.</Description>
         <PackageProjectUrl>https://github.com/USBTURTLECUP/Character-Select-</PackageProjectUrl>
         <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
@@ -17,9 +17,11 @@
             <Visible>false</Visible>
         </Content>
     </ItemGroup>
+
     <ItemGroup>
         <Reference Include="System.Windows.Forms" />
     </ItemGroup>
+
     <ItemGroup>
         <Content Include="CharacterSelectPlugin.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

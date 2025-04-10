@@ -7,17 +7,18 @@ using Dalamud.Plugin.Services;
 using CharacterSelectPlugin.Windows;
 using System.Collections.Generic;
 using System.Numerics;
-using ImGuiNET;
 using System.Linq;
-using Dalamud.Game.Gui;
 using System;
 using CharacterSelectPlugin.Managers;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using System.Text.RegularExpressions;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
-using static FFXIVClientStructs.FFXIV.Client.UI.Misc.BannerHelper.Delegates;
 using System.Threading.Tasks;
-
+using Dalamud.Plugin.Ipc;
+using System.Net.Http;
+using System.Text;
+using Newtonsoft.Json;
+using Dalamud.Game.ClientState.Objects;
 
 namespace CharacterSelectPlugin
 {
@@ -31,6 +32,11 @@ namespace CharacterSelectPlugin
         [PluginService] internal static IPluginLog Log { get; private set; } = null!;
         [PluginService] private static IChatGui ChatGui { get; set; } = null!;
         [PluginService] internal static IFramework Framework { get; private set; } = null!;
+        [PluginService] internal static IContextMenu ContextMenu { get; private set; } = null!;
+        [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
+        [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
+
+
 
 
 
@@ -40,6 +46,10 @@ namespace CharacterSelectPlugin
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
         private MainWindow MainWindow { get; init; }
         public QuickSwitchWindow QuickSwitchWindow { get; init; } // ✅ New Quick Switch Window
+        public PatchNotesWindow PatchNotesWindow { get; private set; } = null!;
+        public RPProfileWindow RPProfileEditor { get; private set; }
+        public RPProfileViewWindow RPProfileViewer { get; private set; }
+
 
 
         // Character data storage
@@ -67,10 +77,13 @@ namespace CharacterSelectPlugin
         public PoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
-
-
-
-
+        public static readonly string CurrentPluginVersion = "1.1.0.0"; // 🧠 Match repo.json and .csproj version
+        private ICallGateSubscriber<string, RPProfile>? requestProfile;
+        private ICallGateProvider<string, RPProfile>? provideProfile;
+        private ContextMenuManager? contextMenuManager;
+        private static readonly Dictionary<string, string> ActiveProfilesByPlayerName = new();
+        public string NewCharacterTag { get; set; } = "";
+        public List<string> KnownTags => Configuration.KnownTags;
 
 
 
@@ -100,6 +113,28 @@ namespace CharacterSelectPlugin
                     character.Macros = newMacro;
             }
 
+            // 🔹 Patch existing Design macros to add automation if missing
+            foreach (var character in Configuration.Characters)
+            {
+                foreach (var design in character.Designs)
+                {
+                    string macroToPatch = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+
+                    if (string.IsNullOrWhiteSpace(macroToPatch))
+                        continue;
+
+                    string updated = SanitizeDesignMacro(macroToPatch, design, character, Configuration.EnableAutomations); // <-- pass character too
+
+                    if (updated != macroToPatch)
+                    {
+                        if (design.IsAdvancedMode)
+                            design.AdvancedMacro = updated;
+                        else
+                            design.Macro = updated;
+                    }
+                }
+            }
+
             // Optionally save once
             Configuration.Save();
 
@@ -125,10 +160,28 @@ namespace CharacterSelectPlugin
             QuickSwitchWindow = new QuickSwitchWindow(this); // ✅ Add Quick Switch Window
             QuickSwitchWindow.IsOpen = Configuration.IsQuickSwitchWindowOpen; // ✅ Restore last open state
 
+            RPProfileEditor = new RPProfileWindow(this);
+            WindowSystem.AddWindow(RPProfileEditor);
+
+            RPProfileViewer = new RPProfileViewWindow(this);
+            WindowSystem.AddWindow(RPProfileViewer);
+
+            // This player REGISTERING their profile, if someone else requests it
+            provideProfile = PluginInterface.GetIpcProvider<string, RPProfile>("CharacterSelect.RPProfile.Provide");
+            provideProfile.RegisterFunc(HandleProfileRequest);
+
+            // This player SENDING a request to another
+            requestProfile = PluginInterface.GetIpcSubscriber<string, RPProfile>("CharacterSelect.RPProfile.Provide");
+
+            // Patch Notes
+            PatchNotesWindow = new PatchNotesWindow(this);
+            if (Configuration.LastSeenVersion != CurrentPluginVersion)
+                PatchNotesWindow.IsOpen = true;
+            //PatchNotesWindow.IsOpen = true;
 
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(QuickSwitchWindow); // ✅ Register the Quick Switch Window
-
+            WindowSystem.AddWindow(PatchNotesWindow); // ✅ Register the Patch Notes Window
 
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -233,6 +286,17 @@ namespace CharacterSelectPlugin
             {
                 HelpMessage = "Saves your current idle/sit/ground/doze poses persistently."
             });
+            
+            CommandManager.AddHandler("/viewrp", new CommandInfo(OnViewRPCommand)
+            {
+                HelpMessage = "View the RP profile of a character (if shared). Usage: /viewrp self | t | First Last@World"
+            });
+            ClientState.Login += () =>
+            {
+                Plugin.Log.Debug($"[Character Select+] Local character name: {ClientState.LocalPlayer?.Name.TextValue}");
+            };
+
+            contextMenuManager = new ContextMenuManager(this, Plugin.ContextMenu);
 
         }
         private void OnLogin()
@@ -280,6 +344,52 @@ namespace CharacterSelectPlugin
         }
         public void ApplyProfile(Character character, int designIndex)
         {
+            if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            {
+                string localName = player.Name.TextValue;
+                string worldName = player.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                string newProfileKey = $"{character.Name}@{worldName}";
+
+                // 🧹 Remove all old entries for this player
+                var toRemove = ActiveProfilesByPlayerName
+                    .Where(kvp => kvp.Key.StartsWith($"{localName}@{worldName}", StringComparison.OrdinalIgnoreCase))
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var oldKey in toRemove)
+                    ActiveProfilesByPlayerName.Remove(oldKey);
+
+                // ✅ Register the new key → active character mapping
+                ActiveProfilesByPlayerName[fullKey] = newProfileKey;
+                character.LastInGameName = fullKey;
+
+                Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {fullKey} for profile {character.Name}");
+                var profileToSend = new RPProfile
+                {
+                    Pronouns = character.RPProfile?.Pronouns,
+                    Gender = character.RPProfile?.Gender,
+                    Age = character.RPProfile?.Age,
+                    Orientation = character.RPProfile?.Orientation,
+                    Relationship = character.RPProfile?.Relationship,
+                    Occupation = character.RPProfile?.Occupation,
+                    Abilities = character.RPProfile?.Abilities,
+                    Bio = character.RPProfile?.Bio,
+                    Tags = character.RPProfile?.Tags,
+                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+    ? character.RPProfile.CustomImagePath
+    : character.ImagePath,
+                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                    CharacterName = character.Name, // ✅ force correct name
+                    NameplateColor = character.NameplateColor // ✅ force correct color
+                };
+
+                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+            }
+            SaveConfiguration();
             if (character == null) return;
 
             // ✅ Apply the character's macro
@@ -297,6 +407,7 @@ namespace CharacterSelectPlugin
                 PoseManager.ApplyPose(EmoteController.PoseType.Idle, character.IdlePoseIndex);
             }
             PoseRestorer.RestorePosesFor(character);
+            SaveConfiguration();
 
         }
 
@@ -314,6 +425,11 @@ namespace CharacterSelectPlugin
                     Configuration.GetType().GetProperty("IsConfigWindowMovable")?.SetValue(Configuration, true);
                     updated = true;
                 }
+            }
+            if (!Configuration.GetType().GetProperties().Any(p => p.Name == nameof(Configuration.EnableAutomations)))
+            {
+                Configuration.EnableAutomations = false;
+                updated = true;
             }
 
             // ✅ Fix: Correctly handle nullable values & avoid unboxing issues
@@ -367,6 +483,7 @@ namespace CharacterSelectPlugin
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler("/spose");
             CommandManager.RemoveHandler("/savepose");
+            contextMenuManager?.Dispose();
 
         }
 
@@ -407,7 +524,8 @@ namespace CharacterSelectPlugin
             string characterName = matches[0];
             string? designName = matches.Length > 1 ? string.Join(" ", matches.Skip(1)) : null;
 
-            var character = Characters.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+            var character = Characters.FirstOrDefault(c =>
+    c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
 
             if (character == null)
             {
@@ -418,7 +536,7 @@ namespace CharacterSelectPlugin
             if (string.IsNullOrWhiteSpace(designName))
             {
                 ChatGui.Print($"[Character Select+] Applying profile: {character.Name}");
-                ExecuteMacro(character.Macros);
+                ApplyProfile(character, -1); // -1 skips design
             }
             else
             {
@@ -500,6 +618,7 @@ namespace CharacterSelectPlugin
         {
             if (!string.IsNullOrEmpty(NewCharacterName))
             {
+                var folderToSave = (NewCharacterTag == "All") ? "" : NewCharacterTag;
                 var newCharacter = new Character(
                     NewCharacterName,
                     macroToSave, // ✅ Preserve Advanced Mode Macro when saving
@@ -519,7 +638,10 @@ namespace CharacterSelectPlugin
                     NewCharacterMoodlePreset //MOODLES
                 )
                 {
-                    IdlePoseIndex = NewCharacterIdlePoseIndex // ✅ IdLES
+                    IdlePoseIndex = NewCharacterIdlePoseIndex, // ✅ IdLES
+                    Tags = string.IsNullOrWhiteSpace(NewCharacterTag)
+    ? new List<string>()
+    : NewCharacterTag.Split(',').Select(f => f.Trim()).ToList()
                 };
 
                 // ✅ Auto-create a Design based on Glamourer Design if available
@@ -621,6 +743,13 @@ namespace CharacterSelectPlugin
                 }
             }
 
+            lines = lines
+       .Where(l =>
+           !l.TrimStart().StartsWith("/savepose", StringComparison.OrdinalIgnoreCase) ||
+           character.IdlePoseIndex != 7)
+       .ToList();
+
+
             // Always ensure these are present
             AddOrReplace("/customize profile disable <me>");
             AddOrReplace("/honorific force clear");
@@ -642,17 +771,438 @@ namespace CharacterSelectPlugin
                 }
             }
 
-            // ➕ /savepose should go right before /penumbra redraw self
-            int redrawIndex = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
-            if (!lines.Any(l => l.StartsWith("/savepose", StringComparison.OrdinalIgnoreCase)))
+            // ✅ Only insert /savepose if idle pose is actually selected
+            if (character.IdlePoseIndex != 7)
             {
-                if (redrawIndex != -1)
-                    lines.Insert(redrawIndex, "/savepose");
-                else
-                    lines.Add("/savepose");
+                // ➕ /savepose should go right before /penumbra redraw self
+                int redrawIndex = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
+                if (!lines.Any(l => l.StartsWith("/savepose", StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (redrawIndex != -1)
+                        lines.Insert(redrawIndex, "/savepose");
+                    else
+                        lines.Add("/savepose");
+                }
             }
 
+
             return string.Join("\n", lines);
+        }
+        public static string SanitizeDesignMacro(string macro, CharacterDesign design, Character character, bool enableAutomations)
+        {
+            var lines = macro.Split('\n').Select(l => l.Trim()).ToList();
+
+            // ➕ Add automation if missing (only if enabled)
+            if (enableAutomations &&
+                !lines.Any(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase)))
+            {
+                string automationName = string.IsNullOrWhiteSpace(design.Automation) ? "None" : design.Automation;
+
+                int index = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
+                if (index != -1)
+                    lines.Insert(index, $"/glamour automation enable {automationName}");
+                else
+                    lines.Add($"/glamour automation enable {automationName}");
+            }
+
+            // 🔧 Fix Customize+ lines to always disable first, then enable (if needed)
+
+            // Remove ALL existing customize lines
+            lines.RemoveAll(l => l.StartsWith("/customize profile", StringComparison.OrdinalIgnoreCase));
+
+            // Always insert disable before redraw
+            int redrawIndex = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
+            int insertIndex = redrawIndex != -1 ? redrawIndex : lines.Count;
+            lines.Insert(insertIndex, "/customize profile disable <me>");
+
+            // Conditionally insert enable right after disable
+            string customizeProfile = !string.IsNullOrWhiteSpace(design.CustomizePlusProfile)
+                ? design.CustomizePlusProfile
+                : character.CustomizeProfile;
+
+            if (!string.IsNullOrWhiteSpace(customizeProfile))
+            {
+                lines.Insert(insertIndex + 1, $"/customize profile enable <me>, {customizeProfile}");
+            }
+
+
+            return string.Join("\n", lines);
+        }
+
+        public void OpenRPProfileWindow(Character character)
+        {
+            RPProfileViewer.IsOpen = false;                      // ✅ Close first to reset state
+            RPProfileViewer.SetCharacter(character);             // ✅ Set new character
+            RPProfileViewer.IsOpen = true;                       // ✅ Reopen fresh
+        }
+
+        public void OpenRPProfileViewWindow(Character character)
+        {
+            RPProfileViewer.SetCharacter(character);
+            RPProfileViewer.IsOpen = true;
+        }
+        private RPProfile HandleProfileRequest(string requestedName)
+        {
+            // If the sender includes "@World", use it as-is
+            string lookupKey = requestedName;
+
+            // Otherwise, assume it's FullName and append your own world
+            if (!requestedName.Contains('@') && ClientState.LocalPlayer?.HomeWorld.IsValid == true)
+            {
+                string world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                lookupKey = $"{requestedName}@{world}";
+            }
+
+            if (ActiveProfilesByPlayerName.TryGetValue(lookupKey, out var overrideName))
+            {
+                lookupKey = overrideName;
+            }
+
+            // Find the matching character with LastInGameName == lookupKey
+            var character = Characters.FirstOrDefault(c =>
+                string.Equals(c.LastInGameName, lookupKey, StringComparison.OrdinalIgnoreCase));
+
+            return character?.RPProfile ?? new RPProfile();
+        }
+
+
+        private async void OnViewRPCommand(string command, string args)
+        {
+            if (string.IsNullOrWhiteSpace(args))
+            {
+                ChatGui.PrintError("[Character Select+] Usage: /viewrp <Character Name>");
+                return;
+            }
+
+            string targetName = args.Trim();
+
+            if (targetName.Equals("self", StringComparison.OrdinalIgnoreCase))
+            {
+                var me = Plugin.ClientState.LocalPlayer;
+                if (me != null && me.HomeWorld.IsValid)
+                {
+                    var localNameStr = me.Name.TextValue;
+                    var worldNameStr = me.HomeWorld.Value.Name.ToString();
+                    targetName = $"{localNameStr}@{worldNameStr}";
+                }
+            }
+            if (targetName.Equals("<t>", StringComparison.OrdinalIgnoreCase) || targetName.Equals("t", StringComparison.OrdinalIgnoreCase))
+            {
+                var rawTarget = TargetManager.Target;
+
+                if (rawTarget == null)
+                {
+                    ChatGui.PrintError("[Character Select+] You are not targeting anything.");
+                    return;
+                }
+
+                ChatGui.Print($"[DEBUG] Target kind: {rawTarget.ObjectKind}, Name: {rawTarget.Name}");
+
+                if (rawTarget.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player)
+                {
+                    ChatGui.PrintError("[Character Select+] You must target a player.");
+                    return;
+                }
+
+                string name = rawTarget.Name.ToString();
+                string world = ClientState.LocalPlayer?.HomeWorld.Value.Name.ToString() ?? "Unknown";
+
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(world))
+                {
+                    ChatGui.PrintError("[Character Select+] Could not resolve target's full name.");
+                    return;
+                }
+
+                targetName = $"{name}@{world}";
+            }
+
+
+            ChatGui.Print($"[Character Select+] Looking for {targetName}'s profile");
+
+            // ✅ Try to get local name first
+            string? localName = ClientState.LocalPlayer?.Name.TextValue;
+
+            // ✅ If player is trying to view their own profile, skip IPC
+            if (ActiveProfilesByPlayerName.TryGetValue(targetName, out var overrideName))
+            {
+                var character = Characters.FirstOrDefault(c =>
+                    string.Equals(c.LastInGameName, overrideName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Name, overrideName, StringComparison.OrdinalIgnoreCase));
+
+                if (character?.RPProfile == null || character.RPProfile.IsEmpty())
+                {
+                    ChatGui.PrintError($"[Character Select+] No RP profile set for {overrideName}.");
+                    return;
+                }
+
+                RPProfileViewer.SetCharacter(character);
+                RPProfileViewer.IsOpen = true;
+                return;
+            }
+            else if (!string.IsNullOrEmpty(ClientState.LocalPlayer?.Name.TextValue) &&
+                     ClientState.LocalPlayer?.Name.TextValue.Equals(targetName, StringComparison.OrdinalIgnoreCase) == true)
+            {
+
+                var match = Characters.FirstOrDefault(c => c.LastInGameName != null &&
+                                                           c.LastInGameName.Equals(localName, StringComparison.OrdinalIgnoreCase));
+                if (match == null || match.RPProfile == null || match.RPProfile.IsEmpty())
+                {
+                    ChatGui.PrintError("[DEBUG] No matching Character Select+ profile or RPProfile found.");
+                    return;
+                }
+
+                RPProfileViewer.SetCharacter(match);
+                RPProfileViewer.IsOpen = true;
+                return;
+            }
+
+            // ✅ Only hits this if not matched above
+            try
+            {
+                var profile = await DownloadProfileAsync(targetName);
+
+                if (profile != null && !profile.IsEmpty())
+                {
+                    RPProfileViewer.SetExternalProfile(profile);
+                    RPProfileViewer.IsOpen = true;
+                    ChatGui.Print($"[Character Select+] Received RP profile from {targetName}.");
+                }
+                else
+                {
+                    ChatGui.Print($"[Character Select+] {targetName} is currently not sharing their RP Profile or has not yet created one.");
+                }
+            }
+            catch (Exception ex)
+            {
+                ChatGui.PrintError($"[Character Select+] IPC request failed: {ex.Message}");
+            }
+        }
+        public void SetActiveCharacter(Character character)
+        {
+            if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            {
+                string localName = player.Name.TextValue;
+                string worldName = player.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+
+                ActiveProfilesByPlayerName[fullKey] = character.Name;
+                character.LastInGameName = fullKey;
+
+                Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {fullKey} for profile {character.Name}");
+
+                // ✅ THIS is the correct upload:
+                var profileToSend = new RPProfile
+                {
+                    Pronouns = character.RPProfile?.Pronouns,
+                    Gender = character.RPProfile?.Gender,
+                    Age = character.RPProfile?.Age,
+                    Orientation = character.RPProfile?.Orientation,
+                    Relationship = character.RPProfile?.Relationship,
+                    Occupation = character.RPProfile?.Occupation,
+                    Abilities = character.RPProfile?.Abilities,
+                    Bio = character.RPProfile?.Bio,
+                    Tags = character.RPProfile?.Tags,
+                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+    ? character.RPProfile.CustomImagePath
+    : character.ImagePath,
+                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                    CharacterName = character.Name, // ✅ force correct name
+                    NameplateColor = character.NameplateColor // ✅ force correct color
+                };
+
+                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+            }
+        }
+        public async Task TryRequestRPProfile(string targetName)
+        {
+            var profile = await DownloadProfileAsync(targetName);
+
+            if (profile != null && !profile.IsEmpty())
+            {
+                RPProfileViewer.SetExternalProfile(profile);
+                RPProfileViewer.IsOpen = true;
+                ChatGui.Print($"[Character Select+] Received RP profile for {targetName}.");
+            }
+            else
+            {
+                ChatGui.Print($"[Character Select+] No shared RP profile found for {targetName}.");
+            }
+        }
+
+        public static async Task UploadProfileAsync(RPProfile profile, string characterName)
+        {
+            try
+            {
+                using var http = new HttpClient();
+                using var form = new MultipartFormDataContent();
+
+                // 🔍 Get character match from config
+                var config = PluginInterface.GetPluginConfig() as Configuration;
+                Character? match = config?.Characters.FirstOrDefault(c => c.LastInGameName == characterName);
+
+                if (match != null)
+                {
+                    profile.CharacterName ??= match.Name;
+
+                    if (profile.NameplateColor.X <= 0f && profile.NameplateColor.Y <= 0f && profile.NameplateColor.Z <= 0f)
+                        profile.NameplateColor = match.NameplateColor;
+
+                    // ✅ Only overwrite if NOT set
+                    if (Math.Abs(profile.ImageZoom) < 0.01f)
+                        profile.ImageZoom = match.RPProfile.ImageZoom;
+
+                    if (profile.ImageOffset == Vector2.Zero)
+                        profile.ImageOffset = match.RPProfile.ImageOffset;
+                }
+
+                // 🧠 Determine correct image to upload
+                string? imagePathToUpload = null;
+
+                if (!string.IsNullOrEmpty(profile.CustomImagePath) && File.Exists(profile.CustomImagePath))
+                {
+                    imagePathToUpload = profile.CustomImagePath; // ✅ FIXED LINE
+                }
+                else if (!string.IsNullOrEmpty(match?.ImagePath) && File.Exists(match.ImagePath))
+                {
+                    imagePathToUpload = match.ImagePath;
+                }
+
+                // ✅ Attach image if found
+                if (!string.IsNullOrEmpty(imagePathToUpload) && File.Exists(imagePathToUpload))
+                {
+                    var imageStream = File.OpenRead(imagePathToUpload);
+                    var imageContent = new StreamContent(imageStream);
+                    imageContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+
+                    form.Add(imageContent, "image", $"{Guid.NewGuid()}.png");
+                }
+
+                // 📨 Upload JSON
+                string json = JsonConvert.SerializeObject(profile);
+                form.Add(new StringContent(json, Encoding.UTF8, "application/json"), "profile");
+
+                // 🌐 Send
+                string urlSafeName = Uri.EscapeDataString(characterName);
+                var response = await http.PostAsync($"https://character-select-profile-server-production.up.railway.app/upload/{urlSafeName}", form);
+
+                var responseJson = await response.Content.ReadAsStringAsync();
+                var updated = JsonConvert.DeserializeObject<RPProfile>(responseJson);
+                if (updated?.ProfileImageUrl is { Length: > 0 })
+                    profile.ProfileImageUrl = updated.ProfileImageUrl;
+                if (match?.RPProfile != null && updated?.ProfileImageUrl is { Length: > 0 })
+                {
+                    match.RPProfile.ProfileImageUrl = updated.ProfileImageUrl;
+                    Plugin.Log.Debug($"[UploadProfile] Updated ProfileImageUrl for {characterName} = {updated.ProfileImageUrl}");
+                    config?.Save();
+                }
+
+                if (!response.IsSuccessStatusCode)
+                    Plugin.Log.Warning($"[UploadProfile] Failed to upload profile for {characterName}: {response.StatusCode}");
+                else
+                    Plugin.Log.Debug($"[UploadProfile] Successfully uploaded profile for {characterName}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[UploadProfile] Exception: {ex.Message}");
+            }
+        }
+
+
+        public static async Task<RPProfile?> FetchProfileAsync(string characterName)
+        {
+            try
+            {
+                using var http = new HttpClient();
+                string urlSafeName = Uri.EscapeDataString(characterName);
+                var response = await http.GetAsync($"https://character-select-profile-server-production.up.railway.app/profiles/{urlSafeName}");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    return RPProfileJson.Deserialize(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[FetchProfile] Error fetching profile for {characterName}: {ex.Message}");
+            }
+
+            return null;
+        }
+        public static async Task<RPProfile?> DownloadProfileAsync(string characterName)
+        {
+            try
+            {
+                using var http = new HttpClient();
+                string urlSafeName = Uri.EscapeDataString(characterName);
+
+                var response = await http.GetAsync($"https://character-select-profile-server-production.up.railway.app/view/{urlSafeName}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    Plugin.Log.Warning($"[DownloadProfile] Profile not found for {characterName}");
+                    return null;
+                }
+
+                string json = await response.Content.ReadAsStringAsync();
+                return RPProfileJson.Deserialize(json);
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[DownloadProfile] Exception: {ex.Message}");
+                return null;
+            }
+        }
+        public static string GenerateTargetMacro(string original)
+        {
+            var lines = original.Split('\n');
+            var result = new List<string>();
+
+            foreach (var rawLine in lines)
+            {
+                string line = rawLine.Trim();
+
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                // 🚫 Skip lines that should never apply to targets
+                if (
+                    line.StartsWith("/customize profile disable", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("/honorific", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("/moodle", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("/spose", StringComparison.OrdinalIgnoreCase) ||
+                    line.StartsWith("/savepose", StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    continue; // Omit this line entirely
+                }
+
+                // 🎯 Rewriting self-targeting lines to <t>
+                bool shouldTarget =
+                    line.Contains("/penumbra", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("/glamour", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("/customize profile enable", StringComparison.OrdinalIgnoreCase);
+
+                if (shouldTarget)
+                {
+                    line = line
+                        .Replace(" self", " <t>")
+                        .Replace(" Self", " <t>")
+                        .Replace("| self", "| <t>")
+                        .Replace("| Self", "| <t>")
+                        .Replace("<me>", "<t>");
+                }
+
+                // 🎯 Specific override
+                if (line.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase))
+                    line = "/penumbra redraw target";
+
+                result.Add(line);
+            }
+
+            return string.Join("\n", result);
         }
 
 

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
+using Newtonsoft.Json;
 
 namespace CharacterSelectPlugin
 {
@@ -28,6 +30,34 @@ namespace CharacterSelectPlugin
         public byte SitPoseIndex { get; set; } = 255;
         public byte GroundSitPoseIndex { get; set; } = 255;
         public byte DozePoseIndex { get; set; } = 255;
+        public string? Pronouns { get; set; }
+        public string? Gender { get; set; }
+        public string? Age { get; set; }
+        public string? SexualOrientation { get; set; }
+        public string? RelationshipStatus { get; set; }
+        public string? Occupation { get; set; }
+        public string? Abilities { get; set; }
+        public string? Bio { get; set; }
+        public string? RpTags { get; set; }
+        public string? RpImagePath { get; set; } // Optional override image
+        public RPProfile RPProfile { get; set; } = new();
+        public string? LastInGameName { get; set; }
+        public List<string> Tags { get; set; } = new();
+        [JsonIgnore]
+        public string Tag
+        {
+            get => Tags.FirstOrDefault() ?? "";
+            set
+            {
+                Tags.Clear();
+                if (!string.IsNullOrWhiteSpace(value))
+                    Tags.Add(value);
+            }
+        }
+        public List<string> KnownTags { get; set; } = new();
+        public List<string> DesignTags { get; set; } = new List<string>();
+
+
 
 
 
