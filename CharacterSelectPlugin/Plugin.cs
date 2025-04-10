@@ -84,6 +84,7 @@ namespace CharacterSelectPlugin
         private static readonly Dictionary<string, string> ActiveProfilesByPlayerName = new();
         public string NewCharacterTag { get; set; } = "";
         public List<string> KnownTags => Configuration.KnownTags;
+        public string NewCharacterAutomation { get; set; } = "";
 
 
 
@@ -297,6 +298,7 @@ namespace CharacterSelectPlugin
             };
 
             contextMenuManager = new ContextMenuManager(this, Plugin.ContextMenu);
+            this.CleanupUnusedProfileImages();
 
         }
         private void OnLogin()
@@ -635,7 +637,8 @@ namespace CharacterSelectPlugin
                     NewCharacterHonorificSuffix,
                     NewCharacterHonorificColor,
                     NewCharacterHonorificGlow,
-                    NewCharacterMoodlePreset //MOODLES
+                    NewCharacterMoodlePreset, //MOODLES
+                    NewCharacterAutomation // Glamourer Automations
                 )
                 {
                     IdlePoseIndex = NewCharacterIdlePoseIndex, // ✅ IdLES
@@ -680,6 +683,7 @@ namespace CharacterSelectPlugin
                 NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
                 NewCharacterMoodlePreset = ""; //MOODLES
                 NewCharacterIdlePoseIndex = 8; // IDLES
+                NewCharacterAutomation = ""; //AUTOMATIONS
             }
         }
 
@@ -749,6 +753,28 @@ namespace CharacterSelectPlugin
            character.IdlePoseIndex != 7)
        .ToList();
 
+            // ✅ Insert /glamour automation enable {X} after last /glamour apply
+            if (PluginInterface.GetPluginConfig() is Configuration config && config.EnableAutomations)
+            {
+                string automation = string.IsNullOrWhiteSpace(character.CharacterAutomation) ? "None" : character.CharacterAutomation.Trim();
+
+                if (!lines.Any(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase)))
+                {
+                    int lastGlamourIndex = -1;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        if (lines[i].StartsWith("/glamour apply", StringComparison.OrdinalIgnoreCase))
+                            lastGlamourIndex = i;
+                    }
+
+                    string automationLine = $"/glamour automation enable {automation}";
+
+                    if (lastGlamourIndex != -1)
+                        lines.Insert(lastGlamourIndex + 1, automationLine); // Insert after the last /glamour apply
+                    else
+                        lines.Insert(0, automationLine); // Fallback
+                }
+            }
 
             // Always ensure these are present
             AddOrReplace("/customize profile disable <me>");
@@ -1204,7 +1230,39 @@ namespace CharacterSelectPlugin
 
             return string.Join("\n", result);
         }
+        public void CleanupUnusedProfileImages()
+        {
+            try
+            {
+                var dir = PluginInterface.GetPluginConfigDirectory();
+                if (!Directory.Exists(dir))
+                    return;
 
+                var allFiles = Directory.GetFiles(dir, "RPImage_*.png");
+                var usedPaths = this.Characters
+                    .Select(c => c.RPProfile?.ProfileImageUrl)
+                    .Where(url => !string.IsNullOrEmpty(url))
+                    .Select(url =>
+                    {
+                        var hash = Convert.ToBase64String(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(url!)))
+                            .Replace("/", "_").Replace("+", "-");
+                        return Path.Combine(dir, $"RPImage_{hash}.png");
+                    }).ToHashSet();
+
+                foreach (var file in allFiles)
+                {
+                    if (!usedPaths.Contains(file))
+                    {
+                        File.Delete(file);
+                        Log.Debug($"[Cleanup] Deleted orphaned image: {file}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Cleanup] Failed to clean up profile images: {ex.Message}");
+            }
+        }
 
     }
 }

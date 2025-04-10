@@ -52,6 +52,10 @@ namespace CharacterSelectPlugin.Windows
         private string editedCharacterHonorificSuffix = "Suffix";
         private Vector3 editedCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
         private Vector3 editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+        private string editedCharacterAutomation = "";
+        private string tempCharacterAutomation = "";  // Temp variable for automation
+
+
 
         //MOODLES
         public string MoodlePreset { get; set; } = "";
@@ -73,7 +77,6 @@ namespace CharacterSelectPlugin.Windows
         // Reordering
         private bool isReorderWindowOpen = false;
         private List<Character> reorderBuffer = new();
-        private Character? characterBeingDragged = null;
         // Tags
         private string selectedTag = "All";
         private string editedCharacterTag = "";
@@ -349,17 +352,16 @@ namespace CharacterSelectPlugin.Windows
                     {
                         ImGui.BeginTooltip();
                         ImGui.PushTextWrapPos(300);
-                        ImGui.TextUnformatted("Enable support for Glamourer Automations in Designs.");
+                        ImGui.TextUnformatted("Enable support for Glamourer Automations in Characters & Designs.");
                         ImGui.Separator();
-                        ImGui.TextUnformatted("When enabled, you’ll be able to assign an Automation to each design.");
-                        ImGui.TextUnformatted("⚠️ Designs without automations will require a fallback Automation in Glamourer named:");
+                        ImGui.TextUnformatted("When enabled, you’ll be able to assign an Automation to each character & design.");
+                        ImGui.TextUnformatted("⚠️ Characters & Designs without automations will require a fallback Automation in Glamourer named:");
                         ImGui.TextUnformatted("\"None\"");
-                        ImGui.TextUnformatted("You also must enter your in-game character name in Glamourer next to \"Any World\".");
+                        ImGui.TextUnformatted("You also must enter your in-game character name in Glamourer next to \"Any World\" and Set to Character.");
                         ImGui.PopTextWrapPos();
                         ImGui.EndTooltip();
                     }
 
-                    // 🔘 Automation Opt-In Checkbox (just below label)
                     bool automationToggle = plugin.Configuration.EnableAutomations;
                     if (ImGui.Checkbox("Enable Automations", ref automationToggle))
                     {
@@ -367,9 +369,24 @@ namespace CharacterSelectPlugin.Windows
 
                         bool changed = false;
 
+                        // ✨ Character-level Automation Handling
+                        foreach (var character in plugin.Characters)
+                        {
+                            if (!automationToggle)
+                            {
+                                character.CharacterAutomation = string.Empty;
+                            }
+                            else if (string.IsNullOrWhiteSpace(character.CharacterAutomation))
+                            {
+                                character.CharacterAutomation = "None";
+                            }
+                        }
+
                         if (!automationToggle)
                         {
                             // 🧼 Remove automation lines from all macros
+
+                            // 🔹 From Designs
                             foreach (var character in plugin.Characters)
                             {
                                 foreach (var design in character.Designs)
@@ -395,10 +412,30 @@ namespace CharacterSelectPlugin.Windows
                                     }
                                 }
                             }
+
+                            // 🔹 From Characters
+                            foreach (var character in plugin.Characters)
+                            {
+                                if (string.IsNullOrWhiteSpace(character.Macros))
+                                    continue;
+
+                                var cleaned = string.Join("\n", character.Macros
+                                    .Split('\n')
+                                    .Where(line => !line.TrimStart().StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase))
+                                    .Select(line => line.TrimEnd()));
+
+                                if (cleaned != character.Macros)
+                                {
+                                    character.Macros = cleaned;
+                                    changed = true;
+                                }
+                            }
                         }
                         else
                         {
-                            // 🔁 Re-add automation lines using SanitizeDesignMacro
+                            // 🔁 Re-add automation lines using SanitizeDesignMacro and SanitizeMacro
+
+                            // 🔹 Designs
                             foreach (var character in plugin.Characters)
                             {
                                 foreach (var design in character.Designs)
@@ -421,12 +458,24 @@ namespace CharacterSelectPlugin.Windows
                                     }
                                 }
                             }
+
+                            // 🔹 Characters
+                            foreach (var character in plugin.Characters)
+                            {
+                                string updated = Plugin.SanitizeMacro(character.Macros, character);
+                                if (updated != character.Macros)
+                                {
+                                    character.Macros = updated;
+                                    changed = true;
+                                }
+                            }
                         }
 
                         // ✅ Save once at end if anything changed
                         if (changed)
                             plugin.SaveConfiguration();
                     }
+
 
                     // 🔹 Position "Sort By" Dropdown in the Bottom-Right
                     ImGui.Separator();
@@ -744,6 +793,55 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Separator();
 
+            // Character Automation (if enabled)
+            if (plugin.Configuration.EnableAutomations)
+            {
+                ImGui.SetCursorPosX(10);
+                ImGui.Text("Glam. Automation");
+                ImGui.SameLine(labelWidth);
+                ImGui.SetCursorPosX(labelWidth + inputOffset);
+                ImGui.SetNextItemWidth(inputWidth);
+
+                string tempCharacterAutomation = isEditCharacterWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
+
+                if (ImGui.InputText("##Glam.Automation", ref tempCharacterAutomation, 50))
+                {
+                    if (isEditCharacterWindowOpen)
+                        editedCharacterAutomation = tempCharacterAutomation;
+                    else
+                        plugin.NewCharacterAutomation = tempCharacterAutomation;
+
+                    if (isAdvancedModeCharacter && !string.IsNullOrWhiteSpace(advancedCharacterMacroText))
+                    {
+                        if (isEditCharacterWindowOpen)
+                            advancedCharacterMacroText = GenerateMacro();
+                        else
+                            plugin.NewCharacterMacros = GenerateMacro();
+                    }
+                }
+
+                // ℹ Tooltip
+                ImGui.SameLine();
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.TextUnformatted("\uf05a");
+                ImGui.PopFont();
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(300);
+                    ImGui.TextUnformatted("Enter the name of a Glamourer Automation profile to apply when this character is activated.");
+                    ImGui.TextUnformatted("Design-level automations override this if both are set.");
+                    ImGui.TextUnformatted("Leave blank to default to a fallback profile named 'None'.");
+                    ImGui.TextUnformatted("Steps to make it work:");
+                    ImGui.TextUnformatted("1. Create an Automation in Glamourer named \"None\"");
+                    ImGui.TextUnformatted("2. Enter your in-game character name next to \"Any World\"");
+                    ImGui.TextUnformatted("3. Set to Character.");
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
+                }
+
+                ImGui.Separator();
+            }
 
             // Customize+ Profile
             ImGui.SetCursorPosX(10);
@@ -1668,13 +1766,21 @@ if (isAdvancedModeCharacter)
             Vector3 honorificColor = isEditCharacterWindowOpen ? editedCharacterHonorificColor : plugin.NewCharacterHonorificColor;
             Vector3 honorificGlow = isEditCharacterWindowOpen ? editedCharacterHonorificGlow : plugin.NewCharacterHonorificGlow;
 
-
             if (string.IsNullOrWhiteSpace(penumbra) || string.IsNullOrWhiteSpace(glamourer))
                 return "/penumbra redraw self";
 
-            string macro = $"/penumbra collection individual | {penumbra} | self\n" +
-                           $"/glamour apply {glamourer} | self\n" +
-                           "/customize profile disable <me>\n";
+            string macro =
+                $"/penumbra collection individual | {penumbra} | self\n" +
+                $"/glamour apply {glamourer} | self\n";
+
+            // ✅ Character Automation (if enabled)
+            if (plugin.Configuration.EnableAutomations)
+            {
+                string automation = string.IsNullOrWhiteSpace(editedCharacterAutomation) ? "None" : editedCharacterAutomation;
+                macro += $"/glamour automation enable {automation}\n";
+            }
+
+            macro += "/customize profile disable <me>\n";
 
             if (!string.IsNullOrWhiteSpace(customize))
                 macro += $"/customize profile enable <me>, {customize}\n";
@@ -1682,27 +1788,20 @@ if (isAdvancedModeCharacter)
             // ✅ Ensure honorific is always cleared before setting a new one
             macro += "/honorific force clear\n";
 
-            // ✅ Apply Honorifics (Only if a title is provided)
             if (!string.IsNullOrWhiteSpace(honorificTitle))
             {
                 string colorHex = $"#{(int)(honorificColor.X * 255):X2}{(int)(honorificColor.Y * 255):X2}{(int)(honorificColor.Z * 255):X2}";
                 string glowHex = $"#{(int)(honorificGlow.X * 255):X2}{(int)(honorificGlow.Y * 255):X2}{(int)(honorificGlow.Z * 255):X2}";
-
                 macro += $"/honorific force set {honorificTitle} | {honorificPrefix} | {colorHex} | {glowHex}\n";
             }
 
-            // ✅ Always remove ALL existing Moodles before applying a new one
             macro += "/moodle remove self preset all\n";
 
-            // 🔹 Apply Moodle Preset if set
             string moodlePreset = isEditCharacterWindowOpen ? editedCharacterMoodlePreset : tempMoodlePreset;
             if (!string.IsNullOrWhiteSpace(moodlePreset))
-            {
                 macro += $"/moodle apply self preset \"{moodlePreset}\"\n";
-            }
-            // Set idle pose only if not set to "None" (7)
-            int idlePose = isEditCharacterWindowOpen ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex : plugin.NewCharacterIdlePoseIndex;
 
+            int idlePose = isEditCharacterWindowOpen ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex : plugin.NewCharacterIdlePoseIndex;
             if (idlePose != 7)
             {
                 macro += $"/spose {idlePose}\n";
@@ -1713,7 +1812,6 @@ if (isAdvancedModeCharacter)
 
             return macro;
         }
-
 
 
         // 🔹 Add ExtractGlamourerDesignFromMacro BELOW GenerateMacro()
@@ -1949,7 +2047,7 @@ if (isAdvancedModeCharacter)
                         {
                             if (plugin.Configuration.EnableAutomations)
                             {
-                                ImGui.TextUnformatted("Don't forget to create an Automation in Glamourer named \"None\" and enter your in-game character name next to \"Any World\".");
+                                ImGui.TextUnformatted("Don't forget to create an Automation in Glamourer named \"None\" and enter your in-game character name next to \"Any World\" and Set to Character.");
                                 ImGui.Separator();
                             }
                         }
@@ -2319,7 +2417,8 @@ if (isAdvancedModeCharacter)
     ? string.Join(", ", character.Tags)
     : "";
 
-
+            // ✅ Load Character Automation properly
+            editedCharacterAutomation = character.CharacterAutomation ?? ""; // Load Character Automation
 
             // ✅ Load Honorific Fields Properly
             editedCharacterHonorificTitle = character.HonorificTitle ?? "";
@@ -2330,7 +2429,7 @@ if (isAdvancedModeCharacter)
             editedCharacterMoodlePreset = character.MoodlePreset;
 
             // ✅ Check if MoodlePreset exists in older profiles
-            editedCharacterMoodlePreset = character.MoodlePreset ?? ""; // Prevents null values
+            editedCharacterAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? ""; // Prevents null values
 
             character.IdlePoseIndex = plugin.Characters[selectedCharacterIndex].IdlePoseIndex;
 
@@ -2341,6 +2440,8 @@ if (isAdvancedModeCharacter)
             tempHonorificColor = editedCharacterHonorificColor;
             tempHonorificGlow = editedCharacterHonorificGlow;
             tempMoodlePreset = editedCharacterMoodlePreset;
+            tempCharacterAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";
+
 
             if (isAdvancedModeCharacter)
             {
@@ -2376,6 +2477,9 @@ if (isAdvancedModeCharacter)
             character.HonorificColor = editedCharacterHonorificColor;
             character.HonorificGlow = editedCharacterHonorificGlow;
             character.MoodlePreset = editedCharacterMoodlePreset;
+
+            // ✅ Save Character Automation
+            character.CharacterAutomation = editedCharacterAutomation; // Save the edited automation value
 
             // ✅ Ensure MoodlePreset is saved even if previously missing
             character.MoodlePreset = string.IsNullOrWhiteSpace(editedCharacterMoodlePreset) ? "" : editedCharacterMoodlePreset;

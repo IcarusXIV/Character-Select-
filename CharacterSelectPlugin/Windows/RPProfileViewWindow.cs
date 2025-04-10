@@ -113,17 +113,20 @@ namespace CharacterSelectPlugin.Windows
                             using var client = new System.Net.Http.HttpClient();
                             var data = client.GetByteArrayAsync(rp.ProfileImageUrl).GetAwaiter().GetResult();
 
-                            string basePath = Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), "DownloadedProfileImage.png");
-                            string uniquePath = Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), $"DownloadedProfileImage_{DateTime.Now.Ticks}.png");
+                            var hash = Convert.ToBase64String(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(rp.ProfileImageUrl)))
+            .Replace("/", "_").Replace("+", "-");
+                            string fileName = $"RPImage_{hash}.png";
+                            string path = Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
 
-                            if (File.Exists(basePath))
-                                File.Delete(basePath);
-                            File.WriteAllBytes(basePath, data);
-                            File.Copy(basePath, uniquePath);
+                            // ✅ Save once only if not exists
+                            if (!File.Exists(path))
+                            {
+                                File.WriteAllBytes(path, data);
+                                Plugin.Log.Debug($"[RPProfileView] Downloaded image to: {path}");
+                            }
 
-                            downloadedImagePath = uniquePath;
+                            downloadedImagePath = path;
                             imageDownloadComplete = true;
-                            Plugin.Log.Debug($"[RPProfileView] Downloaded image to: {uniquePath}");
 
                             // ✅ Force window to update and focus
                             bringToFront = true;
@@ -155,7 +158,6 @@ namespace CharacterSelectPlugin.Windows
 
             // ✅ Final fallback
             string finalImagePath = !string.IsNullOrEmpty(imagePath) && File.Exists(imagePath) ? imagePath : fallback;
-            Plugin.Log.Debug($"[RPProfileView] Using image path: {finalImagePath}");
 
 
             var texture = Plugin.TextureProvider.GetFromFile(finalImagePath).GetWrapOrDefault();

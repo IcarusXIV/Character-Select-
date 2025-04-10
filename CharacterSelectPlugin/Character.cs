@@ -56,6 +56,7 @@ namespace CharacterSelectPlugin
         }
         public List<string> KnownTags { get; set; } = new();
         public List<string> DesignTags { get; set; } = new List<string>();
+        public string CharacterAutomation { get; set; } = "";
 
 
 
@@ -76,7 +77,8 @@ namespace CharacterSelectPlugin
             string honorificSuffix,
             Vector3 honorificColor,
             Vector3 honorificGlow,
-            string moodlePreset)
+            string moodlePreset,
+            string characterautomation)
         {
             Name = name;
             Macros = macros ?? ""; // ✅ Prevents null macros
@@ -92,6 +94,7 @@ namespace CharacterSelectPlugin
             HonorificColor = honorificColor;
             HonorificGlow = honorificGlow;
             MoodlePreset = moodlePreset;
+            CharacterAutomation = characterautomation;
         }
     }
 
