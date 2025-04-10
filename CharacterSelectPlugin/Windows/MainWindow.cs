@@ -1793,25 +1793,12 @@ if (isAdvancedModeCharacter)
             }
             ImGui.PopStyleColor();
 
-            // 🔹 Close Button (Red)
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetWindowContentRegionMax().X - 20);
-            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetColorU32(new Vector4(1.0f, 0.27f, 0.27f, 1.0f)));
-            if (ImGui.Button("x##CloseDesignPanel"))
-            {
-                activeDesignCharacterIndex = -1;
-                isDesignPanelOpen = false;
-                isEditDesignWindowOpen = false;
-                isAdvancedModeWindowOpen = false; // ✅ Close pop-up window too
-            }
-            ImGui.PopStyleColor();
-
             ImGui.Separator();
 
             // 🔹 1️⃣ RENDER THE FORM **FIRST** BEFORE THE LIST
             if (isEditDesignWindowOpen)
             {
-                ImGui.BeginChild("EditDesignForm", new Vector2(0, 320), true, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.AlwaysAutoResize);
+                ImGui.BeginChild("EditDesignForm", new Vector2(0, 320), true, ImGuiWindowFlags.AlwaysAutoResize);
 
                 bool isNewDesign = string.IsNullOrEmpty(editedDesignName);
                 ImGui.Text(isNewDesign ? "Add Design" : "Edit Design");
@@ -2013,8 +2000,13 @@ if (isAdvancedModeCharacter)
                 float buttonHeight = 20;
                 float buttonSpacing = 8;
                 float totalButtonWidth = (buttonWidth * 2 + buttonSpacing);
-                float buttonPosX = (ImGui.GetContentRegionAvail().X - totalButtonWidth) / 2;
+                float availableWidth = ImGui.GetContentRegionAvail().X;
+                float buttonPosX = (availableWidth > totalButtonWidth)
+                    ? (availableWidth - totalButtonWidth) / 2
+                    : 0; // fallback: align left if not enough space
+
                 ImGui.SetCursorPosX(buttonPosX);
+
 
                 bool canSave = !string.IsNullOrWhiteSpace(editedDesignName) && !string.IsNullOrWhiteSpace(editedGlamourerDesign);
 
