@@ -77,7 +77,7 @@ namespace CharacterSelectPlugin
         public PoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
-        public static readonly string CurrentPluginVersion = "1.1.0.1"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.0.2"; // 🧠 Match repo.json and .csproj version
         private ICallGateSubscriber<string, RPProfile>? requestProfile;
         private ICallGateProvider<string, RPProfile>? provideProfile;
         private ContextMenuManager? contextMenuManager;
