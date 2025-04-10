@@ -1746,6 +1746,8 @@ if (isAdvancedModeCharacter)
                 isAdvancedModeWindowOpen = false;
                 editedDesignName = "";
                 editedGlamourerDesign = "";
+                editedAutomation = "";
+                editedCustomizeProfile = "";
                 editedDesignMacro = "";
                 advancedDesignMacroText = "";
                 selectedCharacterIndex = activeDesignCharacterIndex; // ✅ Update tracking
@@ -1798,7 +1800,7 @@ if (isAdvancedModeCharacter)
             // 🔹 1️⃣ RENDER THE FORM **FIRST** BEFORE THE LIST
             if (isEditDesignWindowOpen)
             {
-                ImGui.BeginChild("EditDesignForm", new Vector2(0, 320), true, ImGuiWindowFlags.AlwaysAutoResize);
+                ImGui.BeginChild("EditDesignForm", new Vector2(0, 320), true, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.AlwaysAutoResize);
 
                 bool isNewDesign = string.IsNullOrEmpty(editedDesignName);
                 ImGui.Text(isNewDesign ? "Add Design" : "Edit Design");
@@ -2188,22 +2190,23 @@ if (isAdvancedModeCharacter)
             editedDesignMacro = ""; // ✅ Clear macro for new design
             isAdvancedModeDesign = false; // ✅ Ensure Advanced Mode starts OFF
             editedAutomation = ""; // ✅ Reset for new automation
+            editedCustomizeProfile = ""; // ✅ Reset for new Customize+ Profile
         }
 
         private void OpenEditDesignWindow(Character character, CharacterDesign design)
         {
             isEditDesignWindowOpen = true;
             editedDesignName = design.Name;
-            editedDesignMacro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+            editedDesignMacro = design.IsAdvancedMode ? design.AdvancedMacro ?? "" : design.Macro ?? "";
             editedGlamourerDesign = !string.IsNullOrWhiteSpace(design.GlamourerDesign)
-    ? design.GlamourerDesign
-    : ExtractGlamourerDesignFromMacro(design.Macro);
+                ? design.GlamourerDesign
+                : ExtractGlamourerDesignFromMacro(design.Macro ?? "");
 
-            editedAutomation = design.Automation;
-            editedCustomizeProfile = design.CustomizePlusProfile;
+            editedAutomation = design.Automation ?? ""; 
+            editedCustomizeProfile = design.CustomizePlusProfile ?? ""; 
             isAdvancedModeDesign = design.IsAdvancedMode;
-            isAdvancedModeWindowOpen = design.IsAdvancedMode; // ✅ Ensure popup state matches
-            advancedDesignMacroText = design.AdvancedMacro;
+            isAdvancedModeWindowOpen = design.IsAdvancedMode;
+            advancedDesignMacroText = design.AdvancedMacro ?? ""; 
         }
 
         private void SaveDesign(Character character)
