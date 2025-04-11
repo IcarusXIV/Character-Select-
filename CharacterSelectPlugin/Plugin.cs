@@ -38,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-        public static readonly string CurrentPluginVersion = "1.1.0.6"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.0.7"; // 🧠 Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -239,7 +239,7 @@ namespace CharacterSelectPlugin
                 HelpMessage = "Set your character’s Idle pose to a specific index."
             });
             // Chair Sits
-            CommandManager.AddHandler("/sit", new CommandInfo((_, args) =>
+            CommandManager.AddHandler("/ssit", new CommandInfo((_, args) =>
             {
                 if (byte.TryParse(args, out var poseIndex))
                 {
