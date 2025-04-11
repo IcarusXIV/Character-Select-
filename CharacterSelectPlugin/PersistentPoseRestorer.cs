@@ -48,10 +48,26 @@ public unsafe class PoseRestorer
 
         PlayerState.Instance()->SelectedPoses[(int)type] = desired;
 
-        if (TranslatePoseState(charPtr->ModeParam) == type)
+        switch (type)
         {
-            charPtr->EmoteController.CPoseState = desired;
+            case EmoteController.PoseType.Idle:
+                plugin.Configuration.LastIdlePoseAppliedByPlugin = desired;
+                break;
+            case EmoteController.PoseType.Sit:
+                plugin.Configuration.LastSitPoseAppliedByPlugin = desired;
+                break;
+            case EmoteController.PoseType.GroundSit:
+                plugin.Configuration.LastGroundSitPoseAppliedByPlugin = desired;
+                break;
+            case EmoteController.PoseType.Doze:
+                plugin.Configuration.LastDozePoseAppliedByPlugin = desired;
+                break;
         }
+
+        plugin.Configuration.Save();
+
+        if (TranslatePoseState(charPtr->ModeParam) == type)
+            charPtr->EmoteController.CPoseState = desired;
     }
 
     private EmoteController.PoseType TranslatePoseState(byte state)

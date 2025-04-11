@@ -30,6 +30,10 @@ namespace CharacterSelectPlugin
         public string LastSeenVersion { get; set; } = "";
         public ProfileSharing RPSharingMode { get; set; } = ProfileSharing.AlwaysShare;
         public List<string> KnownTags { get; set; } = new();
+        public byte LastIdlePoseAppliedByPlugin { get; set; } = 255;
+        public byte LastSitPoseAppliedByPlugin { get; set; } = 255;
+        public byte LastGroundSitPoseAppliedByPlugin { get; set; } = 255;
+        public byte LastDozePoseAppliedByPlugin { get; set; } = 255;
 
 
 

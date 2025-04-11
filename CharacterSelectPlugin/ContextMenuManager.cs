@@ -26,6 +26,7 @@ namespace CharacterSelectPlugin.Managers
             "ContentMemberList",
             "SocialList",
             "ContactList",
+            "CharacterInspect",
         ];
 
         private static readonly Dictionary<uint, string> WorldIdToName = new()
@@ -53,10 +54,18 @@ namespace CharacterSelectPlugin.Managers
             if (args.Target is not MenuTargetDefault def || !ValidAddons.Contains(args.AddonName))
                 return;
 
-            var name = def.TargetName;
-            var worldName = def.TargetHomeWorld.Value.Name.ToString();
+            // Skip if the clicked thing has no valid home world (NPCs, FC actions, etc)
+            if (def.TargetHomeWorld.RowId == 0)
+                return;
 
-            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(worldName))
+            var name = def.TargetName;
+            var worldRow = def.TargetHomeWorld;
+
+            string worldName = worldRow.RowId > 0
+                ? worldRow.Value.Name.ToString()
+                : $"World-{worldRow.RowId}";
+
+            if (!string.IsNullOrWhiteSpace(name))
             {
                 args.AddMenuItem(new MenuItem
                 {
@@ -65,7 +74,7 @@ namespace CharacterSelectPlugin.Managers
                     IsEnabled = true
                 });
             }
-
         }
+
     }
 }

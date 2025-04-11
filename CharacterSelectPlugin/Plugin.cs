@@ -19,6 +19,7 @@ using System.Net.Http;
 using System.Text;
 using Newtonsoft.Json;
 using Dalamud.Game.ClientState.Objects;
+using static FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController;
 
 namespace CharacterSelectPlugin
 {
@@ -37,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-
+        public static readonly string CurrentPluginVersion = "1.1.0.6"; // 🧠 Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -77,7 +78,7 @@ namespace CharacterSelectPlugin
         public PoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
-        public static readonly string CurrentPluginVersion = "1.1.0.5"; // 🧠 Match repo.json and .csproj version
+        
         private ICallGateSubscriber<string, RPProfile>? requestProfile;
         private ICallGateProvider<string, RPProfile>? provideProfile;
         private ContextMenuManager? contextMenuManager;
@@ -85,9 +86,21 @@ namespace CharacterSelectPlugin
         public string NewCharacterTag { get; set; } = "";
         public List<string> KnownTags => Configuration.KnownTags;
         public string NewCharacterAutomation { get; set; } = "";
-        private int ticksUntilPoseRestore = -1;
-        private byte poseToRestore = 0;
         private int framesSinceLogin = 0;
+        internal byte lastPoseAppliedByPlugin = 255;
+        internal byte lastIdlePoseForcedByPlugin = 255;
+        internal bool shouldReapplyPoseForLogin = false;
+        public byte LastIdlePoseAppliedByPlugin { get; set; } = 255;
+        internal byte lastSeenIdlePose = 255;
+        internal int suppressIdleSaveForFrames = 0;
+        internal byte lastSeenSitPose = 255;
+        internal byte lastSeenGroundSitPose = 255;
+        internal byte lastSeenDozePose = 255;
+
+        internal int suppressSitSaveForFrames = 0;
+        internal int suppressGroundSitSaveForFrames = 0;
+        internal int suppressDozeSaveForFrames = 0;
+
 
 
 
@@ -210,88 +223,70 @@ namespace CharacterSelectPlugin
                 HelpMessage = "Use /select <Character Name> to apply a profile."
             });
             // Idles
-            CommandManager.AddHandler("/spose", new CommandInfo((_, args) =>
+            CommandManager.AddHandler("/sidle", new CommandInfo((_, args) =>
             {
                 if (byte.TryParse(args, out var poseIndex))
                 {
                     PoseManager.ApplyPose(EmoteController.PoseType.Idle, poseIndex);
+                    ExecuteMacro("/penumbra redraw self");
                 }
                 else
                 {
-                    ChatGui.PrintError("[Character Select+] Usage: /spose <0-6>");
+                    ChatGui.PrintError("[Character Select+] Usage: /sidle <0-6>");
                 }
             })
             {
                 HelpMessage = "Set your character’s Idle pose to a specific index."
             });
             // Chair Sits
-            CommandManager.AddHandler("/sitpose", new CommandInfo((_, args) =>
+            CommandManager.AddHandler("/sit", new CommandInfo((_, args) =>
             {
                 if (byte.TryParse(args, out var poseIndex))
                 {
                     PoseManager.ApplyPose(EmoteController.PoseType.Sit, poseIndex);
-                    ChatGui.Print($"[Character Select+] Sitting pose set to {poseIndex}.");
+                    ExecuteMacro("/penumbra redraw self");
                 }
                 else
                 {
-                    ChatGui.PrintError("[Character Select+] Usage: /sitpose <0–6>");
+                    ChatGui.PrintError("[Character Select+] Usage: /ssit <0–6>");
                 }
             })
             {
                 HelpMessage = "Set your character's Sitting pose to a specific index."
             });
             // Ground Sits
-            CommandManager.AddHandler("/groundsitpose", new CommandInfo((_, args) =>
+            CommandManager.AddHandler("/sgroundsit", new CommandInfo((_, args) =>
             {
                 if (byte.TryParse(args, out var poseIndex))
                 {
                     PoseManager.ApplyPose(EmoteController.PoseType.GroundSit, poseIndex);
-                    ChatGui.Print($"[Character Select+] Ground Sit pose set to {poseIndex}.");
+                    ExecuteMacro("/penumbra redraw self");
                 }
                 else
                 {
-                    ChatGui.PrintError("[Character Select+] Usage: /groundsitpose <0–6>");
+                    ChatGui.PrintError("[Character Select+] Usage: /sgroundsit <0–6>");
                 }
             })
             {
                 HelpMessage = "Set your character's Ground Sitting pose to a specific index."
             });
             // Doze Poses
-            CommandManager.AddHandler("/dozepose", new CommandInfo((_, args) =>
+            CommandManager.AddHandler("/sdoze", new CommandInfo((_, args) =>
             {
                 if (byte.TryParse(args, out var poseIndex))
                 {
                     PoseManager.ApplyPose(EmoteController.PoseType.Doze, poseIndex);
-                    ChatGui.Print($"[Character Select+] Dozing pose set to {poseIndex}.");
+                    ExecuteMacro("/penumbra redraw self");
                 }
                 else
                 {
-                    ChatGui.PrintError("[Character Select+] Usage: /dozepose <0–6>");
+                    ChatGui.PrintError("[Character Select+] Usage: /sdoze <0–6>");
                 }
             })
             {
                 HelpMessage = "Set your character's Dozing pose to a specific index."
             });
 
-
-
-            CommandManager.AddHandler("/savepose", new CommandInfo((_, _) =>
-            {
-                var state = PlayerState.Instance();
-
-                // Save current poses into your config
-                Configuration.DefaultPoses.Idle = state->SelectedPoses[(int)EmoteController.PoseType.Idle];
-                Configuration.DefaultPoses.Sit = state->SelectedPoses[(int)EmoteController.PoseType.Sit];
-                Configuration.DefaultPoses.GroundSit = state->SelectedPoses[(int)EmoteController.PoseType.GroundSit];
-                Configuration.DefaultPoses.Doze = state->SelectedPoses[(int)EmoteController.PoseType.Doze];
-
-                Configuration.Save();
-                // ChatGui.Print("[Character Select+] Saved current poses for persistence.");
-            })
-            {
-                HelpMessage = "Saves your current idle/sit/ground/doze poses persistently."
-            });
-            
             CommandManager.AddHandler("/viewrp", new CommandInfo(OnViewRPCommand)
             {
                 HelpMessage = "View the RP profile of a character (if shared). Usage: /viewrp self | t | First Last@World"
@@ -309,6 +304,7 @@ namespace CharacterSelectPlugin
         {
             loginTime = DateTime.Now;
             shouldApplyPoses = true;
+            suppressIdleSaveForFrames = 60;
         }
         private unsafe void ApplyStoredPoses()
         {
@@ -316,32 +312,55 @@ namespace CharacterSelectPlugin
                 return;
 
             var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+            if (character == null)
+                return;
 
-            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Idle] = Configuration.DefaultPoses.Idle;
-            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Sit] = Configuration.DefaultPoses.Sit;
-            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.GroundSit] = Configuration.DefaultPoses.GroundSit;
-            PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Doze] = Configuration.DefaultPoses.Doze;
+            // Get current poses
+            byte currentIdle = PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Idle];
+            byte currentSit = PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Sit];
+            byte currentGroundSit = PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.GroundSit];
+            byte currentDoze = PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Doze];
 
-            // Only set CPoseState if currently in that pose mode
-            byte mode = character->ModeParam;
-            EmoteController.PoseType currentType = mode switch
+            byte savedIdle = Configuration.DefaultPoses.Idle;
+            byte lastPluginIdle = Configuration.LastIdlePoseAppliedByPlugin;
+            Plugin.Log.Debug($"[ApplyStoredPoses] SavedIdle = {savedIdle}, LastPluginIdle = {lastPluginIdle}");
+            if (savedIdle < 7 && savedIdle == lastPluginIdle)
             {
-                1 => EmoteController.PoseType.GroundSit,
-                2 => EmoteController.PoseType.Sit,
-                3 => EmoteController.PoseType.Doze,
-                _ => EmoteController.PoseType.Idle,
+                PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Idle] = savedIdle;
+
+                if (TranslatePoseState(character->ModeParam) == EmoteController.PoseType.Idle)
+                    character->EmoteController.CPoseState = savedIdle;
+            }
+
+            byte savedSit = Configuration.DefaultPoses.Sit;
+            if (savedSit < 7)
+                PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Sit] = savedSit;
+
+            byte savedGroundSit = Configuration.DefaultPoses.GroundSit;
+            if (savedGroundSit < 7)
+                PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.GroundSit] = savedGroundSit;
+
+            byte savedDoze = Configuration.DefaultPoses.Doze;
+            if (savedDoze < 7)
+                PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Doze] = savedDoze;
+
+            // Set CPoseState if the current mode matches the type we're restoring
+            var currentType = TranslatePoseState(character->ModeParam);
+
+            byte currentSelected = PlayerState.Instance()->SelectedPoses[(int)currentType];
+            byte intended = currentType switch
+            {
+                EmoteController.PoseType.Idle => savedIdle,
+                EmoteController.PoseType.Sit => savedSit,
+                EmoteController.PoseType.GroundSit => savedGroundSit,
+                EmoteController.PoseType.Doze => savedDoze,
+                _ => 255
             };
 
-            byte stored = currentType switch
-            {
-                EmoteController.PoseType.Idle => Configuration.DefaultPoses.Idle,
-                EmoteController.PoseType.Sit => Configuration.DefaultPoses.Sit,
-                EmoteController.PoseType.GroundSit => Configuration.DefaultPoses.GroundSit,
-                EmoteController.PoseType.Doze => Configuration.DefaultPoses.Doze,
-                _ => 0,
-            };
-
-            character->EmoteController.CPoseState = stored;
+            // ✅ Force CPoseState to match current selected pose
+            // (only if plugin isn’t trying to override it)
+            if (currentSelected < 7)
+                character->EmoteController.CPoseState = currentSelected;
         }
 
         private void OnQuickSwitchCommand(string command, string args)
@@ -410,7 +429,9 @@ namespace CharacterSelectPlugin
             // ✅ Only apply idle pose if it's NOT "None"
             if (character.IdlePoseIndex < 7)
             {
-                PoseManager.ApplyPose(EmoteController.PoseType.Idle, character.IdlePoseIndex);
+                PoseManager.ApplyPose(PoseType.Idle, character.IdlePoseIndex);
+                Configuration.LastIdlePoseAppliedByPlugin = character.IdlePoseIndex;
+                Configuration.Save(); // 💾 save so it survives logout
             }
             PoseRestorer.RestorePosesFor(character);
             SaveConfiguration();
@@ -488,7 +509,6 @@ namespace CharacterSelectPlugin
             MainWindow.Dispose();
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler("/spose");
-            CommandManager.RemoveHandler("/savepose");
             contextMenuManager?.Dispose();
 
         }
@@ -572,42 +592,6 @@ namespace CharacterSelectPlugin
             {
                 Configuration.IsQuickSwitchWindowOpen = currentState;
                 Configuration.Save();
-            }
-            // ✅ Apply stored poses safely once after login
-            if (shouldApplyPoses && ClientState.LocalPlayer != null && (DateTime.Now - loginTime).TotalSeconds > 2)
-            {
-                shouldApplyPoses = false;
-
-                unsafe
-                {
-                    var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
-
-                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Idle] = Configuration.DefaultPoses.Idle;
-                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Sit] = Configuration.DefaultPoses.Sit;
-                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.GroundSit] = Configuration.DefaultPoses.GroundSit;
-                    PlayerState.Instance()->SelectedPoses[(int)EmoteController.PoseType.Doze] = Configuration.DefaultPoses.Doze;
-
-                    // ✅ Only set CPoseState if currently in that pose mode
-                    byte mode = character->ModeParam;
-                    EmoteController.PoseType currentType = mode switch
-                    {
-                        1 => EmoteController.PoseType.GroundSit,
-                        2 => EmoteController.PoseType.Sit,
-                        3 => EmoteController.PoseType.Doze,
-                        _ => EmoteController.PoseType.Idle,
-                    };
-
-                    byte stored = currentType switch
-                    {
-                        EmoteController.PoseType.Idle => Configuration.DefaultPoses.Idle,
-                        EmoteController.PoseType.Sit => Configuration.DefaultPoses.Sit,
-                        EmoteController.PoseType.GroundSit => Configuration.DefaultPoses.GroundSit,
-                        EmoteController.PoseType.Doze => Configuration.DefaultPoses.Doze,
-                        _ => 0,
-                    };
-
-                    character->EmoteController.CPoseState = stored;
-                }
             }
         }
 
@@ -758,11 +742,10 @@ namespace CharacterSelectPlugin
                 }
             }
 
+            // ✅ Remove all /savepose lines entirely — it's deprecated
             lines = lines
-       .Where(l =>
-           !l.TrimStart().StartsWith("/savepose", StringComparison.OrdinalIgnoreCase) ||
-           character.IdlePoseIndex != 7)
-       .ToList();
+                .Where(l => !l.TrimStart().StartsWith("/savepose", StringComparison.OrdinalIgnoreCase))
+                .ToList();
 
             // ✅ Insert /glamour automation enable {X} after last /glamour apply
             if (PluginInterface.GetPluginConfig() is Configuration config && config.EnableAutomations)
@@ -807,21 +790,15 @@ namespace CharacterSelectPlugin
                         lines.Insert(0, enableLine);
                 }
             }
-
-            // ✅ Only insert /savepose if idle pose is actually selected
-            if (character.IdlePoseIndex != 7)
+            // ✅ Migrate old pose commands to new ones
+            for (int i = 0; i < lines.Count; i++)
             {
-                // ➕ /savepose should go right before /penumbra redraw self
-                int redrawIndex = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
-                if (!lines.Any(l => l.StartsWith("/savepose", StringComparison.OrdinalIgnoreCase)))
-                {
-                    if (redrawIndex != -1)
-                        lines.Insert(redrawIndex, "/savepose");
-                    else
-                        lines.Add("/savepose");
-                }
+                lines[i] = lines[i]
+                    .Replace("/spose", "/sidle")
+                    .Replace("/sitpose", "/ssit")
+                    .Replace("/groundsitpose", "/sgroundsit")
+                    .Replace("/dozepose", "/sdoze");
             }
-
 
             return string.Join("\n", lines);
         }
@@ -1213,8 +1190,7 @@ namespace CharacterSelectPlugin
                     line.StartsWith("/customize profile disable", StringComparison.OrdinalIgnoreCase) ||
                     line.StartsWith("/honorific", StringComparison.OrdinalIgnoreCase) ||
                     line.StartsWith("/moodle", StringComparison.OrdinalIgnoreCase) ||
-                    line.StartsWith("/spose", StringComparison.OrdinalIgnoreCase) ||
-                    line.StartsWith("/savepose", StringComparison.OrdinalIgnoreCase)
+                    line.StartsWith("/spose", StringComparison.OrdinalIgnoreCase)
                 )
                 {
                     continue; // Omit this line entirely
@@ -1280,17 +1256,97 @@ namespace CharacterSelectPlugin
         }
         private void FrameworkUpdate(IFramework framework)
         {
-            if (!shouldApplyPoses || !ClientState.IsLoggedIn)
+            if (!ClientState.IsLoggedIn || ClientState.LocalPlayer == null)
+                return;
+
+            unsafe
+            {
+                var playerState = PlayerState.Instance();
+
+                // === IDLE POSE ===
+                var currentIdle = playerState->SelectedPoses[(int)EmoteController.PoseType.Idle];
+                if (lastSeenIdlePose == 255)
+                    lastSeenIdlePose = currentIdle;
+
+                if (suppressIdleSaveForFrames > 0)
+                    suppressIdleSaveForFrames--;
+                else if (currentIdle != lastSeenIdlePose && currentIdle < 7 && currentIdle != Configuration.LastIdlePoseAppliedByPlugin)
+                {
+                    Configuration.DefaultPoses.Idle = currentIdle;
+                    Configuration.LastIdlePoseAppliedByPlugin = currentIdle;
+                    Configuration.Save();
+                    Plugin.Log.Debug($"[AutoSave] Detected manual idle change to {currentIdle}, saved.");
+                }
+                lastSeenIdlePose = currentIdle;
+
+                // === SIT POSE ===
+                var currentSit = playerState->SelectedPoses[(int)EmoteController.PoseType.Sit];
+                if (lastSeenSitPose == 255)
+                    lastSeenSitPose = currentSit;
+
+                if (suppressSitSaveForFrames > 0)
+                    suppressSitSaveForFrames--;
+                else if (currentSit != lastSeenSitPose && currentSit < 7)
+                {
+                    Configuration.DefaultPoses.Sit = currentSit;
+                    Configuration.Save();
+                    Plugin.Log.Debug($"[AutoSave] Detected manual sit change to {currentSit}, saved.");
+                }
+                lastSeenSitPose = currentSit;
+
+                // === GROUNDSIT POSE ===
+                var currentGroundSit = playerState->SelectedPoses[(int)EmoteController.PoseType.GroundSit];
+                if (lastSeenGroundSitPose == 255)
+                    lastSeenGroundSitPose = currentGroundSit;
+
+                if (suppressGroundSitSaveForFrames > 0)
+                    suppressGroundSitSaveForFrames--;
+                else if (currentGroundSit != lastSeenGroundSitPose && currentGroundSit < 7)
+                {
+                    Configuration.DefaultPoses.GroundSit = currentGroundSit;
+                    Configuration.Save();
+                    Plugin.Log.Debug($"[AutoSave] Detected manual ground sit change to {currentGroundSit}, saved.");
+                }
+                lastSeenGroundSitPose = currentGroundSit;
+
+                // === DOZE POSE ===
+                var currentDoze = playerState->SelectedPoses[(int)EmoteController.PoseType.Doze];
+                if (lastSeenDozePose == 255)
+                    lastSeenDozePose = currentDoze;
+
+                if (suppressDozeSaveForFrames > 0)
+                    suppressDozeSaveForFrames--;
+                else if (currentDoze != lastSeenDozePose && currentDoze < 7)
+                {
+                    Configuration.DefaultPoses.Doze = currentDoze;
+                    Configuration.Save();
+                    Plugin.Log.Debug($"[AutoSave] Detected manual doze change to {currentDoze}, saved.");
+                }
+                lastSeenDozePose = currentDoze;
+            }
+
+            // === Restore on Login ===
+            if (!shouldApplyPoses)
                 return;
 
             framesSinceLogin++;
-
             if (framesSinceLogin >= 5)
             {
-                ApplyStoredPoses();  // already exists and works
+                ApplyStoredPoses();
                 shouldApplyPoses = false;
                 framesSinceLogin = 0;
             }
+        }
+
+        private EmoteController.PoseType TranslatePoseState(byte state)
+        {
+            return state switch
+            {
+                1 => EmoteController.PoseType.GroundSit,
+                2 => EmoteController.PoseType.Sit,
+                3 => EmoteController.PoseType.Doze,
+                _ => EmoteController.PoseType.Idle
+            };
         }
     }
 }

@@ -157,8 +157,6 @@ namespace CharacterSelectPlugin.Windows
             SortCharacters(); // ✅ Apply sorting on startup
                               // 🔹 Gather all existing honorifics at startup
 
-
-
         }
 
 
@@ -198,6 +196,12 @@ namespace CharacterSelectPlugin.Windows
                     showTagFilter = !showTagFilter;
                 }
                 ImGui.PopFont();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Filter by Tags.");
+                    ImGui.EndTooltip();
+                }
 
                 // ⬇ Tag Filter Dropdown (only shows if toggled)
                 if (showTagFilter)
@@ -242,6 +246,12 @@ namespace CharacterSelectPlugin.Windows
                 if (!showSearchBar) searchQuery = ""; // Clear when closed
             }
             ImGui.PopFont();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Search for a Character.");
+                ImGui.EndTooltip();
+            }
 
             // 🔎 Search Input Field
             if (showSearchBar)
@@ -275,6 +285,14 @@ namespace CharacterSelectPlugin.Windows
                 plugin.IsSettingsOpen = !plugin.IsSettingsOpen;
             }
             ImGui.PopFont();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Open Settings Menu.");
+                ImGui.Text("You can find options for adjusting your Character Grid.");
+                ImGui.Text("As well as the Opt-In for Glamourer Automations.");
+                ImGui.EndTooltip();
+            }
 
             ImGui.SameLine();
 
@@ -291,6 +309,12 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.Button("Quick Switch"))
             {
                 plugin.QuickSwitchWindow.IsOpen = !plugin.QuickSwitchWindow.IsOpen; // ✅ Toggle Quick Switch Window
+            }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Opens a more compact UI to swap between Characters & Designs.");
+                ImGui.EndTooltip();
             }
 
             if (plugin.IsSettingsOpen)
@@ -1709,19 +1733,25 @@ if (isAdvancedModeCharacter)
 
             drawList.AddText(new Vector2(textPosX, textPosY), ImGui.GetColorU32(ImGuiCol.Text), character.Name);
 
-            // ⭐ Add Favorite Star in the Top-Left Corner
+            // ⭐ Draw Favorite Star Symbol
             string starSymbol = character.IsFavorite ? "★" : "☆";
-            var starPos = new Vector2(cursorPos.X + 5, cursorPos.Y + 5); // Position near top-left
+            var starPos = new Vector2(cursorPos.X + 5, cursorPos.Y + 5);
+            var starSize = ImGui.CalcTextSize(starSymbol);
             drawList.AddText(starPos, ImGui.GetColorU32(ImGuiCol.Text), starSymbol);
 
-            // 🔹 Clickable Area for Toggling Favorite
-            if (ImGui.IsMouseHoveringRect(starPos, new Vector2(starPos.X + 20, starPos.Y + 20)) && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            // ✅ Hover + Click Region (no layout reservation)
+            var starEnd = new Vector2(starPos.X + starSize.X + 4, starPos.Y + starSize.Y + 2);
+            if (ImGui.IsMouseHoveringRect(starPos, starEnd))
             {
-                character.IsFavorite = !character.IsFavorite; // Toggle favorite
-                plugin.SaveConfiguration();
-                SortCharacters(); // ✅ Resort after toggling
-            }
+                ImGui.SetTooltip($"{(character.IsFavorite ? "Remove" : "Add")} {character.Name} as a Favourite");
 
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    character.IsFavorite = !character.IsFavorite;
+                    plugin.SaveConfiguration();
+                    SortCharacters();
+                }
+            }
             // RP Profile Button — ID Card Icon
             ImGui.PushFont(UiBuilder.IconFont);
             ImGui.SetWindowFontScale(0.85f); // ⬇️ Shrink to match star size
@@ -1742,13 +1772,15 @@ if (isAdvancedModeCharacter)
             var iconHitMin = iconPos;
             var iconHitMax = iconPos + iconSize + new Vector2(4, 4);
 
-            if (ImGui.IsMouseHoveringRect(iconHitMin, iconHitMax) && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            if (ImGui.IsMouseHoveringRect(iconHitMin, iconHitMax))
             {
-                plugin.OpenRPProfileViewWindow(character);
+                ImGui.SetTooltip($"View RolePlay Profile for {character.Name}");
+
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                {
+                    plugin.OpenRPProfileViewWindow(character);
+                }
             }
-
-
-
 
             ImGui.Dummy(new Vector2(width, height)); // ✅ Maintain proper positioning
         }
@@ -1804,8 +1836,7 @@ if (isAdvancedModeCharacter)
             int idlePose = isEditCharacterWindowOpen ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex : plugin.NewCharacterIdlePoseIndex;
             if (idlePose != 7)
             {
-                macro += $"/spose {idlePose}\n";
-                macro += "/savepose\n";
+                macro += $"/sidle {idlePose}\n";
             }
 
             macro += "/penumbra redraw self";
@@ -1892,6 +1923,12 @@ if (isAdvancedModeCharacter)
                 isAdvancedModeWindowOpen = false; // ✅ Close pop-up window too
             }
             ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Close Design Panel.");
+                ImGui.EndTooltip();
+            }
 
             ImGui.Separator();
 
@@ -2232,6 +2269,12 @@ if (isAdvancedModeCharacter)
                     plugin.ExecuteMacro(design.Macro);
                 }
                 ImGui.PopFont();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Apply Design.");
+                    ImGui.EndTooltip();
+                }
 
                 ImGui.SameLine();
 
@@ -2242,6 +2285,12 @@ if (isAdvancedModeCharacter)
                     OpenEditDesignWindow(character, design);
                 }
                 ImGui.PopFont();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Edit Design.");
+                    ImGui.EndTooltip();
+                }
 
                 ImGui.SameLine();
 
@@ -2257,10 +2306,14 @@ if (isAdvancedModeCharacter)
                     }
                 }
                 ImGui.PopFont();
-
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Hold Ctrl+Shift and click to delete.");
+                    ImGui.EndTooltip();
+                }
                 ImGui.Separator();
             }
-
 
             ImGui.EndChild(); // ✅ END DESIGN LIST
 
