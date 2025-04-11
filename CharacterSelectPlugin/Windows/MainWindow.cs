@@ -2370,7 +2370,13 @@ if (isAdvancedModeCharacter)
             // 🔹 Conditionally include automation line
             if (plugin.Configuration.EnableAutomations)
             {
-                string automationToUse = string.IsNullOrWhiteSpace(editedAutomation) ? "None" : editedAutomation;
+                string automationToUse =
+                    !string.IsNullOrWhiteSpace(editedAutomation)
+                        ? editedAutomation
+                        : (!string.IsNullOrWhiteSpace(character.CharacterAutomation)
+                            ? character.CharacterAutomation
+                            : "None");
+
                 macro += $"\n/glamour automation enable {automationToUse}";
             }
 
@@ -2409,7 +2415,7 @@ if (isAdvancedModeCharacter)
             editedCharacterName = character.Name;
             editedCharacterPenumbra = character.PenumbraCollection;
             editedCharacterGlamourer = character.GlamourerDesign;
-            editedCharacterCustomize = character.CustomizeProfile;
+            editedCharacterCustomize = character.CustomizeProfile ?? "";
             editedCharacterColor = character.NameplateColor;
             editedCharacterMacros = character.Macros;
             editedCharacterImagePath = !string.IsNullOrEmpty(character.ImagePath) ? character.ImagePath : defaultImagePath;
@@ -2417,8 +2423,6 @@ if (isAdvancedModeCharacter)
     ? string.Join(", ", character.Tags)
     : "";
 
-            // ✅ Load Character Automation properly
-            editedCharacterAutomation = character.CharacterAutomation ?? ""; // Load Character Automation
 
             // ✅ Load Honorific Fields Properly
             editedCharacterHonorificTitle = character.HonorificTitle ?? "";
@@ -2426,10 +2430,12 @@ if (isAdvancedModeCharacter)
             editedCharacterHonorificSuffix = character.HonorificSuffix ?? "Suffix";
             editedCharacterHonorificColor = character.HonorificColor;
             editedCharacterHonorificGlow = character.HonorificGlow;
-            editedCharacterMoodlePreset = character.MoodlePreset;
+            editedCharacterMoodlePreset = character.MoodlePreset ?? "";
 
             // ✅ Check if MoodlePreset exists in older profiles
-            editedCharacterAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? ""; // Prevents null values
+            string safeAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";
+
+            editedCharacterAutomation = safeAutomation;
 
             character.IdlePoseIndex = plugin.Characters[selectedCharacterIndex].IdlePoseIndex;
 
@@ -2440,7 +2446,7 @@ if (isAdvancedModeCharacter)
             tempHonorificColor = editedCharacterHonorificColor;
             tempHonorificGlow = editedCharacterHonorificGlow;
             tempMoodlePreset = editedCharacterMoodlePreset;
-            tempCharacterAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";
+            tempCharacterAutomation = safeAutomation;
 
 
             if (isAdvancedModeCharacter)
@@ -2452,7 +2458,6 @@ if (isAdvancedModeCharacter)
 
             isEditCharacterWindowOpen = true;
         }
-
 
         private void SaveEditedCharacter()
         {

@@ -77,7 +77,7 @@ namespace CharacterSelectPlugin
         public PoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
-        public static readonly string CurrentPluginVersion = "1.1.0.4"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.0.5"; // 🧠 Match repo.json and .csproj version
         private ICallGateSubscriber<string, RPProfile>? requestProfile;
         private ICallGateProvider<string, RPProfile>? provideProfile;
         private ContextMenuManager? contextMenuManager;
@@ -85,6 +85,9 @@ namespace CharacterSelectPlugin
         public string NewCharacterTag { get; set; } = "";
         public List<string> KnownTags => Configuration.KnownTags;
         public string NewCharacterAutomation { get; set; } = "";
+        private int ticksUntilPoseRestore = -1;
+        private byte poseToRestore = 0;
+        private int framesSinceLogin = 0;
 
 
 
@@ -153,7 +156,7 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Error($"❌ Failed to load System.Windows.Forms: {ex.Message}");
             }
 
-            PoseManager = new PoseManager(ClientState, Framework, ChatGui, CommandManager);
+            PoseManager = new PoseManager(ClientState, Framework, ChatGui, CommandManager, this);
             PoseRestorer = new PoseRestorer(ClientState, this);
 
             // Initialize the MainWindow and ConfigWindow properly
@@ -199,6 +202,7 @@ namespace CharacterSelectPlugin
             PluginInterface.UiBuilder.OpenConfigUi += ToggleQuickSwitchUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
             ClientState.Login += OnLogin;
+            Framework.Update += FrameworkUpdate;
 
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
@@ -651,14 +655,21 @@ namespace CharacterSelectPlugin
                 if (!string.IsNullOrWhiteSpace(NewGlamourerDesign))
                 {
                     string defaultDesignName = $"{NewCharacterName} {NewGlamourerDesign}";
-                    string defaultMacro = $"/glamour apply {NewGlamourerDesign} | self\n/penumbra redraw self";
-
                     var defaultDesign = new CharacterDesign(
-                        defaultDesignName,
-                        defaultMacro,
-                        false,  // Not in Advanced Mode
-                        ""
+                    defaultDesignName,
+                    "",  // macro will be filled below
+                    false,
+                    ""
                     );
+
+                    // ✅ Sanitize to include Automation fallback
+                    defaultDesign.Macro = SanitizeDesignMacro(
+                        $"/glamour apply {NewGlamourerDesign} | self\n/penumbra redraw self",
+                        defaultDesign,
+                        newCharacter,
+                        Configuration.EnableAutomations
+                    );
+
 
                     newCharacter.Designs.Add(defaultDesign); // ✅ Automatically add the default design
                 }
@@ -820,9 +831,13 @@ namespace CharacterSelectPlugin
 
             // ➕ Add automation if missing (only if enabled)
             if (enableAutomations &&
-                !lines.Any(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase)))
+        !lines.Any(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase)))
             {
-                string automationName = string.IsNullOrWhiteSpace(design.Automation) ? "None" : design.Automation;
+                string automationName = !string.IsNullOrWhiteSpace(design.Automation)
+                    ? design.Automation
+                    : (!string.IsNullOrWhiteSpace(character.CharacterAutomation)
+                        ? character.CharacterAutomation
+                        : "None");
 
                 int index = lines.FindIndex(l => l.StartsWith("/penumbra redraw", StringComparison.OrdinalIgnoreCase));
                 if (index != -1)
@@ -1263,6 +1278,19 @@ namespace CharacterSelectPlugin
                 Log.Error($"[Cleanup] Failed to clean up profile images: {ex.Message}");
             }
         }
+        private void FrameworkUpdate(IFramework framework)
+        {
+            if (!shouldApplyPoses || !ClientState.IsLoggedIn)
+                return;
 
+            framesSinceLogin++;
+
+            if (framesSinceLogin >= 5)
+            {
+                ApplyStoredPoses();  // already exists and works
+                shouldApplyPoses = false;
+                framesSinceLogin = 0;
+            }
+        }
     }
 }
