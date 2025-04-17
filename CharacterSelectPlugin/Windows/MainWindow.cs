@@ -633,7 +633,7 @@ namespace CharacterSelectPlugin.Windows
             {
                 ImGui.SetTooltip("Enjoy Character Select+? Consider supporting development!");
             }
-
+            DrawReorderWindow();
         }
 
 
@@ -3023,7 +3023,7 @@ if (isAdvancedModeCharacter)
                     currentSort = SortType.Manual;
                     plugin.Configuration.CurrentSortIndex = (int)currentSort;
                     plugin.SaveConfiguration();
-
+                    SortCharacters();
                     isReorderWindowOpen = false;
                 }
                 ImGui.End();

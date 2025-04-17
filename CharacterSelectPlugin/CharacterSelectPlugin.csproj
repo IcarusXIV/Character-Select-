@@ -3,7 +3,7 @@
     <PropertyGroup>
         <TargetFramework>net9.0-windows</TargetFramework>
         <!-- Windows-specific target framework -->
-        <Version>1.1.0.8</Version>
+        <Version>1.1.0.9</Version>
         <Description>Character Select+.</Description>
         <PackageProjectUrl>https://github.com/USBTURTLECUP/Character-Select-</PackageProjectUrl>
         <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>

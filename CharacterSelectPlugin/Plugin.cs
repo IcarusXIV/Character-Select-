@@ -38,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-        public static readonly string CurrentPluginVersion = "1.1.0.8"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.0.9"; // 🧠 Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -217,7 +217,7 @@ namespace CharacterSelectPlugin
             PatchNotesWindow = new PatchNotesWindow(this);
             if (Configuration.LastSeenVersion != CurrentPluginVersion)
                 PatchNotesWindow.IsOpen = true;
-            PatchNotesWindow.IsOpen = true;
+            //PatchNotesWindow.IsOpen = true;
 
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(QuickSwitchWindow); // ✅ Register the Quick Switch Window
