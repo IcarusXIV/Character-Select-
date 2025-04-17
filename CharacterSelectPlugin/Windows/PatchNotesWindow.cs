@@ -17,16 +17,73 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            ImGui.SetNextWindowSizeConstraints(new Vector2(480, 1051), new Vector2(float.MaxValue, float.MaxValue));
             ImGui.PushTextWrapPos();
 
             ImGui.TextColored(new Vector4(0.2f, 1.0f, 0.2f, 1.0f), $"★ New in v{Plugin.CurrentPluginVersion}");
             ImGui.Separator();
             ImGui.Spacing();
 
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf055"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.65f, 0.65f, 0.9f, 1.0f), "New Features");
-            ImGui.Separator();
+            // 🔹 Latest Patch Notes
+            if (ImGui.CollapsingHeader("v1.1.0.8 – April 12 2025", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                // Apply Character on Login
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf4fc"); ImGui.PopFont(); ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Apply Character on Login");
+                ImGui.BulletText("New opt-in setting in the plugin options.");
+                ImGui.BulletText("Character Select+ will remember the last applied character.");
+                ImGui.BulletText("Next time you log in, it will automatically apply that character.");
+                ImGui.BulletText("⚠️ May conflict if you are using Glamourer Automations.");
+                ImGui.Separator();
 
+                // Folders for Designs
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf07b"); ImGui.PopFont(); ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Folders for Designs");
+                ImGui.BulletText("Group and organize your designs into folders.");
+                ImGui.BulletText("Click the folder icon in the Design panel by the + button.");
+                ImGui.BulletText("Sort and rearrange in the folder editor — changes apply when you click Save.");
+                ImGui.Separator();
+
+                // RP Profile Updates – Race
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf2c2"); ImGui.PopFont(); ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "RP Profile Updates");
+                ImGui.BulletText("You can now set a character's Race in their RP Profile.");
+                ImGui.BulletText("Use the same menu as Pronouns, Orientation, and Bio.");
+                ImGui.Separator();
+
+                // UI Scaling Option
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf00e"); ImGui.PopFont(); ImGui.SameLine(); // <i class="fas fa-search-plus"></i>
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "UI Scale Setting");
+                ImGui.BulletText("You can now adjust the plugin UI scale from the settings menu.");
+                ImGui.BulletText("Great for users on high-resolution monitors or 4K displays.");
+                ImGui.BulletText("Let me know if there are any issues using this.");
+                ImGui.BulletText("⚠️ If your UI is fine as-is, best to leave this be.");
+                ImGui.Separator();
+            }
+
+            // 🔹 Previous Patch Notes
+            if (ImGui.CollapsingHeader("v1.1.0.(0-7) – April 09 2025", ImGuiTreeNodeFlags.None))
+            {
+                Draw1100Notes();
+            }
+
+            ImGui.Spacing(); ImGui.Spacing();
+            float windowWidth = ImGui.GetWindowSize().X;
+            float buttonWidth = 90f;
+            ImGui.SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
+
+            if (ImGui.Button("Got it!", new Vector2(buttonWidth, 0)))
+            {
+                plugin.Configuration.LastSeenVersion = Plugin.CurrentPluginVersion;
+                plugin.Configuration.Save();
+                IsOpen = false;
+                plugin.ToggleMainUI();
+            }
+
+            ImGui.PopTextWrapPos();
+        }
+        private void Draw1100Notes()
+        {
             // RP Profile Panel
             ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf2c2"); ImGui.PopFont(); ImGui.SameLine();
             ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "RolePlay Profile Panel");
@@ -93,33 +150,14 @@ namespace CharacterSelectPlugin.Windows
             ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Copy Designs Between Characters");
             ImGui.BulletText("Hold Shift and click the '+' button in Designs to open the Design Importer.");
             ImGui.BulletText("Click the + beside a design to copy it. Repeat as needed!");
-
-            ImGui.Spacing();
             ImGui.Separator();
-            ImGui.Spacing();
 
+            // Other changes
             ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf085"); ImGui.PopFont(); ImGui.SameLine();
             ImGui.TextColored(new Vector4(0.65f, 0.65f, 0.9f, 1.0f), "Other Changes");
-            ImGui.Separator();
             ImGui.BulletText("Older Design macros were automatically upgraded.");
             ImGui.BulletText("Various UI tweaks, bugfixes, and behind-the-scenes improvements.");
-
-            ImGui.Spacing();
-            ImGui.Spacing();
-
-            float windowWidth = ImGui.GetWindowSize().X;
-            float buttonWidth = 90f;
-            ImGui.SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
-
-            if (ImGui.Button("Got it!", new Vector2(buttonWidth, 0)))
-            {
-                plugin.Configuration.LastSeenVersion = Plugin.CurrentPluginVersion;
-                plugin.Configuration.Save();
-                IsOpen = false;
-                plugin.ToggleMainUI();
-            }
-
-            ImGui.PopTextWrapPos();
         }
+
     }
 }

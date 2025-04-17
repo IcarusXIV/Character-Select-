@@ -1,5 +1,6 @@
 using Dalamud.Configuration;
 using Dalamud.Plugin;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -34,7 +35,12 @@ namespace CharacterSelectPlugin
         public byte LastSitPoseAppliedByPlugin { get; set; } = 255;
         public byte LastGroundSitPoseAppliedByPlugin { get; set; } = 255;
         public byte LastDozePoseAppliedByPlugin { get; set; } = 255;
-
+        public Dictionary<string, string> LastUsedCharacterByPlayer { get; set; } = new();
+        public bool EnableLastUsedCharacterAutoload { get; set; } = true;
+        public string? LastSessionId { get; set; } = null;
+        public string? PreviousSessionId { get; set; }
+        [JsonProperty]
+        public float UIScaleMultiplier { get; set; } = 1.0f;
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)

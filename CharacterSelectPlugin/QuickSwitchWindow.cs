@@ -194,6 +194,7 @@ namespace CharacterSelectPlugin.Windows
                     Pronouns = character.RPProfile?.Pronouns,
                     Gender = character.RPProfile?.Gender,
                     Age = character.RPProfile?.Age,
+                    Race = character.RPProfile?.Race,
                     Orientation = character.RPProfile?.Orientation,
                     Relationship = character.RPProfile?.Relationship,
                     Occupation = character.RPProfile?.Occupation,
@@ -231,4 +232,3 @@ namespace CharacterSelectPlugin.Windows
 
     }
 }
-

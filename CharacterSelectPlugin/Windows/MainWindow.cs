@@ -9,6 +9,7 @@ using System.Threading;
 using System.Linq;
 using Dalamud.Interface;
 using System.Runtime.CompilerServices;
+using Dalamud.Plugin.Services;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -54,6 +55,11 @@ namespace CharacterSelectPlugin.Windows
         private Vector3 editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
         private string editedCharacterAutomation = "";
         private string tempCharacterAutomation = "";  // Temp variable for automation
+        private CharacterDesign? draggedDesign = null;
+        private Dictionary<Guid, string> folderRenameBuffers = new();
+
+
+
 
 
 
@@ -84,14 +90,24 @@ namespace CharacterSelectPlugin.Windows
 
 
         // 🔹 Add Sorting Function
-        private enum SortType { Favorites, Alphabetical, Recent, Oldest }
+        public enum SortType { Manual, Favorites, Alphabetical, Recent, Oldest }
         private SortType currentSort;
 
         private enum DesignSortType { Favorites, Alphabetical, Recent, Oldest }
         private DesignSortType currentDesignSort = DesignSortType.Alphabetical;
+        private bool isDesignSortWindowOpen = false;
+        private Character? sortTargetCharacter = null;
+        private List<DesignFolder> workingFolders = new();
+        private Dictionary<Guid, string> workingRenameBuffers = new();
+        private Guid? newFolderEditingId = null;
+        private string newFolderNameInput = "";
+        private bool hasLoadedWorkingFolders = false;
 
 
-        private void SortCharacters()
+
+
+
+        public void SortCharacters()
         {
             if (currentSort == SortType.Favorites)
             {
@@ -101,6 +117,10 @@ namespace CharacterSelectPlugin.Windows
                     if (favCompare != 0) return favCompare;
                     return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase); // 🔠 Alphabetical within favorites
                 });
+            }
+            if (currentSort == SortType.Manual)
+            {
+                plugin.Characters.Sort((a, b) => a.SortOrder.CompareTo(b.SortOrder));
             }
             else if (currentSort == SortType.Alphabetical)
             {
@@ -164,9 +184,10 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+
             // Save original scale
             float originalScale = ImGui.GetIO().FontGlobalScale;
-            ImGui.GetIO().FontGlobalScale = 1.0f;
+            ImGui.GetIO().FontGlobalScale = plugin.UIScaleMultiplier;
             ImGui.Text("Choose your character");
             ImGui.Separator();
 
@@ -499,7 +520,31 @@ namespace CharacterSelectPlugin.Windows
                         if (changed)
                             plugin.SaveConfiguration();
                     }
-
+                    bool enableAutoload = plugin.Configuration.EnableLastUsedCharacterAutoload;
+                    if (ImGui.Checkbox("Auto-Apply Last Used Character on Login", ref enableAutoload))
+                    {
+                        plugin.Configuration.EnableLastUsedCharacterAutoload = enableAutoload;
+                        plugin.Configuration.Save();
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.TextUnformatted("Automatically applies the last character you used when logging into the game.");
+                        ImGui.EndTooltip();
+                    }
+                    float scaleSetting = plugin.Configuration.UIScaleMultiplier;
+                    if (ImGui.SliderFloat("UI Scale", ref scaleSetting, 0.5f, 2.0f, "%.2fx"))
+                    {
+                        plugin.Configuration.UIScaleMultiplier = scaleSetting;
+                        plugin.SaveConfiguration();
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.Text("Scales the entire Character Select+ UI manually.");
+                        ImGui.Text("Useful for high-DPI monitors (2K / 3K / 4K).");
+                        ImGui.EndTooltip();
+                    }
 
                     // 🔹 Position "Sort By" Dropdown in the Bottom-Right
                     ImGui.Separator();
@@ -559,30 +604,35 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.End();
                 }
             }
-            // 🔹 Position the Support Button near the bottom-right corner
-            float buttonWidth = 110;
+            // 🔹 Get position for bottom-right corner after all layout is done
+            Vector2 windowPos = ImGui.GetWindowPos();
+            Vector2 windowSize = ImGui.GetWindowSize();
+            float buttonWidth = 105;
             float buttonHeight = 25;
-            float padding = 10;
+            float padding = 05;
 
-            // Set button position near the bottom-right
-            ImGui.SetCursorPos(new Vector2(
-                ImGui.GetWindowWidth() - buttonWidth - padding,  // Align to right
-                ImGui.GetWindowHeight() - buttonHeight - padding // Align to bottom
+            // Set position to bottom-right, accounting for padding
+            // Set cursor and button area
+            ImGui.SetCursorScreenPos(new Vector2(
+                windowPos.X + windowSize.X - buttonWidth - padding,
+                windowPos.Y + windowSize.Y - buttonHeight - padding
             ));
 
-            // 🔹 Create the Support Button
-            if (ImGui.Button("💙 Support Dev", new Vector2(buttonWidth, buttonHeight)))
+            // Start button
+            if (ImGui.Button("##SupportDev", new Vector2(buttonWidth, buttonHeight)))
             {
                 Dalamud.Utility.Util.OpenLink("https://ko-fi.com/icarusxiv");
             }
 
-            // Tooltip on hover
+            // Icon + text combo
+            Vector2 textPos = ImGui.GetItemRectMin() + new Vector2(6, 4); // Padding inside button
+            ImGui.GetWindowDrawList().AddText(UiBuilder.IconFont, ImGui.GetFontSize(), textPos, ImGui.GetColorU32(ImGuiCol.Text), "\uf004");
+            ImGui.GetWindowDrawList().AddText(textPos + new Vector2(22, 0), ImGui.GetColorU32(ImGuiCol.Text), "Support Dev");
+
             if (ImGui.IsItemHovered())
+            {
                 ImGui.SetTooltip("Enjoy Character Select+? Consider supporting development!");
-            // ✅ Restore original global scale so it doesn't affect other plugins
-            ImGui.GetIO().FontGlobalScale = originalScale;
-            DrawImportDesignWindow();
-            DrawReorderWindow();
+            }
 
         }
 
@@ -595,6 +645,7 @@ namespace CharacterSelectPlugin.Windows
             plugin.NewCharacterColor = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
             plugin.NewPenumbraCollection = "";
             plugin.NewGlamourerDesign = "";
+            plugin.NewCharacterAutomation = "";
             plugin.NewCustomizeProfile = "";
             plugin.NewCharacterImagePath = null;
             plugin.NewCharacterDesigns.Clear();
@@ -621,9 +672,7 @@ namespace CharacterSelectPlugin.Windows
             }
             // ✅ Do NOT touch plugin.NewCharacterMacros if Advanced Mode is active
 
-
         }
-
 
 
         private void DrawCharacterForm()
@@ -1571,6 +1620,7 @@ if (isAdvancedModeCharacter)
                                     Pronouns = character.RPProfile?.Pronouns,
                                     Gender = character.RPProfile?.Gender,
                                     Age = character.RPProfile?.Age,
+                                    Race = character.RPProfile?.Race,
                                     Orientation = character.RPProfile?.Orientation,
                                     Relationship = character.RPProfile?.Relationship,
                                     Occupation = character.RPProfile?.Occupation,
@@ -1806,11 +1856,16 @@ if (isAdvancedModeCharacter)
                 $"/glamour apply {glamourer} | self\n";
 
             // ✅ Character Automation (if enabled)
+            string automation = isEditCharacterWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
+
             if (plugin.Configuration.EnableAutomations)
             {
-                string automation = string.IsNullOrWhiteSpace(editedCharacterAutomation) ? "None" : editedCharacterAutomation;
-                macro += $"/glamour automation enable {automation}\n";
+                if (string.IsNullOrWhiteSpace(automation))
+                    macro += "/glamour automation enable None\n";
+                else
+                    macro += $"/glamour automation enable {automation}\n";
             }
+
 
             macro += "/customize profile disable <me>\n";
 
@@ -1910,11 +1965,31 @@ if (isAdvancedModeCharacter)
                 ImGui.Text("Click to add a new design\nHold Shift to import from another character");
                 ImGui.EndTooltip();
             }
+            ImGui.SameLine();
+            // 🔹 Folder Button (Yellow)
+            // 🔹 Folder icon button (matches + and x in size)
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(2, 2)); // Shrink padding
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 3f);               // Optional: rounded
+            if (ImGui.Button("\uf07b##OrganizeFolder", new Vector2(20, 20)))   // \uf07b = folder
+            {
+                isDesignSortWindowOpen = true;
+                sortTargetCharacter = character;
+            }
+            ImGui.PopStyleVar(2);
+            ImGui.PopFont();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Organize Designs");
+                ImGui.EndTooltip();
+            }
 
             // 🔹 Close Button (Red)
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetWindowContentRegionMax().X - 20);
-            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetColorU32(new Vector4(1.0f, 0.27f, 0.27f, 1.0f)));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.27f, 0.27f, 1.0f));
             if (ImGui.Button("x##CloseDesignPanel"))
             {
                 activeDesignCharacterIndex = -1;
@@ -2207,112 +2282,52 @@ if (isAdvancedModeCharacter)
             // 🔹 NOW RENDER THE DESIGN LIST
             ImGui.BeginChild("DesignListBackground", new Vector2(0, ImGui.GetContentRegionAvail().Y), true, ImGuiWindowFlags.NoScrollbar);
 
-            foreach (var design in character.Designs)
+            // 🔹 Combine everything into one unified list (folders + flat designs)
+            var renderItems = new List<(string name, bool isFolder, object reference)>();
+
+            foreach (var design in character.Designs.Where(d => d.FolderId == null))
+                renderItems.Add((design.Name, false, design));
+
+            foreach (var folder in character.DesignFolders) // ✅ FIXED
+                renderItems.Add((folder.Name, true, folder));
+
+            // 🔸 Sort alphabetically
+            renderItems = renderItems.OrderBy(item => item.name).ToList();
+
+            // 🔹 Draw unified list
+            foreach (var item in renderItems)
             {
-                float rowWidth = ImGui.GetContentRegionAvail().X;
-
-                // * Add Favorite Star before the design name (left side)
-                string starSymbol = design.IsFavorite ? "★" : "☆"; // Solid star if favorited, empty star if not
-                var starPos = new Vector2(ImGui.GetCursorPosX(), ImGui.GetCursorPosY()); // Align with design name
-
-                ImGui.Text(starSymbol);
-                ImGui.SameLine(); // Keep it next to the name
-
-                // Clickable star toggle
-                if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+                if (item.isFolder)
                 {
-                    design.IsFavorite = !design.IsFavorite;
-                    plugin.SaveConfiguration();
-                    SortDesigns(character);  // ✅ Resort after toggling favorite
-                }
+                    var folder = (DesignFolder)item.reference;
 
-                // Tooltip for clarity
-                if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip(design.IsFavorite ? "Unfavorite this design" : "Mark as Favorite");
-                }
+                    ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.22f, 0.26f, 0.35f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.26f, 0.30f, 0.40f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.30f, 0.35f, 0.45f, 1f));
 
-                ImGui.SameLine();
+                    bool open = ImGui.CollapsingHeader($"{folder.Name}##Folder_{folder.Id}", ImGuiTreeNodeFlags.DefaultOpen);
+                    ImGui.PopStyleColor(3);
 
-                // 🔹 Dynamic Text Truncation
-                float availableWidth = rowWidth - 130f; // Space for buttons (Apply, Edit, Delete)
-                string displayName = design.Name;
-
-                Vector2 textSize = ImGui.CalcTextSize(displayName);
-                if (textSize.X > availableWidth)
-                {
-                    int maxChars = displayName.Length;
-                    while (maxChars > 0 && ImGui.CalcTextSize(displayName.Substring(0, maxChars) + "...").X > availableWidth)
+                    if (open)
                     {
-                        maxChars--;
-                    }
-                    displayName = displayName.Substring(0, maxChars) + "...";
-                }
-
-                // 🔹 Render the Truncated Design Name
-                ImGui.Text(displayName);
-                ImGui.SameLine();
-
-                // * Show Full Name on Hover
-                if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip(design.Name);
-                }
-
-                // 🔹 Position the Apply Button Correctly
-                ImGui.SetCursorPosX(rowWidth - 80);
-
-                // 🔹 Apply Button ✅
-                ImGui.PushFont(UiBuilder.IconFont);
-                if (ImGui.Button("\uf00c" + $"##Apply{design.Name}"))
-                {
-                    plugin.ExecuteMacro(design.Macro);
-                }
-                ImGui.PopFont();
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-                {
-                    ImGui.BeginTooltip();
-                    ImGui.Text("Apply Design.");
-                    ImGui.EndTooltip();
-                }
-
-                ImGui.SameLine();
-
-                // 🔹 Edit Icon ✏️
-                ImGui.PushFont(UiBuilder.IconFont);
-                if (ImGui.Button("\uf044" + $"##Edit{design.Name}"))
-                {
-                    OpenEditDesignWindow(character, design);
-                }
-                ImGui.PopFont();
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-                {
-                    ImGui.BeginTooltip();
-                    ImGui.Text("Edit Design.");
-                    ImGui.EndTooltip();
-                }
-
-                ImGui.SameLine();
-
-                // 🔹 Delete Icon 🗑️
-                ImGui.PushFont(UiBuilder.IconFont);
-                if (ImGui.Button("\uf2ed" + $"##Delete{design.Name}"))
-                {
-                    bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
-                    if (isCtrlShiftPressed)
-                    {
-                        character.Designs.Remove(design);
-                        plugin.SaveConfiguration();
+                        foreach (var design in character.Designs.Where(d => d.FolderId == folder.Id).OrderBy(d => d.Name))
+                            DrawDesignRow(character, design, isInsideFolder: true);
                     }
                 }
-                ImGui.PopFont();
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                else
                 {
-                    ImGui.BeginTooltip();
-                    ImGui.Text("Hold Ctrl+Shift and click to delete.");
-                    ImGui.EndTooltip();
+                    var design = (CharacterDesign)item.reference;
+                    DrawDesignRow(character, design, isInsideFolder: false);
                 }
-                ImGui.Separator();
+            }
+            if (isDesignSortWindowOpen && sortTargetCharacter != null)
+            {
+                ImGui.SetNextWindowSize(new Vector2(580, 500), ImGuiCond.FirstUseEver);
+                if (ImGui.Begin($"Organize Designs for {sortTargetCharacter.Name}", ref isDesignSortWindowOpen, ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize))
+                {
+                    DrawDesignOrganizer(sortTargetCharacter);
+                    ImGui.End();
+                }
             }
 
             ImGui.EndChild(); // ✅ END DESIGN LIST
@@ -2331,7 +2346,305 @@ if (isAdvancedModeCharacter)
                     isAdvancedModeDesign = false;
             }
         }
+        private void DrawDesignRow(Character character, CharacterDesign design, bool isInsideFolder)
+        {
+            if (isInsideFolder)
+            {
+                ImGui.Indent(12);
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.82f, 0.86f, 1.0f, 1.0f)); // Soft clean blue
+            }
 
+            float rowWidth = ImGui.GetContentRegionAvail().X;
+
+            // 🔸 Favorite Star
+            string starSymbol = design.IsFavorite ? "★" : "☆";
+            ImGui.Text(starSymbol);
+            ImGui.SameLine();
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+            {
+                design.IsFavorite = !design.IsFavorite;
+                plugin.SaveConfiguration();
+                SortDesigns(character);
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(design.IsFavorite ? "Unfavorite" : "Mark as Favorite");
+
+            // 🔸 Design Name (with truncation)
+            ImGui.SameLine();
+            float availableWidth = rowWidth - 130f;
+            string displayName = design.Name;
+            Vector2 textSize = ImGui.CalcTextSize(displayName);
+            if (textSize.X > availableWidth)
+            {
+                int maxChars = displayName.Length;
+                while (maxChars > 0 && ImGui.CalcTextSize(displayName.Substring(0, maxChars) + "...").X > availableWidth)
+                    maxChars--;
+                displayName = displayName.Substring(0, maxChars) + "...";
+            }
+
+            ImGui.Text(displayName);
+            ImGui.SameLine();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(design.Name);
+
+            // 🔹 Buttons: Apply, Edit, Delete
+            ImGui.SetCursorPosX(rowWidth - 80);
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button("\uf00c" + $"##Apply{design.Name}")) plugin.ExecuteMacro(design.Macro);
+            ImGui.PopFont();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Apply Design");
+
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button("\uf044" + $"##Edit{design.Name}")) OpenEditDesignWindow(character, design);
+            ImGui.PopFont();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Edit Design");
+
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button("\uf2ed" + $"##Delete{design.Name}"))
+            {
+                bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+                if (isCtrlShiftPressed)
+                {
+                    character.Designs.Remove(design);
+                    plugin.SaveConfiguration();
+                }
+            }
+            ImGui.PopFont();
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Hold Ctrl+Shift to delete");
+
+            if (isInsideFolder)
+            {
+                ImGui.Unindent(12);
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.Separator();
+        }
+
+        private void DrawDesignOrganizer(Character character)
+        {
+            if (!hasLoadedWorkingFolders)
+            {
+                workingFolders.Clear();
+                workingRenameBuffers.Clear();
+
+                foreach (var folder in character.DesignFolders)
+                {
+                    workingFolders.Add(new DesignFolder(folder.Name, folder.Id));
+                    workingRenameBuffers[folder.Id] = folder.Name;
+                }
+
+                hasLoadedWorkingFolders = true;
+            }
+            // 🔹 Header
+            ImGui.Text($"Sort and organize designs for: {character.Name}");
+
+            ImGui.Separator(); // Visually separates the "Create" section
+            ImGui.Text("Create New Folder:");
+            ImGui.SameLine(); // Keep text and input on same line
+
+            ImGui.PushItemWidth(200); // Width for the input box
+            ImGui.InputText("##NewFolderNameInput", ref newFolderNameInput, 100); // User types folder name here
+            ImGui.PopItemWidth();
+            ImGui.SameLine(); // Put the button next to input
+
+            if (ImGui.Button("Add Folder"))
+            {
+                if (!string.IsNullOrWhiteSpace(newFolderNameInput))
+                {
+                    var newFolder = new DesignFolder(newFolderNameInput);
+                    workingFolders.Add(newFolder);
+
+                    // ✅ Initialize rename buffer to avoid popup bugs
+                    workingRenameBuffers[newFolder.Id] = newFolder.Name;
+
+                    newFolderNameInput = "";
+                }
+            }
+
+
+
+            ImGui.Separator();
+
+            // 🔹 Designs not in folders
+            ImGui.Text("Designs not in folders:");
+            foreach (var design in character.Designs.Where(d => d.FolderId == null))
+            {
+                DrawOrganizerRow(character, design);
+
+                // Drop target to keep design out of folders
+                if (ImGui.BeginDragDropTarget())
+                {
+                    unsafe
+                    {
+                        var payload = ImGui.AcceptDragDropPayload("DESIGN_MOVE");
+                        if (payload.NativePtr != null && draggedDesign != null)
+                        {
+                            draggedDesign.FolderId = null;
+                            draggedDesign = null;
+                        }
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+            }
+
+            ImGui.Separator();
+
+
+            // 🔹 Folders
+            foreach (var folder in workingFolders.OrderBy(f => f.Name))
+            {
+                ImGui.PushID(folder.Id.ToString()); // ✅ Forces unique ID scope
+
+                bool open = ImGui.CollapsingHeader($"{folder.Name}", ImGuiTreeNodeFlags.DefaultOpen);
+
+                if (ImGui.BeginPopupContextItem())
+                {
+                    if (!workingRenameBuffers.TryGetValue(folder.Id, out var tempName))
+                        tempName = folder.Name;
+
+                    if (ImGui.InputText("Rename", ref tempName, 100, ImGuiInputTextFlags.EnterReturnsTrue))
+                    {
+                        folder.Name = tempName;
+                        workingRenameBuffers[folder.Id] = tempName;
+                        ImGui.CloseCurrentPopup();
+                    }
+                    else
+                    {
+                        workingRenameBuffers[folder.Id] = tempName;
+                    }
+
+                    if (ImGui.MenuItem("Delete Folder"))
+                    {
+                        Plugin.Log.Debug($"BEFORE DELETE – workingFolders: {workingFolders.Count}");
+                        Plugin.Log.Debug($"Attempting to delete folder {folder.Name} ({folder.Id})");
+
+                        workingFolders.RemoveAll(f => f.Id == folder.Id);
+                        workingRenameBuffers.Remove(folder.Id); // ✅ Clean up rename buffer
+
+                        foreach (var d in character.Designs.Where(d => d.FolderId == folder.Id))
+                            d.FolderId = null;
+
+                        Plugin.Log.Debug($"AFTER DELETE – workingFolders: {workingFolders.Count}");
+                        ImGui.CloseCurrentPopup();
+                        return; // ✅ Exit the draw loop to prevent rendering stale reference
+                    }
+
+                    ImGui.EndPopup();
+                }
+
+                if (open)
+                {
+                    foreach (var design in character.Designs.Where(d => d.FolderId == folder.Id))
+                        DrawOrganizerRow(character, design);
+
+                    if (ImGui.BeginDragDropTarget())
+                    {
+                        unsafe
+                        {
+                            var payload = ImGui.AcceptDragDropPayload("DESIGN_MOVE");
+                            if (payload.NativePtr != null && draggedDesign != null)
+                            {
+                                draggedDesign.FolderId = folder.Id;
+                                draggedDesign = null;
+                            }
+                        }
+                        ImGui.EndDragDropTarget();
+                    }
+                }
+
+                ImGui.PopID(); // ✅ Always pop after PushID
+            }
+
+
+            // 🔻 Save/Cancel bottom center
+            ImGui.Spacing();
+            ImGui.Separator();
+
+            float center = ImGui.GetWindowWidth() / 2f - 90;
+            ImGui.SetCursorPosX(center);
+
+            if (ImGui.Button("Save", new Vector2(80, 24)))
+            {
+                // Find actual character object from plugin.Characters list
+                var actualCharacter = plugin.Characters.FirstOrDefault(c => c.Name == character.Name);
+                if (actualCharacter != null)
+                {
+                    // Overwrite folders with deep copy
+                    actualCharacter.DesignFolders = workingFolders
+                        .Select(f => new DesignFolder(f.Name, f.Id))
+                        .ToList();
+
+                    // Unassign invalid folder IDs
+                    foreach (var design in actualCharacter.Designs)
+                    {
+                        if (!actualCharacter.DesignFolders.Any(f => f.Id == design.FolderId))
+                            design.FolderId = null;
+                    }
+
+                    // Commit rename buffer
+                    folderRenameBuffers = new Dictionary<Guid, string>(workingRenameBuffers);
+
+                    // Save config
+                    plugin.SaveConfiguration();
+                    // Replace the current in-memory character object with the updated one
+                    int index = plugin.Characters.FindIndex(c => c.Name == character.Name);
+                    if (index != -1)
+                    {
+                        plugin.Characters[index] = actualCharacter;
+                        activeDesignCharacterIndex = index; // <- This is key
+                    }
+
+                }
+
+                // ✅ Force refresh without closing the panel
+                selectedCharacterIndex = -1;
+
+                // Clear temp state
+                workingFolders.Clear();
+                workingRenameBuffers.Clear();
+                newFolderNameInput = "";
+                isDesignSortWindowOpen = false;
+                hasLoadedWorkingFolders = false;
+            }
+
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("Cancel", new Vector2(80, 24)))
+            {
+                isDesignSortWindowOpen = false;
+                hasLoadedWorkingFolders = false;
+                workingFolders.Clear();
+                workingRenameBuffers.Clear();
+                newFolderNameInput = "";
+            }
+        }
+
+        private void DrawOrganizerRow(Character character, CharacterDesign design)
+        {
+            ImGui.PushID($"OrganizerRow_{design.Name}");
+
+            // 🔹 Use a full-width invisible button to make the row interactable
+            var rowHeight = 22f;
+            var rowWidth = ImGui.GetContentRegionAvail().X;
+            ImGui.InvisibleButton("Row", new Vector2(rowWidth, rowHeight));
+
+            // Draw the name on top of the invisible button
+            var textPos = ImGui.GetItemRectMin() + new Vector2(4, 3);
+            ImGui.GetWindowDrawList().AddText(textPos, ImGui.GetColorU32(ImGuiCol.Text), design.Name);
+
+            // ✅ Drag source
+            if (ImGui.IsItemActive() && ImGui.BeginDragDropSource())
+            {
+                draggedDesign = design;
+                ImGui.SetDragDropPayload("DESIGN_MOVE", IntPtr.Zero, 0);
+                ImGui.TextUnformatted($"Move: {design.Name}");
+                ImGui.EndDragDropSource();
+            }
+
+            ImGui.PopID();
+        }
 
         private void AddNewDesign()
         {
@@ -2347,17 +2660,18 @@ if (isAdvancedModeCharacter)
         private void OpenEditDesignWindow(Character character, CharacterDesign design)
         {
             isEditDesignWindowOpen = true;
+            originalDesignName = design.Name;
             editedDesignName = design.Name;
             editedDesignMacro = design.IsAdvancedMode ? design.AdvancedMacro ?? "" : design.Macro ?? "";
             editedGlamourerDesign = !string.IsNullOrWhiteSpace(design.GlamourerDesign)
                 ? design.GlamourerDesign
                 : ExtractGlamourerDesignFromMacro(design.Macro ?? "");
 
-            editedAutomation = design.Automation ?? ""; 
-            editedCustomizeProfile = design.CustomizePlusProfile ?? ""; 
+            editedAutomation = design.Automation ?? "";
+            editedCustomizeProfile = design.CustomizePlusProfile ?? "";
             isAdvancedModeDesign = design.IsAdvancedMode;
             isAdvancedModeWindowOpen = design.IsAdvancedMode;
-            advancedDesignMacroText = design.AdvancedMacro ?? ""; 
+            advancedDesignMacroText = design.AdvancedMacro ?? "";
         }
 
         private void SaveDesign(Character character)
@@ -2700,20 +3014,20 @@ if (isAdvancedModeCharacter)
 
                 if (ImGui.Button("Save Order", new Vector2(buttonWidth, 0)))
                 {
+                    for (int i = 0; i < reorderBuffer.Count; i++)
+                        reorderBuffer[i].SortOrder = i;
+
                     plugin.Characters.Clear();
                     plugin.Characters.AddRange(reorderBuffer);
-                    plugin.SaveConfiguration();
-                    isReorderWindowOpen = false;
-                }
 
-                ImGui.SameLine();
-                if (ImGui.Button("Cancel", new Vector2(buttonWidth, 0)))
-                {
+                    currentSort = SortType.Manual;
+                    plugin.Configuration.CurrentSortIndex = (int)currentSort;
+                    plugin.SaveConfiguration();
+
                     isReorderWindowOpen = false;
                 }
                 ImGui.End();
             }
         }
-
     }
 }

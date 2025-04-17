@@ -38,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-        public static readonly string CurrentPluginVersion = "1.1.0.7"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.0.8"; // 🧠 Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -46,7 +46,7 @@ namespace CharacterSelectPlugin
         public Configuration Configuration { get; init; }
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
         private MainWindow MainWindow { get; init; }
-        public QuickSwitchWindow QuickSwitchWindow { get; init; } // ✅ New Quick Switch Window
+        public QuickSwitchWindow QuickSwitchWindow { get; set; } // ✅ New Quick Switch Window
         public PatchNotesWindow PatchNotesWindow { get; private set; } = null!;
         public RPProfileWindow RPProfileEditor { get; private set; }
         public RPProfileViewWindow RPProfileViewer { get; private set; }
@@ -78,7 +78,7 @@ namespace CharacterSelectPlugin
         public PoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
-        
+
         private ICallGateSubscriber<string, RPProfile>? requestProfile;
         private ICallGateProvider<string, RPProfile>? provideProfile;
         private ContextMenuManager? contextMenuManager;
@@ -100,8 +100,19 @@ namespace CharacterSelectPlugin
         internal int suppressSitSaveForFrames = 0;
         internal int suppressGroundSitSaveForFrames = 0;
         internal int suppressDozeSaveForFrames = 0;
-
-
+        private bool pendingCharacterAutoload = false;
+        private int characterAutoloadFrameDelay = 0;
+        private DateTime pluginInitTime = DateTime.Now;
+        private bool hasLoggedInOnce = false;
+        private bool hasAutoAppliedCharacter = false;
+        private string currentSessionId = "";
+        private static string CurrentSessionId = Guid.NewGuid().ToString();
+        private static string SessionPath => Path.Combine(PluginInterface.ConfigDirectory.FullName, "last_session.txt");
+        private static string SessionInfoPath => Path.Combine(PluginInterface.GetPluginConfigDirectory(), "session_info.txt");
+        private string? lastAppliedCharacter = null;
+        public float UIScaleMultiplier => Configuration.UIScaleMultiplier;
+        private bool restoredLastInGameName = false;
+        private string? _pendingSessionCharacterName = null;
 
 
 
@@ -114,13 +125,13 @@ namespace CharacterSelectPlugin
         public float ProfileSpacing { get; set; } = 10.0f; // Default spacing
 
 
-
         public unsafe Plugin()
         {
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
+
 
             // 🛠 Patch macros only after loading config + setting defaults
             foreach (var character in Configuration.Characters)
@@ -151,6 +162,17 @@ namespace CharacterSelectPlugin
                     }
                 }
             }
+            // ✅ SortOrder fallback (put this RIGHT HERE ⬇️)
+            if (Configuration.CurrentSortIndex == (int)MainWindow.SortType.Manual)
+            {
+                for (int i = 0; i < Configuration.Characters.Count; i++)
+                {
+                    if (Configuration.Characters[i].SortOrder == 0 && i != 0)
+                    {
+                        Configuration.Characters[i].SortOrder = i;
+                    }
+                }
+            }
 
             // Optionally save once
             Configuration.Save();
@@ -174,6 +196,7 @@ namespace CharacterSelectPlugin
 
             // Initialize the MainWindow and ConfigWindow properly
             MainWindow = new MainWindow(this);
+            MainWindow.SortCharacters();
             QuickSwitchWindow = new QuickSwitchWindow(this); // ✅ Add Quick Switch Window
             QuickSwitchWindow.IsOpen = Configuration.IsQuickSwitchWindowOpen; // ✅ Restore last open state
 
@@ -194,7 +217,7 @@ namespace CharacterSelectPlugin
             PatchNotesWindow = new PatchNotesWindow(this);
             if (Configuration.LastSeenVersion != CurrentPluginVersion)
                 PatchNotesWindow.IsOpen = true;
-            //PatchNotesWindow.IsOpen = true;
+            PatchNotesWindow.IsOpen = true;
 
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(QuickSwitchWindow); // ✅ Register the Quick Switch Window
@@ -216,6 +239,28 @@ namespace CharacterSelectPlugin
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
             ClientState.Login += OnLogin;
             Framework.Update += FrameworkUpdate;
+            string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
+
+            // 🧠 Only generate a new session ID if the file does not exist
+            if (!File.Exists(sessionFilePath))
+            {
+                this.currentSessionId = Guid.NewGuid().ToString();
+                File.WriteAllText(sessionFilePath, currentSessionId);
+            }
+            else
+            {
+                this.currentSessionId = File.ReadAllText(sessionFilePath).Trim();
+            }
+            if (File.Exists(SessionInfoPath))
+            {
+                string nameFromFile = File.ReadAllText(SessionInfoPath).Trim();
+                Plugin.Log.Debug($"[Startup] Found session_info.txt = {nameFromFile}");
+                _pendingSessionCharacterName = nameFromFile; // ✅ NEW FIELD
+            }
+            else
+            {
+                Plugin.Log.Debug("[Startup] No session_info.txt found.");
+            }
 
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
@@ -300,15 +345,24 @@ namespace CharacterSelectPlugin
             this.CleanupUnusedProfileImages();
 
         }
+
         private void OnLogin()
         {
+            if (ClientState.LocalPlayer == null || !ClientState.IsLoggedIn)
+            {
+                Plugin.Log.Debug("[OnLogin] Ignored – LocalPlayer is null or not logged in.");
+                return;
+            }
+
             loginTime = DateTime.Now;
             shouldApplyPoses = true;
             suppressIdleSaveForFrames = 60;
         }
+
+
         private unsafe void ApplyStoredPoses()
         {
-            if (ClientState.LocalPlayer == null)
+            if (ClientState.LocalPlayer?.Address is not nint address || address == IntPtr.Zero)
                 return;
 
             var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
@@ -369,6 +423,16 @@ namespace CharacterSelectPlugin
         }
         public void ApplyProfile(Character character, int designIndex)
         {
+            // 🧱 ABSOLUTE FAIL-SAFE: Do nothing if world isn’t ready
+            if (!ClientState.IsLoggedIn ||
+                ClientState.TerritoryType == 0 ||
+                ClientState.LocalPlayer == null ||
+                string.IsNullOrEmpty(ClientState.LocalPlayer.Name.TextValue) ||
+                !ClientState.LocalPlayer.HomeWorld.IsValid)
+            {
+                Plugin.Log.Debug("[ApplyProfile] Skipped: Player not fully loaded.");
+                return;
+            }
             if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
@@ -387,7 +451,16 @@ namespace CharacterSelectPlugin
 
                 // ✅ Register the new key → active character mapping
                 ActiveProfilesByPlayerName[fullKey] = newProfileKey;
-                character.LastInGameName = fullKey;
+                string pluginCharacterKey = $"{character.Name}@{worldName}"; // plugin character identity
+                character.LastInGameName = $"{localName}@{worldName}";        // who is currently logged in
+
+                Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+                Configuration.Save();
+
+                Plugin.Log.Debug($"[ApplyProfile] Saved: {fullKey} → {pluginCharacterKey}");
+                Plugin.Log.Debug($"[SetActiveCharacter] Updated LastUsedCharacterKey = {fullKey}");
+                Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {character.LastInGameName} for profile {character.Name}");
+
 
                 Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {fullKey} for profile {character.Name}");
                 var profileToSend = new RPProfile
@@ -395,6 +468,7 @@ namespace CharacterSelectPlugin
                     Pronouns = character.RPProfile?.Pronouns,
                     Gender = character.RPProfile?.Gender,
                     Age = character.RPProfile?.Age,
+                    Race = character.RPProfile?.Race,
                     Orientation = character.RPProfile?.Orientation,
                     Relationship = character.RPProfile?.Relationship,
                     Occupation = character.RPProfile?.Occupation,
@@ -437,9 +511,6 @@ namespace CharacterSelectPlugin
             SaveConfiguration();
 
         }
-
-
-
         private void EnsureConfigurationDefaults()
         {
             bool updated = false;
@@ -510,7 +581,20 @@ namespace CharacterSelectPlugin
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler("/spose");
             contextMenuManager?.Dispose();
-
+            Framework.Update += FrameworkUpdate;
+            try
+            {
+                string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
+                if (File.Exists(sessionFilePath))
+                {
+                    File.Delete(sessionFilePath);
+                    Plugin.Log.Debug("[Dispose] Deleted boot_session.txt for next launch.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning($"[Dispose] Failed to delete boot_session.txt: {ex.Message}");
+            }
         }
 
         private void OnCommand(string command, string args)
@@ -997,16 +1081,33 @@ namespace CharacterSelectPlugin
         }
         public void SetActiveCharacter(Character character)
         {
+            Plugin.Log.Debug("[SetActiveCharacter] CALLED");
+
             if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
-                string fullKey = $"{localName}@{worldName}";
+                string fullKey = $"{localName}@{worldName}"; // Who is logged in
+                string pluginCharacterKey = $"{localName}@{worldName}"; // Who was selected
 
                 ActiveProfilesByPlayerName[fullKey] = character.Name;
-                character.LastInGameName = fullKey;
 
-                Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {fullKey} for profile {character.Name}");
+                // ✅ This is what OnLogin uses to find the right profile
+                character.LastInGameName = pluginCharacterKey;
+
+                // ✅ This is the key logic: player → selected plugin character
+                Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+
+                // 📝 Write the session info file so the plugin remembers the last applied character name
+                File.WriteAllText(SessionInfoPath, character.Name);
+                Plugin.Log.Debug($"[ApplyProfile] 📝 Wrote session_info.txt = {character.Name}");
+
+                Configuration.Save();
+
+                // ✅ These log lines now match and won’t be skipped
+                Plugin.Log.Debug($"[SetActiveCharacter] Saved: {fullKey} → {pluginCharacterKey}");
+                Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {pluginCharacterKey} for profile {character.Name}");
+
 
                 // ✅ THIS is the correct upload:
                 var profileToSend = new RPProfile
@@ -1014,6 +1115,7 @@ namespace CharacterSelectPlugin
                     Pronouns = character.RPProfile?.Pronouns,
                     Gender = character.RPProfile?.Gender,
                     Age = character.RPProfile?.Age,
+                    Race = character.RPProfile?.Race,
                     Orientation = character.RPProfile?.Orientation,
                     Relationship = character.RPProfile?.Relationship,
                     Occupation = character.RPProfile?.Occupation,
@@ -1021,8 +1123,8 @@ namespace CharacterSelectPlugin
                     Bio = character.RPProfile?.Bio,
                     Tags = character.RPProfile?.Tags,
                     CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-    ? character.RPProfile.CustomImagePath
-    : character.ImagePath,
+        ? character.RPProfile.CustomImagePath
+        : character.ImagePath,
                     ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
                     ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
                     Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
@@ -1060,6 +1162,7 @@ namespace CharacterSelectPlugin
                 // 🔍 Get character match from config
                 var config = PluginInterface.GetPluginConfig() as Configuration;
                 Character? match = config?.Characters.FirstOrDefault(c => c.LastInGameName == characterName);
+
 
                 if (match != null)
                 {
@@ -1261,68 +1364,133 @@ namespace CharacterSelectPlugin
 
             unsafe
             {
-                var playerState = PlayerState.Instance();
+                var state = PlayerState.Instance();
+                if (state == null || (nint)state == IntPtr.Zero)
+                    return;
 
-                // === IDLE POSE ===
-                var currentIdle = playerState->SelectedPoses[(int)EmoteController.PoseType.Idle];
-                if (lastSeenIdlePose == 255)
+                try
+                {
+                    // === IDLE POSE ===
+                    var currentIdle = state->SelectedPoses[(int)EmoteController.PoseType.Idle];
+                    if (lastSeenIdlePose == 255)
+                        lastSeenIdlePose = currentIdle;
+
+                    if (suppressIdleSaveForFrames > 0)
+                        suppressIdleSaveForFrames--;
+                    else if (currentIdle != lastSeenIdlePose && currentIdle < 7 && currentIdle != Configuration.LastIdlePoseAppliedByPlugin)
+                    {
+                        Configuration.DefaultPoses.Idle = currentIdle;
+                        Configuration.LastIdlePoseAppliedByPlugin = currentIdle;
+                        Configuration.Save();
+                        Plugin.Log.Debug($"[AutoSave] Detected manual idle change to {currentIdle}, saved.");
+                    }
                     lastSeenIdlePose = currentIdle;
 
-                if (suppressIdleSaveForFrames > 0)
-                    suppressIdleSaveForFrames--;
-                else if (currentIdle != lastSeenIdlePose && currentIdle < 7 && currentIdle != Configuration.LastIdlePoseAppliedByPlugin)
-                {
-                    Configuration.DefaultPoses.Idle = currentIdle;
-                    Configuration.LastIdlePoseAppliedByPlugin = currentIdle;
-                    Configuration.Save();
-                    Plugin.Log.Debug($"[AutoSave] Detected manual idle change to {currentIdle}, saved.");
-                }
-                lastSeenIdlePose = currentIdle;
+                    // === SIT POSE ===
+                    var currentSit = state->SelectedPoses[(int)EmoteController.PoseType.Sit];
+                    if (lastSeenSitPose == 255)
+                        lastSeenSitPose = currentSit;
 
-                // === SIT POSE ===
-                var currentSit = playerState->SelectedPoses[(int)EmoteController.PoseType.Sit];
-                if (lastSeenSitPose == 255)
+                    if (suppressSitSaveForFrames > 0)
+                        suppressSitSaveForFrames--;
+                    else if (currentSit != lastSeenSitPose && currentSit < 7)
+                    {
+                        Configuration.DefaultPoses.Sit = currentSit;
+                        Configuration.Save();
+                        Plugin.Log.Debug($"[AutoSave] Detected manual sit change to {currentSit}, saved.");
+                    }
                     lastSeenSitPose = currentSit;
 
-                if (suppressSitSaveForFrames > 0)
-                    suppressSitSaveForFrames--;
-                else if (currentSit != lastSeenSitPose && currentSit < 7)
-                {
-                    Configuration.DefaultPoses.Sit = currentSit;
-                    Configuration.Save();
-                    Plugin.Log.Debug($"[AutoSave] Detected manual sit change to {currentSit}, saved.");
-                }
-                lastSeenSitPose = currentSit;
+                    // === GROUNDSIT POSE ===
+                    var currentGroundSit = state->SelectedPoses[(int)EmoteController.PoseType.GroundSit];
+                    if (lastSeenGroundSitPose == 255)
+                        lastSeenGroundSitPose = currentGroundSit;
 
-                // === GROUNDSIT POSE ===
-                var currentGroundSit = playerState->SelectedPoses[(int)EmoteController.PoseType.GroundSit];
-                if (lastSeenGroundSitPose == 255)
+                    if (suppressGroundSitSaveForFrames > 0)
+                        suppressGroundSitSaveForFrames--;
+                    else if (currentGroundSit != lastSeenGroundSitPose && currentGroundSit < 7)
+                    {
+                        Configuration.DefaultPoses.GroundSit = currentGroundSit;
+                        Configuration.Save();
+                        Plugin.Log.Debug($"[AutoSave] Detected manual ground sit change to {currentGroundSit}, saved.");
+                    }
                     lastSeenGroundSitPose = currentGroundSit;
 
-                if (suppressGroundSitSaveForFrames > 0)
-                    suppressGroundSitSaveForFrames--;
-                else if (currentGroundSit != lastSeenGroundSitPose && currentGroundSit < 7)
-                {
-                    Configuration.DefaultPoses.GroundSit = currentGroundSit;
-                    Configuration.Save();
-                    Plugin.Log.Debug($"[AutoSave] Detected manual ground sit change to {currentGroundSit}, saved.");
-                }
-                lastSeenGroundSitPose = currentGroundSit;
+                    // === DOZE POSE ===
+                    var currentDoze = state->SelectedPoses[(int)EmoteController.PoseType.Doze];
+                    if (lastSeenDozePose == 255)
+                        lastSeenDozePose = currentDoze;
 
-                // === DOZE POSE ===
-                var currentDoze = playerState->SelectedPoses[(int)EmoteController.PoseType.Doze];
-                if (lastSeenDozePose == 255)
+                    if (suppressDozeSaveForFrames > 0)
+                        suppressDozeSaveForFrames--;
+                    else if (currentDoze != lastSeenDozePose && currentDoze < 7)
+                    {
+                        Configuration.DefaultPoses.Doze = currentDoze;
+                        Configuration.Save();
+                        Plugin.Log.Debug($"[AutoSave] Detected manual doze change to {currentDoze}, saved.");
+                    }
                     lastSeenDozePose = currentDoze;
-
-                if (suppressDozeSaveForFrames > 0)
-                    suppressDozeSaveForFrames--;
-                else if (currentDoze != lastSeenDozePose && currentDoze < 7)
-                {
-                    Configuration.DefaultPoses.Doze = currentDoze;
-                    Configuration.Save();
-                    Plugin.Log.Debug($"[AutoSave] Detected manual doze change to {currentDoze}, saved.");
                 }
-                lastSeenDozePose = currentDoze;
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error($"[CrashPrevent] Exception while accessing PlayerState: {ex.Message}");
+                }
+            }
+
+            if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid && ClientState.IsLoggedIn)
+            {
+                string world = player.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{player.Name.TextValue}@{world}";
+
+                if (Configuration.EnableLastUsedCharacterAutoload &&
+                    lastAppliedCharacter != fullKey &&
+                    ClientState.TerritoryType != 0 &&
+                    DateTime.Now - loginTime > TimeSpan.FromSeconds(3)) // give a short delay to load
+                {
+                    if (Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))
+                    {
+                        var character = Characters.FirstOrDefault(c =>
+                            $"{c.Name}@{ClientState.LocalPlayer!.HomeWorld.Value.Name}" == lastUsedKey);
+
+                        if (character != null)
+                        {
+                            Plugin.Log.Debug($"[AutoLoad] ✅ Applying {character.Name} for {fullKey}");
+                            ApplyProfile(character, -1);
+                            lastAppliedCharacter = fullKey; // ✅ mark it
+                        }
+                        else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
+                        {
+                            Plugin.Log.Debug($"[AutoLoad] ❌ No match found for {lastUsedKey}");
+                            lastAppliedCharacter = $"!notfound:{lastUsedKey}"; // mark it so it doesn't log again
+                        }
+                    }
+                    else
+                    {
+                        Plugin.Log.Debug($"[AutoLoad] ❌ No previous character stored for {fullKey}");
+                    }
+                }
+            }
+            // ✅ Handle deferred ApplyProfile from session_info.txt
+            if (_pendingSessionCharacterName != null &&
+                ClientState.IsLoggedIn &&
+                ClientState.LocalPlayer != null &&
+                ClientState.TerritoryType != 0 &&
+                DateTime.Now - loginTime > TimeSpan.FromSeconds(3))
+            {
+                var character = Characters.FirstOrDefault(c =>
+                    c.Name.Equals(_pendingSessionCharacterName, StringComparison.OrdinalIgnoreCase));
+
+                if (character != null)
+                {
+                    Plugin.Log.Debug($"[DeferredStartup] Applying session profile: {_pendingSessionCharacterName}");
+                    ApplyProfile(character, -1);
+                }
+                else
+                {
+                    Plugin.Log.Warning($"[DeferredStartup] Could not find matching character for {_pendingSessionCharacterName}");
+                }
+
+                _pendingSessionCharacterName = null; // ✅ Run only once
             }
 
             // === Restore on Login ===

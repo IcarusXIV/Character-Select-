@@ -22,6 +22,7 @@ namespace CharacterSelectPlugin
         public string? ProfileImageUrl { get; set; }
         public string? CharacterName { get; set; }
         public Vector3Serializable NameplateColor { get; set; } = new(0.3f, 0.7f, 1f);
+        public string? Race { get; set; }
 
 
         public bool IsEmpty()
@@ -29,6 +30,7 @@ namespace CharacterSelectPlugin
             return string.IsNullOrWhiteSpace(Pronouns)
                 && string.IsNullOrWhiteSpace(Gender)
                 && string.IsNullOrWhiteSpace(Age)
+                && string.IsNullOrWhiteSpace(Race)
                 && string.IsNullOrWhiteSpace(Orientation)
                 && string.IsNullOrWhiteSpace(Relationship)
                 && string.IsNullOrWhiteSpace(Occupation)

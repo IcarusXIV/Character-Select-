@@ -119,11 +119,9 @@ namespace CharacterSelectPlugin.Windows
                             string path = Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
 
                             // ✅ Save once only if not exists
-                            if (!File.Exists(path))
-                            {
-                                File.WriteAllBytes(path, data);
-                                Plugin.Log.Debug($"[RPProfileView] Downloaded image to: {path}");
-                            }
+                            File.WriteAllBytes(path, data);
+                            Plugin.Log.Debug($"[RPProfileView] Downloaded image to: {path}");
+
 
                             downloadedImagePath = path;
                             imageDownloadComplete = true;
@@ -221,14 +219,22 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetCursorPosX(180); // ensure it never touches image
 
             ImGui.BeginGroup();
+            // 📌 Header: Name – Pronouns   Roleplay Profile
             ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), displayName);
+            if (!string.IsNullOrWhiteSpace(rp.Pronouns))
+            {
+                ImGui.SameLine();
+                ImGui.Text($"– {rp.Pronouns}");
+            }
             ImGui.SameLine();
-            ImGui.TextDisabled("– Roleplay Profile");
+            ImGui.TextDisabled("Roleplay Profile");
+
             ImGui.Spacing();
 
+            // 🧾 New field layout
             float colSplit = 200f;
-            DrawFieldRow("▪ Pronouns", rp.Pronouns, "▪ Gender", rp.Gender, colSplit);
-            DrawFieldRow("▪ Age", rp.Age, "▪ Orientation", rp.Orientation, colSplit);
+            DrawFieldRow("▪ Gender", rp.Gender, "▪ Age", rp.Age, colSplit);
+            DrawFieldRow("▪ Race", rp.Race, "▪ Orientation", rp.Orientation, colSplit);
             DrawFieldRow("▪ Relationship", rp.Relationship, "▪ Occupation", rp.Occupation, colSplit);
             if (!string.IsNullOrWhiteSpace(rp.Abilities))
             {

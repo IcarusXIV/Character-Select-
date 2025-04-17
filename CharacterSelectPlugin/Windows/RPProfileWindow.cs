@@ -23,6 +23,7 @@ namespace CharacterSelectPlugin.Windows
         private string abilities = "";
         private string bio = "";
         private string tags = "";
+        private string race = "";
 
         public RPProfileWindow(Plugin plugin) : base("Roleplay Profile", ImGuiWindowFlags.AlwaysAutoResize)
         {
@@ -39,6 +40,7 @@ namespace CharacterSelectPlugin.Windows
             pronouns = rp.Pronouns ?? "";
             gender = rp.Gender ?? "";
             age = rp.Age ?? "";
+            race = rp.Race ?? "";
             orientation = rp.Orientation ?? "";
             relationship = rp.Relationship ?? "";
             occupation = rp.Occupation ?? "";
@@ -200,10 +202,12 @@ namespace CharacterSelectPlugin.Windows
             DrawEditableField("Pronouns", ref pronouns);
             DrawEditableField("Gender", ref gender);
             DrawEditableField("Age", ref age);
+            DrawEditableField("Race", ref race);
             DrawEditableField("Sexual Orientation", ref orientation);
             DrawEditableField("Relationship", ref relationship);
             DrawEditableField("Occupation", ref occupation);
-
+            ImGui.Spacing();
+            
             // Abilities (as tag-like input)
             ImGui.Text("Abilities:");
             ImGui.SameLine();
@@ -257,6 +261,7 @@ namespace CharacterSelectPlugin.Windows
                 profile.Pronouns = pronouns;
                 profile.Gender = gender;
                 profile.Age = age;
+                profile.Race = race;
                 profile.Orientation = orientation;
                 profile.Relationship = relationship;
                 profile.Occupation = occupation;
@@ -269,6 +274,15 @@ namespace CharacterSelectPlugin.Windows
                 // Save reference back to character and config
                 character.RPProfile = profile;
                 plugin.SaveConfiguration();
+                // ✅ Upload profile just like ApplyProfile() does
+                if (!string.IsNullOrWhiteSpace(character.LastInGameName))
+                {
+                    character.RPProfile.CharacterName = character.Name;
+                    character.RPProfile.NameplateColor = character.NameplateColor;
+
+                    _ = Plugin.UploadProfileAsync(character.RPProfile, character.LastInGameName);
+                }
+
 
                 IsOpen = false;
 

@@ -33,6 +33,7 @@ namespace CharacterSelectPlugin
         public string? Pronouns { get; set; }
         public string? Gender { get; set; }
         public string? Age { get; set; }
+        public string? Race { get; set; }
         public string? SexualOrientation { get; set; }
         public string? RelationshipStatus { get; set; }
         public string? Occupation { get; set; }
@@ -57,6 +58,9 @@ namespace CharacterSelectPlugin
         public List<string> KnownTags { get; set; } = new();
         public List<string> DesignTags { get; set; } = new List<string>();
         public string CharacterAutomation { get; set; } = "";
+        public List<DesignFolder> DesignFolders { get; set; } = new();
+        public Vector3? OverrideAccentColor { get; set; } // if you're ever persisting the selection outside RPProfile
+
 
 
 
@@ -97,5 +101,36 @@ namespace CharacterSelectPlugin
             CharacterAutomation = characterautomation;
         }
     }
+    public class DesignFolder
+    {
+        public string Name { get; set; }
+        public Guid Id { get; set; }
+
+        // Required by Newtonsoft.Json
+        public DesignFolder()
+        {
+            Id = Guid.NewGuid(); // ✅ Ensures new ID if deserializing blank
+        }
+
+        public DesignFolder(string name)
+        {
+            Name = name;
+            Id = Guid.NewGuid(); // ✅ Ensures new ID if manually created
+        }
+
+        public DesignFolder(string name, Guid id)
+        {
+            Name = name;
+            Id = id;
+        }
+
+        public DesignFolder(DesignFolder other)
+        {
+            Name = other.Name;
+            Id = other.Id;
+        }
+    }
+
+
 
 }

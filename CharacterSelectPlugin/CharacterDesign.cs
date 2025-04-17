@@ -17,6 +17,8 @@ namespace CharacterSelectPlugin
         public string Tag { get; set; } = "Unsorted";
         public List<string> KnownTags { get; set; } = new();
         public List<string> DesignTags { get; set; } = new List<string>();
+        public Guid? FolderId { get; set; } = null; // null = Unsorted
+
 
 
 
