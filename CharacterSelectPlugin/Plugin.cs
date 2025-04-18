@@ -38,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-        public static readonly string CurrentPluginVersion = "1.1.0.9"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.1.0"; // 🧠 Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -1028,18 +1028,19 @@ namespace CharacterSelectPlugin
             if (ActiveProfilesByPlayerName.TryGetValue(targetName, out var overrideName))
             {
                 var character = Characters.FirstOrDefault(c =>
-                    string.Equals(c.LastInGameName, overrideName, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(c.Name, overrideName, StringComparison.OrdinalIgnoreCase));
+    string.Equals(c.Name, overrideName, StringComparison.OrdinalIgnoreCase));
+
 
                 if (character?.RPProfile == null || character.RPProfile.IsEmpty())
                 {
-                    ChatGui.PrintError($"[Character Select+] No RP profile set for {overrideName}.");
+                    ChatGui.PrintError($"[Character Select+] No RP profile set for {targetName}.");
                     return;
                 }
 
                 RPProfileViewer.SetCharacter(character);
                 RPProfileViewer.IsOpen = true;
                 return;
+
             }
             else if (!string.IsNullOrEmpty(ClientState.LocalPlayer?.Name.TextValue) &&
                      ClientState.LocalPlayer?.Name.TextValue.Equals(targetName, StringComparison.OrdinalIgnoreCase) == true)

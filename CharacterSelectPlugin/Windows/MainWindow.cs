@@ -186,8 +186,8 @@ namespace CharacterSelectPlugin.Windows
         {
 
             // Save original scale
-            float originalScale = ImGui.GetIO().FontGlobalScale;
-            ImGui.GetIO().FontGlobalScale = plugin.UIScaleMultiplier;
+            ImGui.PushFont(UiBuilder.DefaultFont);
+            ImGui.SetWindowFontScale(plugin.Configuration.UIScaleMultiplier);
             ImGui.Text("Choose your character");
             ImGui.Separator();
 
@@ -634,6 +634,8 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SetTooltip("Enjoy Character Select+? Consider supporting development!");
             }
             DrawReorderWindow();
+            ImGui.SetWindowFontScale(1f);
+            ImGui.PopFont();
         }
 
 
@@ -677,6 +679,10 @@ namespace CharacterSelectPlugin.Windows
 
         private void DrawCharacterForm()
         {
+            float scale = plugin.Configuration.UIScaleMultiplier;
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4 * scale, 2 * scale));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(4 * scale, 4 * scale));
+
             string tempName = isEditCharacterWindowOpen ? editedCharacterName : plugin.NewCharacterName;
             string tempMacros = isEditCharacterWindowOpen ? editedCharacterMacros : plugin.NewCharacterMacros;
             string? imagePath = isEditCharacterWindowOpen ? editedCharacterImagePath : plugin.NewCharacterImagePath;
@@ -688,9 +694,9 @@ namespace CharacterSelectPlugin.Windows
 
 
 
-            float labelWidth = 130; // Keep labels aligned
-            float inputWidth = 250; // Longer input bars
-            float inputOffset = 10; // Moves input fields slightly right
+            float labelWidth = 130 * scale; // Keep labels aligned
+            float inputWidth = 250 * scale; // Longer input bars
+            float inputOffset = 10 * scale; // Moves input fields slightly right
 
             // Character Name
             ImGui.SetCursorPosX(10);
@@ -1010,7 +1016,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SameLine();
 
             // 🔹 Honorific Placement Dropdown (Prefix/Suffix)
-            ImGui.SetNextItemWidth(80);
+            ImGui.SetNextItemWidth(80 * scale);
             if (ImGui.BeginCombo("##HonorificPlacement", tempHonorificPrefix)) // ✅ Use correct prefix variable
             {
                 string[] options = { "Prefix", "Suffix" };
@@ -1058,7 +1064,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SameLine();
 
             // 🔹 Honorific Color Picker (Fix)
-            ImGui.SetNextItemWidth(40);
+            ImGui.SetNextItemWidth(40 * scale);
             if (ImGui.ColorEdit3("##HonorificColor", ref tempHonorificColor, ImGuiColorEditFlags.NoInputs))
             {
                 if (isEditCharacterWindowOpen)
@@ -1090,7 +1096,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SameLine();
 
             // 🔹 Honorific Glow Picker (Fix)
-            ImGui.SetNextItemWidth(40);
+            ImGui.SetNextItemWidth(40 * scale);
             if (ImGui.ColorEdit3("##HonorificGlow", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs))
             {
                 if (isEditCharacterWindowOpen)
@@ -1504,6 +1510,7 @@ if (isAdvancedModeCharacter)
                 isEditCharacterWindowOpen = false;
                 plugin.CloseAddCharacterWindow();
             }
+            ImGui.PopStyleVar(2);
 
         }
 
@@ -1915,9 +1922,22 @@ if (isAdvancedModeCharacter)
             }
             return ""; // Return empty if nothing was found
         }
+        private static string TruncateWithEllipsis(string text, float maxWidth)
+        {
+            while (ImGui.CalcTextSize(text + "...").X > maxWidth && text.Length > 0)
+                text = text[..^1];
+            return text + "...";
+        }
+
 
         private void DrawDesignPanel()
         {
+            float scale = plugin.Configuration.UIScaleMultiplier;
+            var style = ImGui.GetStyle();
+
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, style.FramePadding * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, style.ItemSpacing * scale);
+
             if (activeDesignCharacterIndex < 0 || activeDesignCharacterIndex >= plugin.Characters.Count)
                 return;
 
@@ -1938,7 +1958,18 @@ if (isAdvancedModeCharacter)
             }
 
             // 🔹 Header with Add Button
-            ImGui.Text($"Designs for {character.Name}");
+            string name = $"Designs for {character.Name}";
+            float maxTextWidth = ImGui.GetContentRegionAvail().X - 75f; // space for buttons + buffer
+
+            var clippedName = ImGui.CalcTextSize(name).X > maxTextWidth
+                ? TruncateWithEllipsis(name, maxTextWidth)
+                : name;
+
+            ImGui.TextUnformatted(clippedName);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(name);
+
+            ImGui.SameLine(ImGui.GetContentRegionAvail().X - 60f);
             ImGui.SameLine();
 
             // 🔹 Plus Button (Green)
@@ -2345,6 +2376,7 @@ if (isAdvancedModeCharacter)
                 if (!isAdvancedModeWindowOpen)
                     isAdvancedModeDesign = false;
             }
+            ImGui.PopStyleVar(2);
         }
         private void DrawDesignRow(Character character, CharacterDesign design, bool isInsideFolder)
         {
