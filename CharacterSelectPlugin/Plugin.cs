@@ -38,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-        public static readonly string CurrentPluginVersion = "1.1.1.0"; // 🧠 Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.1.1"; // 🧠 Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -1443,6 +1443,8 @@ namespace CharacterSelectPlugin
                 string world = player.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{player.Name.TextValue}@{world}";
 
+                if (!Configuration.EnableLastUsedCharacterAutoload)
+                    return;
                 if (Configuration.EnableLastUsedCharacterAutoload &&
                     lastAppliedCharacter != fullKey &&
                     ClientState.TerritoryType != 0 &&

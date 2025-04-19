@@ -25,7 +25,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Spacing();
 
             // 🔹 Latest Patch Notes
-            if (ImGui.CollapsingHeader("v1.1.0.8 - v1.1.1.0 – April 18 2025", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ImGui.CollapsingHeader("v1.1.0.8 - v1.1.1.1 – April 18 2025", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 // Apply Character on Login
                 ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf4fc"); ImGui.PopFont(); ImGui.SameLine();
