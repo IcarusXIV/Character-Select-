@@ -10,14 +10,14 @@ namespace CharacterSelectPlugin
     public class Character
     {
         public string Name { get; set; }
-        public string Macros { get; set; } = ""; // ✅ Default to empty instead of null
+        public string Macros { get; set; } = ""; // Default to empty instead of null
         public string? ImagePath { get; set; }
         public List<CharacterDesign> Designs { get; set; }
         public Vector3 NameplateColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default to white
         public string PenumbraCollection { get; set; } = "";
         public string GlamourerDesign { get; set; } = "";
         public string CustomizeProfile { get; set; } = "";
-        public bool IsFavorite { get; set; } = false; // Allows favoriting
+        public bool IsFavorite { get; set; } = false; // Allows favouriting
         public DateTime DateAdded { get; set; } = DateTime.Now; // Tracks when the character was added
         public int SortOrder { get; set; } = 0; // Tracks manual drag-drop order
         public string HonorificTitle { get; set; } = "";
@@ -85,7 +85,7 @@ namespace CharacterSelectPlugin
             string characterautomation)
         {
             Name = name;
-            Macros = macros ?? ""; // ✅ Prevents null macros
+            Macros = macros ?? ""; // Prevents null macros
             ImagePath = imagePath;
             Designs = designs ?? new List<CharacterDesign>();
             NameplateColor = nameplateColor;
@@ -106,16 +106,24 @@ namespace CharacterSelectPlugin
         public string Name { get; set; }
         public Guid Id { get; set; }
 
-        // Required by Newtonsoft.Json
+        // Optional parent (for future nesting)
+        public Guid? ParentFolderId { get; set; } = null;
+        // Manual ordering index within its parent
+        public int SortOrder { get; set; } = 0;
+
+        // <<< Add this! >>>
         public DesignFolder()
         {
-            Id = Guid.NewGuid(); // ✅ Ensures new ID if deserializing blank
+            Name = "";
+            Id = Guid.NewGuid();
+            ParentFolderId = null;
+            SortOrder = 0;
         }
 
         public DesignFolder(string name)
         {
             Name = name;
-            Id = Guid.NewGuid(); // ✅ Ensures new ID if manually created
+            Id = Guid.NewGuid();
         }
 
         public DesignFolder(string name, Guid id)
@@ -130,7 +138,5 @@ namespace CharacterSelectPlugin
             Id = other.Id;
         }
     }
-
-
 
 }

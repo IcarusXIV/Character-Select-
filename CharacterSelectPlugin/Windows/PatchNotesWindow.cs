@@ -24,8 +24,8 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Separator();
             ImGui.Spacing();
 
-            // 🔹 Latest Patch Notes
-            if (ImGui.CollapsingHeader("v1.1.0.8 - v1.1.1.1 – April 18 2025", ImGuiTreeNodeFlags.DefaultOpen))
+            // Latest Patch Notes
+            if (ImGui.CollapsingHeader("v1.1.0.8 - v1.1.1.2 – April 18 2025", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 // Apply Character on Login
                 ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf4fc"); ImGui.PopFont(); ImGui.SameLine();
@@ -36,19 +36,30 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.BulletText("⚠️ May conflict if you are using Glamourer Automations.");
                 ImGui.Separator();
 
-                // Folders for Designs
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf07b"); ImGui.PopFont(); ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Folders for Designs");
-                ImGui.BulletText("Group and organize your designs into folders.");
-                ImGui.BulletText("Click the folder icon in the Design panel by the + button.");
-                ImGui.BulletText("Sort and rearrange in the folder editor — changes apply when you click Save.");
+                // Apply Appearance on Job Change
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf4fc"); ImGui.PopFont(); ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Apply Appearance on Job Change");
+                ImGui.BulletText("New opt-in setting in the plugin options.");
+                ImGui.BulletText("Character Select+ will remember the last applied character and/or design.");
+                ImGui.BulletText("When you switch between jobs, it will automatically apply that character/design.");
+                ImGui.BulletText("⚠️ WILL 100% conflict if you are using Glamourer Automations.");
                 ImGui.Separator();
 
-                // RP Profile Updates – Race
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf2c2"); ImGui.PopFont(); ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "RP Profile Updates");
-                ImGui.BulletText("You can now set a character's Race in their RP Profile.");
-                ImGui.BulletText("Use the same menu as Pronouns, Orientation, and Bio.");
+                // Designs
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf07b"); ImGui.PopFont(); ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Design Panel Rework");
+                ImGui.BulletText("Buttons now only appear on hover, keeping the panel clean and focused.");
+                ImGui.BulletText("Reorder designs by dragging the colored handle‐bar on the left — click and drag to move.");
+                ImGui.BulletText("Create new folders inline via the folder icon next to the + button, no extra windows needed.");
+                ImGui.BulletText("Drag-and-drop designs into, out of, and between folders directly within the panel.");
+                ImGui.BulletText("Right-click folders for inline Rename/Delete context menu, with instant application.");
+                ImGui.Separator();
+
+                // Compact Quick Switch
+                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf0a0"); ImGui.PopFont(); ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Compact Quick Character Switch");
+                ImGui.BulletText("Toggleable setting to hide the title bar and window frame for a slim bar.");
+                ImGui.BulletText("Keeps dropdowns and apply button only, preserving full switch functionality.");
                 ImGui.Separator();
 
                 // UI Scaling Option
@@ -61,7 +72,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Separator();
             }
 
-            // 🔹 Previous Patch Notes
+            // Previous Patch Notes
             if (ImGui.CollapsingHeader("v1.1.0.(0-7) – April 09 2025", ImGuiTreeNodeFlags.None))
             {
                 Draw1100Notes();

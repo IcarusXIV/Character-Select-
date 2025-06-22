@@ -27,20 +27,41 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
-            SizeConstraints = new WindowSizeConstraints
+            // ── Compact Quick Switch toggle ──
+            if (plugin.Configuration.QuickSwitchCompact)
             {
-                MinimumSize = new Vector2(360, 55),
-                MaximumSize = new Vector2(360, 58)
-            };
+                // No title‐bar, no resize, no scrollbar, no background
+                this.Flags = ImGuiWindowFlags
+                    .NoTitleBar
+                    | ImGuiWindowFlags.NoResize
+                    | ImGuiWindowFlags.NoScrollbar
+                    | ImGuiWindowFlags.NoBackground;
+                SizeConstraints = new WindowSizeConstraints
+                {
+                    MinimumSize = new System.Numerics.Vector2(360, 28),
+                    MaximumSize = new System.Numerics.Vector2(360, 28),
+                };
+            }
+            else
+            {
+                // Full window
+                this.Flags = ImGuiWindowFlags.NoResize
+                           | ImGuiWindowFlags.NoScrollbar;
+                SizeConstraints = new WindowSizeConstraints
+                {
+                    MinimumSize = new System.Numerics.Vector2(360, 55),
+                    MaximumSize = new System.Numerics.Vector2(360, 58),
+                };
+            }
 
             float dropdownWidth = 135;
             float spacing = 6;
 
-            // 🔹 Character Dropdown
+            // Character Dropdown
             ImGui.SetNextItemWidth(dropdownWidth);
             int tempCharacterIndex = selectedCharacterIndex;
 
-            if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightLargest))
+            if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightRegular))
             {
                 for (int i = 0; i < plugin.Characters.Count; i++)
                 {
@@ -76,7 +97,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine(0, spacing);
 
-            // 🔹 Design Dropdown
+            // Design Dropdown
             if (selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
             {
                 var selectedCharacter = plugin.Characters[selectedCharacterIndex];
@@ -119,7 +140,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine(0, spacing);
 
-            // 🔹 Apply Button
+            // Apply Button
             if (selectedCharacterIndex >= 0)
             {
                 if (ImGui.Button("Apply", new Vector2(50, ImGui.GetFrameHeight())))
@@ -134,7 +155,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.EndDisabled();
             }
 
-            // 🔹 Nameplate Color Bar (Appears below dropdowns if a character is selected)
+            // Nameplate Colour Bar (Appears below dropdowns if a character is selected)
             if (selectedCharacterIndex >= 0)
             {
                 Vector4 charColor = GetNameplateColor(plugin.Characters[selectedCharacterIndex]);
@@ -182,53 +203,48 @@ namespace CharacterSelectPlugin.Windows
 
             var character = plugin.Characters[selectedCharacterIndex];
 
-            // ✅ Only reapply character macro if different from last
-            if (!hasAppliedMacroThisSession || selectedCharacterIndex != lastAppliedCharacterIndex)
+            plugin.ExecuteMacro(character.Macros, character, null);
+            plugin.SetActiveCharacter(character);
+
+            var profileToSend = new RPProfile
             {
-                plugin.ExecuteMacro(character.Macros);
-                plugin.SetActiveCharacter(character);
-                lastAppliedCharacterIndex = selectedCharacterIndex;
-                hasAppliedMacroThisSession = true;
-                var profileToSend = new RPProfile
-                {
-                    Pronouns = character.RPProfile?.Pronouns,
-                    Gender = character.RPProfile?.Gender,
-                    Age = character.RPProfile?.Age,
-                    Race = character.RPProfile?.Race,
-                    Orientation = character.RPProfile?.Orientation,
-                    Relationship = character.RPProfile?.Relationship,
-                    Occupation = character.RPProfile?.Occupation,
-                    Abilities = character.RPProfile?.Abilities,
-                    Bio = character.RPProfile?.Bio,
-                    Tags = character.RPProfile?.Tags,
-                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-    ? character.RPProfile.CustomImagePath
-    : character.ImagePath,
-                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                    CharacterName = character.Name, // ✅ force correct name
-                    NameplateColor = character.NameplateColor // ✅ force correct color
-                };
+                Pronouns = character.RPProfile?.Pronouns,
+                Gender = character.RPProfile?.Gender,
+                Age = character.RPProfile?.Age,
+                Race = character.RPProfile?.Race,
+                Orientation = character.RPProfile?.Orientation,
+                Relationship = character.RPProfile?.Relationship,
+                Occupation = character.RPProfile?.Occupation,
+                Abilities = character.RPProfile?.Abilities,
+                Bio = character.RPProfile?.Bio,
+                Tags = character.RPProfile?.Tags,
+                CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+                    ? character.RPProfile.CustomImagePath
+                    : character.ImagePath,
+                ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                CharacterName = character.Name,
+                NameplateColor = character.NameplateColor
+            };
 
-                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
-            }
+            _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
 
-            // ✅ Always apply the design if selected
+            // Always apply the design if selected
             if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
             {
                 plugin.ExecuteMacro(character.Designs[selectedDesignIndex].Macro);
+                plugin.Configuration.LastUsedDesignByCharacter[character.Name] = character.Designs[selectedDesignIndex].Name;
+                plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
+                plugin.Configuration.Save();
             }
 
-            // ✅ Always apply idle pose
+            // Always apply idle pose if a valid one is set
             if (character.IdlePoseIndex < 7)
-            {
-                plugin.PoseManager.ApplyPose(FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController.PoseType.Idle, character.IdlePoseIndex);
-            }
-
-            plugin.PoseRestorer.RestorePosesFor(character);
+                plugin.PoseRestorer.RestorePosesFor(character);
+            else
+                Plugin.Log.Debug("[QuickSwitch] Skipping idle pose restore — IdlePoseIndex is None.");
         }
-
     }
 }

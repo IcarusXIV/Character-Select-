@@ -34,7 +34,7 @@ namespace CharacterSelectPlugin.Managers
             { 404, "Marilith" },
             { 410, "Rafflesia" },
             { 411, "White Rook" },
-            { 100, "FictitiousWorld" }, // Add all worlds you support here
+            { 100, "FictitiousWorld" },
         };
 
         public ContextMenuManager(Plugin plugin, IContextMenu contextMenu)

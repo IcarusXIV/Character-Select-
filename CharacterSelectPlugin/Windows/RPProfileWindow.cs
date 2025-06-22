@@ -58,10 +58,10 @@ namespace CharacterSelectPlugin.Windows
             }
             var rp = character.RPProfile ??= new RPProfile();
 
-            // 🔼 Image Override Section (Top of Window)
+            // Image Override Section (Top of Window)
             ImGui.Text("Profile Image:");
 
-            // 📂 Choose Image Button
+            // Choose Image Button
             if (ImGui.Button("Choose Image"))
             {
                 try
@@ -106,7 +106,7 @@ namespace CharacterSelectPlugin.Windows
                     rp.CustomImagePath = "";
             }
 
-            // 🖼️ Fixed-Frame Image Preview with Zoom & Pan
+            // Fixed-Frame Image Preview with Zoom & Pan
             string pluginDir = plugin.PluginDirectory;
             string fallback = Path.Combine(pluginDir, "Assets", "Default.png");
             string finalImagePath = !string.IsNullOrEmpty(rp.CustomImagePath) && File.Exists(rp.CustomImagePath)
@@ -162,7 +162,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.TextDisabled("No Image Available");
             }
 
-            // 🔄 Image Offset Sliders
+            // Image Offset Sliders
             ImGui.Spacing();
             ImGui.Text("Image Position Offset:");
             ImGui.SameLine();
@@ -177,7 +177,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopItemWidth();
             rp.ImageOffset = newOffset;
 
-            // 🔍 Zoom
+            // Zoom
             ImGui.Spacing();
             ImGui.Text("Zoom:");
             ImGui.SameLine();
@@ -207,7 +207,7 @@ namespace CharacterSelectPlugin.Windows
             DrawEditableField("Relationship", ref relationship);
             DrawEditableField("Occupation", ref occupation);
             ImGui.Spacing();
-            
+
             // Abilities (as tag-like input)
             ImGui.Text("Abilities:");
             ImGui.SameLine();
@@ -274,7 +274,7 @@ namespace CharacterSelectPlugin.Windows
                 // Save reference back to character and config
                 character.RPProfile = profile;
                 plugin.SaveConfiguration();
-                // ✅ Upload profile just like ApplyProfile() does
+                // Upload profile just like ApplyProfile() does
                 if (!string.IsNullOrWhiteSpace(character.LastInGameName))
                 {
                     character.RPProfile.CharacterName = character.Name;
@@ -295,7 +295,7 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.Button("Cancel"))
             {
                 IsOpen = false;
-                // ✅ Immediately open the RP profile viewer
+                // Immediately open the RP profile viewer
                 plugin.RPProfileViewer.SetCharacter(character);
                 plugin.RPProfileViewer.IsOpen = true;
             }

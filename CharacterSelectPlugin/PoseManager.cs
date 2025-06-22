@@ -31,13 +31,13 @@ public unsafe class PoseManager
 
         var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)clientState.LocalPlayer.Address;
 
-        // ✅ Apply to memory
+        // Apply to memory
         PlayerState.Instance()->SelectedPoses[(int)type] = index;
 
         if (TranslatePoseState(charPtr->ModeParam) == type)
             charPtr->EmoteController.CPoseState = index;
 
-        // ✅ Persist if plugin-driven
+        // Persist if plugin-driven
         switch (type)
         {
             case EmoteController.PoseType.Idle:
@@ -70,7 +70,7 @@ public unsafe class PoseManager
                 break;
         }
 
-        // ✅ This makes the change persist!
+        // This makes the change persist!
         plugin.Configuration.Save();
     }
 

@@ -2,6 +2,7 @@
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
+using System;
 
 namespace CharacterSelectPlugin.Managers;
 
@@ -28,10 +29,15 @@ public unsafe class PoseRestorer
 
     private void ApplyPose(Character character)
     {
-        if (clientState.LocalPlayer == null) return;
+        var local = clientState.LocalPlayer;
+        if (local == null || local.Address == IntPtr.Zero)
+            return;
 
-        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)clientState.LocalPlayer.Address;
-        if (charPtr == null) return;
+        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)local.Address;
+
+        // This also ensures you're not in cutscene or a bad player state
+        if (charPtr->GameObject.ObjectIndex == 0xFFFF)
+            return;
 
         TrySetPose(EmoteController.PoseType.Idle, character.IdlePoseIndex, charPtr);
         TrySetPose(EmoteController.PoseType.Sit, character.SitPoseIndex, charPtr);

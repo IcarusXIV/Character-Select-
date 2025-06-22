@@ -48,12 +48,12 @@ namespace CharacterSelectPlugin
     {
         public static string Serialize(RPProfile profile)
         {
-            return JsonConvert.SerializeObject(profile); // ← FIXED
+            return JsonConvert.SerializeObject(profile);
         }
 
         public static RPProfile? Deserialize(string json)
         {
-            return JsonConvert.DeserializeObject<RPProfile>(json); // ← FIXED
+            return JsonConvert.DeserializeObject<RPProfile>(json);
         }
     }
     public struct Vector3Serializable

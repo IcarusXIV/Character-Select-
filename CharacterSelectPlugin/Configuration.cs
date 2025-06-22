@@ -3,6 +3,7 @@ using Dalamud.Plugin;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Numerics;
 
 namespace CharacterSelectPlugin
@@ -14,16 +15,16 @@ namespace CharacterSelectPlugin
         public List<Character> Characters { get; set; } = new List<Character>();
         public Vector3 NewCharacterColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
 
-        // 🔹 Existing Settings
+        // Existing Settings
         public bool IsConfigWindowMovable { get; set; } = true;
         public bool SomePropertyToBeSavedAndWithADefault { get; set; } = false;
 
-        // ✅ Added Profile Settings (Only Adding, No Removal)
+        // Profile Settings
         public float ProfileImageScale { get; set; } = 1.0f; // Image scaling
         public int ProfileColumns { get; set; } = 3;        // Number of profiles per row
-        public float ProfileSpacing { get; set; } = 10.0f;  // Default spacing between profiles ✅
+        public float ProfileSpacing { get; set; } = 10.0f;  // Default spacing between profiles
 
-        private IDalamudPluginInterface pluginInterface; // ✅ Fixed naming rule issue
+        private IDalamudPluginInterface pluginInterface;
         public int CurrentSortIndex { get; set; } = 0; // Default to Manual (SortType.Manual = 0)
         public PersistentPoseSet DefaultPoses { get; set; } = new();
         public bool IsQuickSwitchWindowOpen { get; set; } = false;
@@ -36,11 +37,25 @@ namespace CharacterSelectPlugin
         public byte LastGroundSitPoseAppliedByPlugin { get; set; } = 255;
         public byte LastDozePoseAppliedByPlugin { get; set; } = 255;
         public Dictionary<string, string> LastUsedCharacterByPlayer { get; set; } = new();
-        public bool EnableLastUsedCharacterAutoload { get; set; } = true;
+        public bool EnableLastUsedCharacterAutoload { get; set; } = false;
         public string? LastSessionId { get; set; } = null;
         public string? PreviousSessionId { get; set; }
         [JsonProperty]
         public float UIScaleMultiplier { get; set; } = 1.0f;
+        [DefaultValue(true)]
+        public bool ApplyIdleOnLogin { get; set; } = true;
+        public uint LastKnownJobId { get; set; } = 0;
+        public Dictionary<string, string> LastUsedDesignByCharacter { get; set; } = new();
+        public bool ReapplyDesignOnJobChange { get; set; } = false;
+        public string? LastUsedDesignCharacterKey { get; set; } = null;
+        public string? LastUsedCharacterKey { get; set; } = null;
+        [DefaultValue(false)]
+        public bool EnableLoginDelay { get; set; } = false;
+        [JsonProperty]
+        public bool EnablePoseAutoSave { get; set; } = true;
+        public bool EnableSafeMode { get; set; } = false;
+        public bool QuickSwitchCompact { get; set; } = false;
+
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)

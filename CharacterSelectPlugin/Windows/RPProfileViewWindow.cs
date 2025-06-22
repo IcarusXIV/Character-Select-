@@ -36,7 +36,7 @@ namespace CharacterSelectPlugin.Windows
             showingExternal = false;
             bringToFront = true;
 
-            // 🧼 Clear old cached texture so image reloads properly
+            // Clear old cached texture so image reloads properly
             cachedTexture?.Dispose();
             cachedTexture = null;
             cachedTexturePath = null;
@@ -83,7 +83,7 @@ namespace CharacterSelectPlugin.Windows
             }
             ImGui.PushTextWrapPos();
 
-            // 🔷 Top Bar
+            // Top Bar
             var color = ResolveNameplateColor();
             var topColor = new Vector4(color.X, color.Y, color.Z, 1f);
             var drawList = ImGui.GetWindowDrawList();
@@ -94,13 +94,13 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.BeginChild("ProfileCard", new Vector2(600, 210), false);
 
-            // 🔹 Left (Image + Tags)
+            // Left (Image + Tags)
             ImGui.BeginGroup();
 
             string fallback = Path.Combine(plugin.PluginDirectory, "Assets", "Default.png");
             string? imagePath = null;
 
-            // ✅ If viewing external profile and has ProfileImageUrl
+            // If viewing external profile and has ProfileImageUrl
             if (showingExternal && !string.IsNullOrEmpty(rp.ProfileImageUrl))
             {
                 if (!imageDownloadStarted)
@@ -118,7 +118,7 @@ namespace CharacterSelectPlugin.Windows
                             string fileName = $"RPImage_{hash}.png";
                             string path = Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
 
-                            // ✅ Save once only if not exists
+                            // Save once only if not exists
                             File.WriteAllBytes(path, data);
                             Plugin.Log.Debug($"[RPProfileView] Downloaded image to: {path}");
 
@@ -126,7 +126,7 @@ namespace CharacterSelectPlugin.Windows
                             downloadedImagePath = path;
                             imageDownloadComplete = true;
 
-                            // ✅ Force window to update and focus
+                            // Force window to update and focus
                             bringToFront = true;
 
                         }
@@ -144,7 +144,7 @@ namespace CharacterSelectPlugin.Windows
                     imagePath = downloadedImagePath;
                 }
             }
-            // ✅ Local fallback options
+            // Local fallback options
             else if (!string.IsNullOrEmpty(rp.CustomImagePath) && File.Exists(rp.CustomImagePath))
             {
                 imagePath = rp.CustomImagePath;
@@ -154,7 +154,7 @@ namespace CharacterSelectPlugin.Windows
                 imagePath = character.ImagePath;
             }
 
-            // ✅ Final fallback
+            // Final fallback
             string finalImagePath = !string.IsNullOrEmpty(imagePath) && File.Exists(imagePath) ? imagePath : fallback;
 
 
@@ -214,12 +214,12 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.EndGroup();
 
-            // ✏️ Name + Fields
+            // Name + Fields
             ImGui.SameLine();
             ImGui.SetCursorPosX(180); // ensure it never touches image
 
             ImGui.BeginGroup();
-            // 📌 Header: Name – Pronouns   Roleplay Profile
+            // Header: Name – Pronouns   Roleplay Profile
             ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), displayName);
             if (!string.IsNullOrWhiteSpace(rp.Pronouns))
             {
@@ -231,7 +231,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Spacing();
 
-            // 🧾 New field layout
+            // New field layout
             float colSplit = 200f;
             DrawFieldRow("▪ Gender", rp.Gender, "▪ Age", rp.Age, colSplit);
             DrawFieldRow("▪ Race", rp.Race, "▪ Orientation", rp.Orientation, colSplit);
@@ -253,8 +253,8 @@ namespace CharacterSelectPlugin.Windows
             ImGui.EndGroup();
             ImGui.EndChild();
 
-            // 🔻 Divider Bar Below Card
-            // 🔻 Diamond Divider
+            // Divider Bar Below Card
+            // Diamond Divider
             var diamond = "◆";
             var diamondWidth = ImGui.CalcTextSize(diamond).X;
 
@@ -282,7 +282,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Dummy(new Vector2(1, 8));
 
 
-            // ✍ Bio Section
+            // Bio Section
             ImGui.Text("Bio:");
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.15f, 0.15f, 0.15f, 0.7f));
             ImGui.BeginChild("BioScroll", new Vector2(600, 120), true);
@@ -290,7 +290,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.EndChild();
             ImGui.PopStyleColor();
 
-            // 🔘 Centered Edit Button
+            // Centered Edit Button
             ImGui.Spacing();
             ImGui.SetCursorPosX((ImGui.GetWindowWidth() - 120) * 0.5f);
 
@@ -341,7 +341,7 @@ namespace CharacterSelectPlugin.Windows
             cachedTexture = null;
             cachedTexturePath = null;
 
-            bringToFront = true; // ✅ Bring the window to front
+            bringToFront = true; // Bring the window to front
         }
         private Vector3 ResolveNameplateColor()
         {
@@ -350,7 +350,7 @@ namespace CharacterSelectPlugin.Windows
             if (showingExternal && externalProfile != null)
             {
                 var c = (Vector3)externalProfile.NameplateColor;
-                // If the color is effectively black or unset, fallback
+                // If the colour is effectively black or unset, fallback
                 if (c.X < 0.01f && c.Y < 0.01f && c.Z < 0.01f)
                     return fallback;
 
