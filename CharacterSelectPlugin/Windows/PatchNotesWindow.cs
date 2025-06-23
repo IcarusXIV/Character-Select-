@@ -42,7 +42,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.BulletText("New opt-in setting in the plugin options.");
                 ImGui.BulletText("Character Select+ will remember the last applied character and/or design.");
                 ImGui.BulletText("When you switch between jobs, it will automatically apply that character/design.");
-                ImGui.BulletText("⚠️ WILL 100% conflict if you are using Glamourer Automations.");
+                ImGui.BulletText("⚠️ WILL 100 percent conflict if you are using Glamourer Automations.");
                 ImGui.Separator();
 
                 // Designs

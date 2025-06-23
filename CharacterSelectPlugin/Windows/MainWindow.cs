@@ -2840,10 +2840,17 @@ if (isAdvancedModeCharacter)
                             }
                             if (ImGui.MenuItem("Delete Folder"))
                             {
-                                // Move its designs to root, then delete
+                                // 1) Un-folder any direct designs in THIS folder
                                 foreach (var d in character.Designs.Where(d => d.FolderId == folder.Id))
                                     d.FolderId = null;
+
+                                // 2) Reparent any *subfolders* up to root
+                                foreach (var sub in character.DesignFolders.Where(f => f.ParentFolderId == folder.Id))
+                                    sub.ParentFolderId = null;
+
+                                // 3) Finally, remove THIS folder itself
                                 character.DesignFolders.RemoveAll(f2 => f2.Id == folder.Id);
+
                                 plugin.SaveConfiguration();
                                 plugin.RefreshTreeItems(character);
                                 ImGui.CloseCurrentPopup();
@@ -2922,6 +2929,16 @@ if (isAdvancedModeCharacter)
                                     $"{child.Name}##F{child.Id}",
                                     ImGuiTreeNodeFlags.SpanFullWidth
                                 );
+                                var childhdrMin = ImGui.GetItemRectMin();
+                                var childhdrMax = ImGui.GetItemRectMax();
+                                bool overChildHeader = ImGui.IsMouseHoveringRect(childhdrMin, childhdrMax, true);
+                                if (draggedDesign != null && overChildHeader && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+                                {
+                                    draggedDesign.FolderId = child.Id;
+                                    plugin.SaveConfiguration();
+                                    plugin.RefreshTreeItems(character);
+                                    draggedDesign = null;
+                                }
 
                                 // Drag source for folders
                                 if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
@@ -2946,9 +2963,17 @@ if (isAdvancedModeCharacter)
                                     }
                                     if (ImGui.MenuItem("Delete Folder"))
                                     {
-                                        foreach (var d in character.Designs.Where(d2 => d2.FolderId == child.Id))
+                                        // 1) Un-folder any direct designs in THIS folder
+                                        foreach (var d in character.Designs.Where(d => d.FolderId == folder.Id))
                                             d.FolderId = null;
-                                        character.DesignFolders.RemoveAll(f2 => f2.Id == child.Id);
+
+                                        // 2) Reparent any *subfolders* up to root
+                                        foreach (var sub in character.DesignFolders.Where(f => f.ParentFolderId == folder.Id))
+                                            sub.ParentFolderId = null;
+
+                                        // 3) Finally, remove THIS folder itself
+                                        character.DesignFolders.RemoveAll(f2 => f2.Id == folder.Id);
+
                                         plugin.SaveConfiguration();
                                         plugin.RefreshTreeItems(character);
                                         ImGui.CloseCurrentPopup();
@@ -3039,7 +3064,12 @@ if (isAdvancedModeCharacter)
 
             // 1) Optional indent for folders
             if (isInsideFolder)
-                ImGui.Indent(style.ItemSpacing.X);
+            {
+                // 1a) Read ImGui's standard indent spacing
+                float indentAmt = ImGui.GetStyle().IndentSpacing;
+                // 1b) Actually apply it
+                ImGui.Indent(indentAmt);
+            }
 
             ImGui.PushID(design.Name);
 

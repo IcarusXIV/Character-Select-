@@ -38,7 +38,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
 
 
-        public static readonly string CurrentPluginVersion = "1.1.1.2"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "1.1.1.3"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -112,9 +112,9 @@ namespace CharacterSelectPlugin
         private bool isLoginComplete = false;
         private Character? activeCharacter = null!;
         public void RefreshTreeItems(Character character)
-{
-    // Intentionally empty — DrawDesignPanel rebuilds its own list each frame.
-}
+        {
+            // Intentionally empty — DrawDesignPanel rebuilds its own list each frame.
+        }
 
         public bool IsAddCharacterWindowOpen { get; set; } = false;
         // Settings Variables
@@ -795,9 +795,12 @@ namespace CharacterSelectPlugin
             if (string.IsNullOrWhiteSpace(macroText))
                 return;
 
-            string[] lines = macroText.Split('\n');
-            foreach (var line in lines)
-                CommandManager.ProcessCommand(line.Trim());
+            foreach (var raw in macroText.Split('\n'))
+            {
+                var cmd = raw.Trim();
+                if (cmd.Length == 0) continue;
+                CommandManager.ProcessCommand(cmd);
+            }
 
             if (character != null)
             {
@@ -859,7 +862,7 @@ namespace CharacterSelectPlugin
                 }
             }
 
-            
+
             lines = lines
                 .Where(l => !l.TrimStart().StartsWith("/savepose", StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -1143,7 +1146,7 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {pluginCharacterKey} for profile {character.Name}");
 
 
-                
+
                 var profileToSend = new RPProfile
                 {
                     Pronouns = character.RPProfile?.Pronouns,
