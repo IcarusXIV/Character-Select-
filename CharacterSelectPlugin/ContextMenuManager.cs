@@ -4,6 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Objects;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Objects.Enums;
+using Dalamud.Game.ClientState.Objects.SubKinds;
 
 namespace CharacterSelectPlugin.Managers
 {
@@ -27,6 +31,11 @@ namespace CharacterSelectPlugin.Managers
             "SocialList",
             "ContactList",
             "CharacterInspect",
+            "_Target",
+            "NamePlate",
+            "_NaviMap",
+            "SelectString",
+            "SelectIconString"
         ];
 
         private static readonly Dictionary<uint, string> WorldIdToName = new()
@@ -51,10 +60,21 @@ namespace CharacterSelectPlugin.Managers
 
         private void OnMenuOpened(IMenuOpenedArgs args)
         {
-            if (args.Target is not MenuTargetDefault def || !ValidAddons.Contains(args.AddonName))
+            if (args.Target is MenuTargetDefault def && ValidAddons.Contains(args.AddonName))
+            {
+                HandleUIContextMenu(args, def);
                 return;
+            }
 
-            // Skip if the clicked thing has no valid home world (NPCs, FC actions, etc)
+            if (args.Target is MenuTargetDefault objTarget && args.AddonName == null)
+            {
+                HandleGameObjectContextMenu(args, objTarget);
+                return;
+            }
+        }
+
+        private void HandleUIContextMenu(IMenuOpenedArgs args, MenuTargetDefault def)
+        {
             if (def.TargetHomeWorld.RowId == 0)
                 return;
 
@@ -76,5 +96,34 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
+        private void HandleGameObjectContextMenu(IMenuOpenedArgs args, MenuTargetDefault target)
+        {
+            try
+            {
+                var currentTarget = Plugin.TargetManager.Target;
+
+                if (currentTarget != null &&
+                    currentTarget.ObjectKind == ObjectKind.Player &&
+                    currentTarget is IPlayerCharacter player)
+                {
+                    string characterName = player.Name.TextValue;
+                    string worldName = player.HomeWorld.Value.Name.ToString();
+
+                    if (!string.IsNullOrWhiteSpace(characterName) && !string.IsNullOrWhiteSpace(worldName))
+                    {
+                        args.AddMenuItem(new MenuItem
+                        {
+                            Name = "View RP Profile",
+                            OnClicked = _ => Task.Run(() => plugin.TryRequestRPProfile($"{characterName}@{worldName}")),
+                            IsEnabled = true
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Error handling game object context menu: {ex.Message}");
+            }
+        }
     }
 }

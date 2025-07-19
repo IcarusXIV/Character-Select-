@@ -20,6 +20,10 @@ using System.Text;
 using Newtonsoft.Json;
 using Dalamud.Game.ClientState.Objects;
 using static FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController;
+using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using FFXIVClientStructs.FFXIV.Client.UI.Shell;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game;
 
 namespace CharacterSelectPlugin
 {
@@ -31,29 +35,30 @@ namespace CharacterSelectPlugin
         [PluginService] internal static IClientState ClientState { get; private set; } = null!;
         [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
         [PluginService] internal static IPluginLog Log { get; private set; } = null!;
-        [PluginService] private static IChatGui ChatGui { get; set; } = null!;
+        [PluginService] internal static IChatGui ChatGui { get; set; } = null!;
         [PluginService] internal static IFramework Framework { get; private set; } = null!;
         [PluginService] internal static IContextMenu ContextMenu { get; private set; } = null!;
         [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
+        [PluginService] internal static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
+        [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
 
-
-        public static readonly string CurrentPluginVersion = "1.1.1.3"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.0.0"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
 
         public Configuration Configuration { get; init; }
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
-        private MainWindow MainWindow { get; init; }
+        public MainWindow MainWindow { get; init; }
         public QuickSwitchWindow QuickSwitchWindow { get; set; } // Quick Switch Window
         public PatchNotesWindow PatchNotesWindow { get; private set; } = null!;
         public RPProfileWindow RPProfileEditor { get; private set; }
         public RPProfileViewWindow RPProfileViewer { get; private set; }
+        public GalleryWindow GalleryWindow { get; private set; } = null!;
+        public TutorialManager TutorialManager { get; private set; } = null!;
+        public enum SortType { Manual, Favorites, Alphabetical, Recent, Oldest }
 
-
-
-        // Character data storage
         public List<Character> Characters => Configuration.Characters;
         public Vector3 NewCharacterColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default to white
 
@@ -73,9 +78,9 @@ namespace CharacterSelectPlugin
         public Vector3 NewCharacterHonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
         public Vector3 NewCharacterHonorificGlow { get; set; } = new Vector3(0.0f, 0.0f, 0.0f); // Default to no glow
         public string NewCharacterMoodlePreset { get; set; } = "";
-        public PoseManager PoseManager { get; private set; } = null!;
+        public ImprovedPoseManager PoseManager { get; private set; } = null!;
         public byte NewCharacterIdlePoseIndex { get; set; } = 0;
-        public PoseRestorer PoseRestorer { get; private set; } = null!;
+        public SimplifiedPoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
 
@@ -110,10 +115,11 @@ namespace CharacterSelectPlugin
         private string? _pendingSessionCharacterName = null;
         private float secondsSinceLogin = 0;
         private bool isLoginComplete = false;
+        public bool IsSecretMode { get; set; } = false;
         private Character? activeCharacter = null!;
         public void RefreshTreeItems(Character character)
         {
-            // Intentionally empty — DrawDesignPanel rebuilds its own list each frame.
+
         }
 
         public bool IsAddCharacterWindowOpen { get; set; } = false;
@@ -123,16 +129,87 @@ namespace CharacterSelectPlugin
         public int ProfileColumns { get; set; } = 3;  // Number of profiles per row
         public float ProfileSpacing { get; set; } = 10.0f; // Default spacing
 
+        // Tutorial
+        public Vector2? MainWindowPos { get; set; }
+        public Vector2? MainWindowSize { get; set; }
+        public Vector2? AddCharacterButtonPos { get; set; }
+        public Vector2? AddCharacterButtonSize { get; set; }
+        public Vector2? CharacterNameFieldPos { get; set; }
+        public Vector2? CharacterNameFieldSize { get; set; }
+        public Vector2? PenumbraFieldPos { get; set; }
+        public Vector2? PenumbraFieldSize { get; set; }
+        public Vector2? GlamourerFieldPos { get; set; }
+        public Vector2? GlamourerFieldSize { get; set; }
+        public Vector2? SaveButtonPos { get; set; }
+        public Vector2? SaveButtonSize { get; set; }
+        public Vector2? FirstCharacterDesignsButtonPos { get; set; }
+        public Vector2? FirstCharacterDesignsButtonSize { get; set; }
+        public Vector2? DesignPanelAddButtonPos { get; set; }
+        public Vector2? DesignPanelAddButtonSize { get; set; }
+        public Vector2? DesignNameFieldPos { get; set; }
+        public Vector2? DesignNameFieldSize { get; set; }
+        public Vector2? DesignGlamourerFieldPos { get; set; }
+        public Vector2? DesignGlamourerFieldSize { get; set; }
+        public Vector2? SaveDesignButtonPos { get; set; }
+        public Vector2? SaveDesignButtonSize { get; set; }
+        public bool IsDesignPanelOpen { get; set; } = false;
+        public bool IsEditDesignWindowOpen { get; set; } = false;
+        public string EditedDesignName { get; set; } = "";
+        public string EditedGlamourerDesign { get; set; } = "";
+        public Vector2? RPProfileButtonPos { get; set; }
+        public Vector2? RPProfileButtonSize { get; set; }
+        public Vector2? EditProfileButtonPos { get; set; }
+        public Vector2? EditProfileButtonSize { get; set; }
+        public bool IsRPProfileViewerOpen { get; set; } = false;
+        public bool IsRPProfileEditorOpen { get; set; } = false;
+        public Vector2? RPBioFieldPos { get; set; }
+        public Vector2? RPBioFieldSize { get; set; }
+        public Vector2? RPSharingDropdownPos { get; set; }
+        public Vector2? RPSharingDropdownSize { get; set; }
+        public Vector2? SaveRPProfileButtonPos { get; set; }
+        public Vector2? SaveRPProfileButtonSize { get; set; }
+        public Vector2? RPPronounsFieldPos { get; set; }
+        public Vector2? RPPronounsFieldSize { get; set; }
+        public Vector2? RPProfileViewWindowPos { get; set; }
+        public Vector2? RPProfileViewWindowSize { get; set; }
+        public Vector2? RPProfileEditorWindowPos { get; set; }
+        public Vector2? RPProfileEditorWindowSize { get; set; }
+        public Vector2? RPBackgroundDropdownPos { get; set; }
+        public Vector2? RPBackgroundDropdownSize { get; set; }
+        public Vector2? RPVisualEffectsPos { get; set; }
+        public Vector2? RPVisualEffectsSize { get; set; }
+        public Vector2? SettingsButtonPos { get; set; }
+        public Vector2? SettingsButtonSize { get; set; }
+        public Vector2? QuickSwitchButtonPos { get; set; }
+        public Vector2? QuickSwitchButtonSize { get; set; }
+        public Vector2? GalleryButtonPos { get; set; }
+        public Vector2? GalleryButtonSize { get; set; }
+        private NPCDialogueProcessor? dialogueProcessor;
 
-        public unsafe Plugin()
+
+        public unsafe Plugin(IGameInteropProvider gameInteropProvider)
         {
-            Configuration = Configuration.Load(PluginInterface);
+            try
+            {
+                GameInteropProvider = gameInteropProvider;
+                var existingConfig = PluginInterface.GetPluginConfig() as Configuration;
+                if (existingConfig != null)
+                {
+                    BackupManager.CreateBackupIfNeeded(existingConfig, CurrentPluginVersion);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning($"[Backup] Could not create pre-load backup: {ex.Message}");
+            }
+
+            // Load configuration
+            Configuration = LoadConfigurationSafely();
             EnsureConfigurationDefaults();
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
 
-
-            // Patch macros only after loading config + setting defaults
+            // Patch macros only after loading config + setting
             foreach (var character in Configuration.Characters)
             {
                 var newMacro = SanitizeMacro(character.Macros, character);
@@ -150,7 +227,7 @@ namespace CharacterSelectPlugin
                     if (string.IsNullOrWhiteSpace(macroToPatch))
                         continue;
 
-                    string updated = SanitizeDesignMacro(macroToPatch, design, character, Configuration.EnableAutomations); // <-- pass character too
+                    string updated = SanitizeDesignMacro(macroToPatch, design, character, Configuration.EnableAutomations);
 
                     if (updated != macroToPatch)
                     {
@@ -161,21 +238,7 @@ namespace CharacterSelectPlugin
                     }
                 }
             }
-            // SortOrder fallback
-            if (Configuration.CurrentSortIndex == (int)MainWindow.SortType.Manual)
-            {
-                for (int i = 0; i < Configuration.Characters.Count; i++)
-                {
-                    if (Configuration.Characters[i].SortOrder == 0 && i != 0)
-                    {
-                        Configuration.Characters[i].SortOrder = i;
-                    }
-                }
-            }
-
-            // Optionally save once
             Configuration.Save();
-
 
             try
             {
@@ -190,11 +253,11 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Error($"❌ Failed to load System.Windows.Forms: {ex.Message}");
             }
 
-            PoseManager = new PoseManager(ClientState, Framework, ChatGui, CommandManager, this);
-            PoseRestorer = new PoseRestorer(ClientState, this);
+            PoseManager = new ImprovedPoseManager(ClientState, Framework, this);
+            PoseRestorer = new SimplifiedPoseRestorer(ClientState, PoseManager);
 
-            // Initialize the MainWindow and ConfigWindow properly
-            MainWindow = new MainWindow(this);
+            // Initialize the MainWindow and ConfigWindow
+            MainWindow = new Windows.MainWindow(this);
             MainWindow.SortCharacters();
             QuickSwitchWindow = new QuickSwitchWindow(this); // Quick Switch Window
             QuickSwitchWindow.IsOpen = Configuration.IsQuickSwitchWindowOpen; // Restore last open state
@@ -205,18 +268,29 @@ namespace CharacterSelectPlugin
             RPProfileViewer = new RPProfileViewWindow(this);
             WindowSystem.AddWindow(RPProfileViewer);
 
-            // This player REGISTERING their profile, if someone else requests it
+            GalleryWindow = new GalleryWindow(this);
+            WindowSystem.AddWindow(GalleryWindow);
+            TutorialManager = new TutorialManager(this);
+            MigrateBackgroundImageNames();
+
+            // This player registering their profile, if someone else requests it
             provideProfile = PluginInterface.GetIpcProvider<string, RPProfile>("CharacterSelect.RPProfile.Provide");
             provideProfile.RegisterFunc(HandleProfileRequest);
 
-            // This player SENDING a request to another
+            // This player sending a request to another
             requestProfile = PluginInterface.GetIpcSubscriber<string, RPProfile>("CharacterSelect.RPProfile.Provide");
 
             // Patch Notes
             PatchNotesWindow = new PatchNotesWindow(this);
             if (Configuration.LastSeenVersion != CurrentPluginVersion)
                 PatchNotesWindow.IsOpen = true;
-            //PatchNotesWindow.IsOpen = true;
+            // PatchNotesWindow.IsOpen = true;
+            // Tutorial system - show on first launch
+
+            //if (!Configuration.HasSeenTutorial && Configuration.ShowTutorialOnStartup)
+            //{
+            //    TutorialManager.StartTutorial();
+            //}
 
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(QuickSwitchWindow); // Quick Switch Window
@@ -230,6 +304,11 @@ namespace CharacterSelectPlugin
             CommandManager.AddHandler("/selectswitch", new CommandInfo(OnQuickSwitchCommand)
             {
                 HelpMessage = "Opens the Quick Character Switcher UI."
+            });
+
+            CommandManager.AddHandler("/gallery", new CommandInfo(OnGalleryCommand)
+            {
+                HelpMessage = "Opens the Character Showcase Gallery"
             });
 
 
@@ -264,7 +343,7 @@ namespace CharacterSelectPlugin
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
             {
-                HelpMessage = "Use /select <Character Name> to apply a profile."
+                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, or /select random for random selection."
             });
             // Idles
             CommandManager.AddHandler("/sidle", new CommandInfo((_, args) =>
@@ -342,7 +421,30 @@ namespace CharacterSelectPlugin
 
             contextMenuManager = new ContextMenuManager(this, Plugin.ContextMenu);
             this.CleanupUnusedProfileImages();
+            try
+            {
+                dialogueProcessor = new NPCDialogueProcessor(
+                    this, 
+                    SigScanner, 
+                    GameInteropProvider,
+                    ChatGui, 
+                    ClientState, 
+                    Log  
+                );
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to initialize dialogue processor: {ex.Message}");
+            }
 
+        }
+        public static HttpClient CreateAuthenticatedHttpClient()
+        {
+            var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("X-Plugin-Auth", "cs-plus-gallery-client");
+            client.DefaultRequestHeaders.Add("User-Agent", "CharacterSelectPlus/1.2.0");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            return client;
         }
 
         private void OnLogin()
@@ -357,6 +459,14 @@ namespace CharacterSelectPlugin
             shouldApplyPoses = true;
             suppressIdleSaveForFrames = 60;
             secondsSinceLogin = 0f;
+
+            var id = ClientState.LocalPlayer.ClassJob.RowId;
+            if (Configuration.LastKnownJobId == 0 && id != 0)
+            {
+                Configuration.LastKnownJobId = id;
+                Configuration.Save();
+                Plugin.Log.Debug($"[JobSwitch] Primed LastKnownJobId on login = {id}");
+            }
         }
 
 
@@ -412,7 +522,6 @@ namespace CharacterSelectPlugin
             };
 
             // Force CPoseState to match current selected pose
-            // (only if plugin isn’t trying to override it)
             if (currentSelected < 7)
                 character->EmoteController.CPoseState = currentSelected;
         }
@@ -421,10 +530,22 @@ namespace CharacterSelectPlugin
         {
             QuickSwitchWindow.IsOpen = !QuickSwitchWindow.IsOpen; // Toggle Window On/Off
         }
+        private void OnGalleryCommand(string command, string args)
+        {
+            // Emergency stop if costs are too high, I am broke!
+            if (args.Equals("stop", StringComparison.OrdinalIgnoreCase))
+            {
+                GalleryWindow.EmergencyStop();
+                ChatGui.Print("[Character Select+] Gallery emergency stop activated!");
+                return;
+            }
+
+            GalleryWindow.IsOpen = !GalleryWindow.IsOpen;
+        }
         public void ApplyProfile(Character character, int designIndex)
         {
             activeCharacter = character;
-            // ABSOLUTE FAIL-SAFE: Do nothing if world isn’t ready
+            // Do nothing if world isn't ready, honestly I don't know if it will ever truly be ready for...you! You special thing. 
             if (!ClientState.IsLoggedIn ||
                 ClientState.TerritoryType == 0 ||
                 ClientState.LocalPlayer == null ||
@@ -434,6 +555,7 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug("[ApplyProfile] Skipped: Player not fully loaded.");
                 return;
             }
+
             if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
@@ -450,8 +572,8 @@ namespace CharacterSelectPlugin
                 foreach (var oldKey in toRemove)
                     ActiveProfilesByPlayerName.Remove(oldKey);
 
-                // Register the new key - active character mapping
-                ActiveProfilesByPlayerName[fullKey] = newProfileKey;
+                // Register key
+                ActiveProfilesByPlayerName[fullKey] = character.Name;
                 string pluginCharacterKey = $"{character.Name}@{worldName}"; // plugin character identity
                 character.LastInGameName = $"{localName}@{worldName}";        // who is currently logged in
 
@@ -462,32 +584,50 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug($"[SetActiveCharacter] Updated LastUsedCharacterKey = {fullKey}");
                 Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {character.LastInGameName} for profile {character.Name}");
 
+                bool shouldUploadToGallery = ShouldUploadToGallery(character, fullKey);
 
-                Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {fullKey} for profile {character.Name}");
-                var profileToSend = new RPProfile
+                if (shouldUploadToGallery)
                 {
-                    Pronouns = character.RPProfile?.Pronouns,
-                    Gender = character.RPProfile?.Gender,
-                    Age = character.RPProfile?.Age,
-                    Race = character.RPProfile?.Race,
-                    Orientation = character.RPProfile?.Orientation,
-                    Relationship = character.RPProfile?.Relationship,
-                    Occupation = character.RPProfile?.Occupation,
-                    Abilities = character.RPProfile?.Abilities,
-                    Bio = character.RPProfile?.Bio,
-                    Tags = character.RPProfile?.Tags,
-                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-    ? character.RPProfile.CustomImagePath
-    : character.ImagePath,
-                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                    CharacterName = character.Name, // force correct name
-                    NameplateColor = character.NameplateColor // force correct colour
-                };
+                    var profileToSend = new RPProfile
+                    {
+                        Pronouns = character.RPProfile?.Pronouns,
+                        Gender = character.RPProfile?.Gender,
+                        Age = character.RPProfile?.Age,
+                        Race = character.RPProfile?.Race,
+                        Orientation = character.RPProfile?.Orientation,
+                        Relationship = character.RPProfile?.Relationship,
+                        Occupation = character.RPProfile?.Occupation,
+                        Abilities = character.RPProfile?.Abilities,
+                        Bio = character.RPProfile?.Bio,
+                        Tags = character.RPProfile?.Tags,
+                        CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+                            ? character.RPProfile.CustomImagePath
+                            : character.ImagePath,
+                        ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                        ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                        Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                        ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                        CharacterName = character.Name, // force correct name
+                        NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor, // force correct colour
+                        GalleryStatus = character.GalleryStatus,
+                        Links = character.RPProfile?.Links,
 
-                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+                        // Include background and effects data
+                        BackgroundImage = character.RPProfile?.BackgroundImage ?? character.BackgroundImage,
+                        Effects = character.RPProfile?.Effects ?? character.Effects ?? new ProfileEffects(),
+
+                        // Include animation theme for backwards compatibility
+                        AnimationTheme = character.RPProfile?.AnimationTheme ?? ProfileAnimationTheme.CircuitBoard,
+                        LastActiveTime = Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null
+                    };
+
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+                    Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (main character: {fullKey})");
+                }
+                else
+                {
+                    Plugin.Log.Info($"[ApplyProfile] ⚠ Skipped gallery upload for {character.Name} (not on main character or not public)");
+                }
             }
             SaveConfiguration();
             if (character == null) return;
@@ -501,7 +641,7 @@ namespace CharacterSelectPlugin
                 ExecuteMacro(character.Designs[designIndex].Macro);
             }
 
-            // Only apply idle pose if it's NOT "None"
+            // Only apply idle pose if it's not "None"
             if (isLoginComplete)
             {
                 // Apply poses immediately
@@ -523,9 +663,39 @@ namespace CharacterSelectPlugin
                 activeCharacter = character;
                 shouldApplyPoses = true;
             }
+            this.QuickSwitchWindow.UpdateSelectionFromCharacter(character);
             SaveConfiguration();
-
         }
+
+        private bool ShouldUploadToGallery(Character character, string currentPhysicalCharacter)
+        {
+            // Is there a main character set?
+            var userMain = Configuration.GalleryMainCharacter;
+            if (string.IsNullOrEmpty(userMain))
+            {
+                Plugin.Log.Debug($"[ShouldUpload] No main character set - not uploading {character.Name}");
+                return false;
+            }
+
+            // Are we currently on the main character?
+            if (currentPhysicalCharacter != userMain)
+            {
+                Plugin.Log.Debug($"[ShouldUpload] Current character '{currentPhysicalCharacter}' != main '{userMain}' - not uploading {character.Name}");
+                return false;
+            }
+
+            // Is this CS+ character set to public sharing?
+            var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
+            if (sharing != ProfileSharing.ShowcasePublic)
+            {
+                Plugin.Log.Debug($"[ShouldUpload] Character '{character.Name}' sharing is '{sharing}' (not public) - not uploading");
+                return false;
+            }
+
+            Plugin.Log.Debug($"[ShouldUpload] ✓ All checks passed - will upload {character.Name} as {currentPhysicalCharacter}");
+            return true;
+        }
+
         private void EnsureConfigurationDefaults()
         {
             bool updated = false;
@@ -581,9 +751,6 @@ namespace CharacterSelectPlugin
                 ProfileSpacing = 10.0f;  // Default value if missing
                 updated = true;
             }
-
-
-            // Only save if anything was updated
             if (updated) Configuration.Save();
         }
 
@@ -595,8 +762,11 @@ namespace CharacterSelectPlugin
             MainWindow.Dispose();
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler("/spose");
+            CommandManager.RemoveHandler("/gallery");
             contextMenuManager?.Dispose();
             Framework.Update += FrameworkUpdate;
+            PoseManager?.Dispose();
+            dialogueProcessor?.Dispose();
             try
             {
                 string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
@@ -616,12 +786,10 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                // Open the plugin UI
                 ToggleMainUI();
             }
             else
             {
-                // Argument given - Try to apply a character profile
                 OnSelectCommand(command, args);
             }
         }
@@ -630,11 +798,18 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name]");
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name] or /select random");
                 return;
             }
 
-            // Match either "quoted strings" or bare words
+            // Handle random selection
+            if (args.Trim().Equals("random", StringComparison.OrdinalIgnoreCase))
+            {
+                SelectRandomCharacterAndDesign();
+                return;
+            }
+
+            // Rest of the existing method remains the same...
             var matches = Regex.Matches(args, "\"([^\"]+)\"|\\S+")
                 .Cast<Match>()
                 .Select(m => m.Groups[1].Success ? m.Groups[1].Value : m.Value)
@@ -642,7 +817,7 @@ namespace CharacterSelectPlugin
 
             if (matches.Length < 1)
             {
-                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name]");
+                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name] or /select random");
                 return;
             }
 
@@ -650,7 +825,7 @@ namespace CharacterSelectPlugin
             string? designName = matches.Length > 1 ? string.Join(" ", matches.Skip(1)) : null;
 
             var character = Characters.FirstOrDefault(c =>
-    c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+                c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
 
             if (character == null)
             {
@@ -660,8 +835,7 @@ namespace CharacterSelectPlugin
 
             if (string.IsNullOrWhiteSpace(designName))
             {
-                ChatGui.Print($"[Character Select+] Applying profile: {character.Name}");
-                ApplyProfile(character, -1); // -1 skips design
+                ApplyProfile(character, -1);
             }
             else
             {
@@ -683,6 +857,7 @@ namespace CharacterSelectPlugin
         private void DrawUI()
         {
             WindowSystem.Draw();
+            TutorialManager.DrawTutorialOverlay();
 
             // Track and persist Quick Switch window state
             bool currentState = QuickSwitchWindow.IsOpen;
@@ -759,9 +934,9 @@ namespace CharacterSelectPlugin
                 Configuration.Characters.Add(newCharacter);
                 SaveConfiguration();
 
-                // Reset Fields AFTER Saving
+                // Reset Fields after Saving
                 NewCharacterName = "";
-                NewCharacterMacros = ""; // But don't wipe macros too early!
+                NewCharacterMacros = "";
                 NewCharacterImagePath = null;
                 NewCharacterDesigns.Clear();
                 NewPenumbraCollection = "";
@@ -792,14 +967,69 @@ namespace CharacterSelectPlugin
         }
         public void ExecuteMacro(string macroText, Character? character, string? designName)
         {
+            ExecuteMacro(macroText, character, designName, false);
+        }
+
+        public unsafe void ExecuteMacro(string macroText, Character? character, string? designName, bool filterJobChanges = true)
+        {
             if (string.IsNullOrWhiteSpace(macroText))
                 return;
 
+            // Always filter job changes by default
+            if (filterJobChanges)
+            {
+                macroText = FilterJobChangeCommands(macroText);
+
+                if (string.IsNullOrWhiteSpace(macroText))
+                {
+                    Log.Debug("[ExecuteMacro] All commands were filtered out");
+                    return;
+                }
+            }
+
+            var pluginCommands = new List<string>();
+            var gameCommands = new List<string>();
+
+            // Track gearset usage for future filtering
+            var currentJobId = ClientState.LocalPlayer?.ClassJob.RowId ?? 0;
+
+            // Separate plugin commands from game commands
             foreach (var raw in macroText.Split('\n'))
             {
                 var cmd = raw.Trim();
                 if (cmd.Length == 0) continue;
-                CommandManager.ProcessCommand(cmd);
+
+                // Track gearset usage if this is a gearset command
+                if (IsGearsetChangeCommand(cmd))
+                {
+                    var gearsetNumber = ExtractGearsetNumber(cmd);
+                    if (gearsetNumber.HasValue && currentJobId > 0)
+                    {
+                        // This command will switch to whatever job is saved in this gearset
+                        Log.Debug($"[GearsetTracker] Gearset {gearsetNumber.Value} will be used");
+                    }
+                }
+
+                bool handledByPlugin = CommandManager.ProcessCommand(cmd);
+
+                if (handledByPlugin)
+                {
+                    Log.Debug($"Plugin command executed: '{cmd}'");
+                }
+                else if (cmd.StartsWith("/"))
+                {
+                    gameCommands.Add(cmd);
+                    Log.Debug($"Queued game command: '{cmd}'");
+                }
+                else
+                {
+                    Log.Debug($"Skipping non-command text: '{cmd}'");
+                }
+            }
+
+            if (gameCommands.Count > 0)
+            {
+                ExecuteGameCommands(gameCommands);
             }
 
             if (character != null)
@@ -810,42 +1040,188 @@ namespace CharacterSelectPlugin
                 {
                     Configuration.LastUsedDesignCharacterKey = character.Name;
                     Configuration.LastUsedDesignByCharacter[character.Name] = designName;
-                    Plugin.Log.Debug($"[MacroTracker] Saved last design {designName} for {character.Name}");
+                    Log.Debug($"[MacroTracker] Saved last design {designName} for {character.Name}");
                 }
                 else
                 {
                     Configuration.LastUsedDesignCharacterKey = null;
                     Configuration.LastUsedDesignByCharacter.Remove(character.Name);
-                    Plugin.Log.Debug($"[MacroTracker] Cleared design for {character.Name}");
+                    Log.Debug($"[MacroTracker] Cleared design for {character.Name}");
                 }
 
                 Configuration.Save();
             }
         }
 
+        // Execute game commands using the macro system
+        private unsafe void ExecuteGameCommands(List<string> commands)
+        {
+            if (commands.Count == 0) return;
+            if (commands.Count > 15)
+            {
+                Plugin.Log.Warning($"Too many game commands ({commands.Count}), max is 15. Truncating.");
+                commands = commands.Take(15).ToList();
+            }
+
+            var raptureShellModule = RaptureShellModule.Instance();
+            if (raptureShellModule == null)
+            {
+                Plugin.Log.Warning("Could not get RaptureShellModule instance");
+                return;
+            }
+            var macro = new RaptureMacroModule.Macro();
+            macro.Name.Ctor();
+            foreach (ref var line in macro.Lines)
+            {
+                line.Ctor();
+            }
+
+            try
+            {
+                // Set up the macro lines
+                for (int i = 0; i < commands.Count && i < 15; i++)
+                {
+                    var cmd = commands[i];
+                    if (string.IsNullOrWhiteSpace(cmd))
+                    {
+                        macro.Lines[i].Clear();
+                        continue;
+                    }
+
+                    var encoded = System.Text.Encoding.UTF8.GetBytes(cmd + "\0");
+                    if (encoded.Length == 0)
+                    {
+                        macro.Lines[i].Clear();
+                        continue;
+                    }
+
+                    fixed (byte* encodedPtr = encoded)
+                    {
+                        macro.Lines[i].SetString(encodedPtr);
+                    }
+                }
+
+                // Execute the macro
+                raptureShellModule->ExecuteMacro(&macro);
+                Plugin.Log.Debug($"Executed {commands.Count} game commands via macro system");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Failed to execute game commands: {ex.Message}");
+            }
+            finally
+            {
+                // Clean up the macro object
+                foreach (ref var line in macro.Lines)
+                {
+                    line.Dtor();
+                }
+            }
+        }
+
 
         public void SaveConfiguration()
         {
-            var profileImageScaleProperty = Configuration.GetType().GetProperty("ProfileImageScale");
-            if (profileImageScaleProperty != null && profileImageScaleProperty.CanWrite)
+            try
             {
-                profileImageScaleProperty.SetValue(Configuration, ProfileImageScale);
-            }
+                // Update properties first
+                var profileImageScaleProperty = Configuration.GetType().GetProperty("ProfileImageScale");
+                if (profileImageScaleProperty != null && profileImageScaleProperty.CanWrite)
+                {
+                    profileImageScaleProperty.SetValue(Configuration, ProfileImageScale);
+                }
 
-            var profileColumnsProperty = Configuration.GetType().GetProperty("ProfileColumns");
-            if (profileColumnsProperty != null && profileColumnsProperty.CanWrite)
+                var profileColumnsProperty = Configuration.GetType().GetProperty("ProfileColumns");
+                if (profileColumnsProperty != null && profileColumnsProperty.CanWrite)
+                {
+                    profileColumnsProperty.SetValue(Configuration, ProfileColumns);
+                }
+
+                var profileSpacingProperty = Configuration.GetType().GetProperty("ProfileSpacing");
+                if (profileSpacingProperty != null && profileSpacingProperty.CanWrite)
+                {
+                    profileSpacingProperty.SetValue(Configuration, ProfileSpacing);
+                }
+
+                // Save configuration
+                Configuration.Save();
+
+                // Create backup occasionally (roughly every 10th save)
+                if (DateTime.Now.Millisecond % 100 == 0)
+                {
+                    BackupManager.CreateBackupIfNeeded(Configuration, CurrentPluginVersion);
+                }
+            }
+            catch (Exception ex)
             {
-                profileColumnsProperty.SetValue(Configuration, ProfileColumns);
-            }
+                Plugin.Log.Error($"[Config] Failed to save configuration: {ex.Message}");
 
-            // Profile Spacing
-            var profileSpacingProperty = Configuration.GetType().GetProperty("ProfileSpacing");
-            if (profileSpacingProperty != null && profileSpacingProperty.CanWrite)
+                // Create emergency backup
+                try
+                {
+                    BackupManager.CreateEmergencyBackup(Configuration);
+                }
+                catch (Exception backupEx)
+                {
+                    Plugin.Log.Error($"[Config] Emergency backup also failed: {backupEx.Message}");
+                }
+            }
+        }
+        private Configuration LoadConfigurationSafely()
+        {
+            try
             {
-                profileSpacingProperty.SetValue(Configuration, ProfileSpacing);
+                // Try to load normal configuration
+                var config = Configuration.Load(PluginInterface);
+                Plugin.Log.Debug("[Config] Configuration loaded successfully");
+                return config;
             }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Config] Failed to load configuration: {ex.Message}");
 
-            Configuration.Save();
+                // Try to restore from backup
+                Plugin.Log.Info("[Config] Attempting to restore from backup...");
+                var backupConfig = BackupManager.RestoreFromBackup();
+
+                if (backupConfig != null)
+                {
+                    Plugin.Log.Info("[Config] Configuration restored from backup successfully!");
+                    return backupConfig;
+                }
+                else
+                {
+                    Plugin.Log.Warning("[Config] Backup restoration failed, creating new configuration");
+                    return new Configuration(PluginInterface);
+                }
+            }
+        }
+
+        public void CreateManualBackup()
+        {
+            try
+            {
+                BackupManager.CreateEmergencyBackup(Configuration);
+                Plugin.Log.Info("[Backup] Manual backup created successfully");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Backup] Manual backup failed: {ex.Message}");
+            }
+        }
+
+        public BackupInfo GetBackupInfo()
+        {
+            return BackupManager.GetBackupInfo();
+        }
+        public void OpenDesignPanel(int characterIndex)
+        {
+            MainWindow.OpenDesignPanel(characterIndex);
+        }
+
+        public void OpenEditCharacterWindow(int index)
+        {
+            MainWindow.OpenEditCharacterWindow(index);
         }
         public static string SanitizeMacro(string macro, Character character)
         {
@@ -943,7 +1319,7 @@ namespace CharacterSelectPlugin
                     lines.Add($"/glamour automation enable {automationName}");
             }
 
-            // Fix Customize+ lines to always disable first, then enable (if needed)
+            // Customize+ lines to always disable first, then enable (if needed)
 
             // Remove ALL existing customize lines
             lines.RemoveAll(l => l.StartsWith("/customize profile", StringComparison.OrdinalIgnoreCase));
@@ -969,15 +1345,16 @@ namespace CharacterSelectPlugin
 
         public void OpenRPProfileWindow(Character character)
         {
-            RPProfileViewer.IsOpen = false;                      // Close first to reset state
-            RPProfileViewer.SetCharacter(character);             // Set new character
-            RPProfileViewer.IsOpen = true;                       // Reopen fresh
+            RPProfileViewer.IsOpen = false;
+            RPProfileViewer.SetCharacter(character);
+            RPProfileViewer.IsOpen = true;
         }
 
         public void OpenRPProfileViewWindow(Character character)
         {
             RPProfileViewer.SetCharacter(character);
             RPProfileViewer.IsOpen = true;
+            IsRPProfileViewerOpen = true;
         }
         private RPProfile HandleProfileRequest(string requestedName)
         {
@@ -996,7 +1373,7 @@ namespace CharacterSelectPlugin
                 lookupKey = overrideName;
             }
 
-            // Find the matching character with LastInGameName == lookupKey
+            // Find the matching character with LastInGameName
             var character = Characters.FirstOrDefault(c =>
                 string.Equals(c.LastInGameName, lookupKey, StringComparison.OrdinalIgnoreCase));
 
@@ -1060,7 +1437,7 @@ namespace CharacterSelectPlugin
             // Try to get local name first
             string? localName = ClientState.LocalPlayer?.Name.TextValue;
 
-            // If player is trying to view their own profile, skip IPC
+            // If player is trying to view their own profile
             if (ActiveProfilesByPlayerName.TryGetValue(targetName, out var overrideName))
             {
                 var character = Characters.FirstOrDefault(c =>
@@ -1132,7 +1509,7 @@ namespace CharacterSelectPlugin
                 // This is what OnLogin uses to find the right profile
                 character.LastInGameName = pluginCharacterKey;
 
-                // This is the key logic: player → selected plugin character
+                // This is the key logic: player -> selected plugin character
                 Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
 
                 // Write the session info file so the plugin remembers the last applied character name
@@ -1141,36 +1518,50 @@ namespace CharacterSelectPlugin
 
                 Configuration.Save();
 
-                // These log lines now match and won’t be skipped
+                // These log lines now match and won't be skipped
                 Plugin.Log.Debug($"[SetActiveCharacter] Saved: {fullKey} → {pluginCharacterKey}");
                 Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {pluginCharacterKey} for profile {character.Name}");
 
+                // Only upload if we should upload to gallery
+                bool shouldUploadToGallery = ShouldUploadToGallery(character, fullKey);
 
-
-                var profileToSend = new RPProfile
+                if (shouldUploadToGallery)
                 {
-                    Pronouns = character.RPProfile?.Pronouns,
-                    Gender = character.RPProfile?.Gender,
-                    Age = character.RPProfile?.Age,
-                    Race = character.RPProfile?.Race,
-                    Orientation = character.RPProfile?.Orientation,
-                    Relationship = character.RPProfile?.Relationship,
-                    Occupation = character.RPProfile?.Occupation,
-                    Abilities = character.RPProfile?.Abilities,
-                    Bio = character.RPProfile?.Bio,
-                    Tags = character.RPProfile?.Tags,
-                    CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-        ? character.RPProfile.CustomImagePath
-        : character.ImagePath,
-                    ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                    ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                    Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                    ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                    CharacterName = character.Name, // force correct name
-                    NameplateColor = character.NameplateColor // force correct colour
-                };
+                    var profileToSend = new RPProfile
+                    {
+                        Pronouns = character.RPProfile?.Pronouns,
+                        Gender = character.RPProfile?.Gender,
+                        Age = character.RPProfile?.Age,
+                        Race = character.RPProfile?.Race,
+                        Orientation = character.RPProfile?.Orientation,
+                        Relationship = character.RPProfile?.Relationship,
+                        Occupation = character.RPProfile?.Occupation,
+                        Abilities = character.RPProfile?.Abilities,
+                        Bio = character.RPProfile?.Bio,
+                        Tags = character.RPProfile?.Tags,
+                        CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
+                ? character.RPProfile.CustomImagePath
+                : character.ImagePath,
+                        ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
+                        ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
+                        Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
+                        ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
+                        CharacterName = character.Name, // force correct name
+                        NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor, // force correct colour
+                        BackgroundImage = character.RPProfile?.BackgroundImage ?? character.BackgroundImage,
+                        Effects = character.RPProfile?.Effects ?? character.Effects ?? new ProfileEffects(),
+                        GalleryStatus = character.GalleryStatus,
+                        Links = character.RPProfile?.Links,
+                        LastActiveTime = Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null
+                    };
 
-                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+                    Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name}");
+                }
+                else
+                {
+                    Plugin.Log.Info($"[SetActiveCharacter] ⚠ Skipped gallery upload for {character.Name}");
+                }
             }
         }
         public async Task TryRequestRPProfile(string targetName)
@@ -1191,7 +1582,6 @@ namespace CharacterSelectPlugin
 
         public static async Task UploadProfileAsync(RPProfile profile, string characterName)
         {
-            // Declare here so we can dispose after the upload completes
             Stream? imageStream = null;
             StreamContent? imageContent = null;
 
@@ -1203,12 +1593,13 @@ namespace CharacterSelectPlugin
                 // Get character match from config
                 var config = PluginInterface.GetPluginConfig() as Configuration;
                 Character? match = config?.Characters.FirstOrDefault(c => c.LastInGameName == characterName);
-                var rpMatch = match?.RPProfile;
 
                 if (match != null)
                 {
+                    // Only set character name if it's not already set
                     profile.CharacterName ??= match.Name;
 
+                    // Only set nameplate colour if it's not set (all zeros)
                     if (profile.NameplateColor.X <= 0f
                      && profile.NameplateColor.Y <= 0f
                      && profile.NameplateColor.Z <= 0f)
@@ -1216,13 +1607,21 @@ namespace CharacterSelectPlugin
                         profile.NameplateColor = match.NameplateColor;
                     }
 
-                    if (rpMatch != null)
+                    // Ensure background and effects are included in upload
+                    if (profile.Effects == null && match.Effects != null)
                     {
-                        if (Math.Abs(profile.ImageZoom) < 0.01f)
-                            profile.ImageZoom = rpMatch.ImageZoom;
-
-                        if (profile.ImageOffset == Vector2.Zero)
-                            profile.ImageOffset = rpMatch.ImageOffset;
+                        profile.Effects = new ProfileEffects
+                        {
+                            CircuitBoard = match.Effects.CircuitBoard,
+                            Fireflies = match.Effects.Fireflies,
+                            FallingLeaves = match.Effects.FallingLeaves,
+                            Butterflies = match.Effects.Butterflies,
+                            Bats = match.Effects.Bats,
+                            Fire = match.Effects.Fire,
+                            Smoke = match.Effects.Smoke,
+                            ColorScheme = match.Effects.ColorScheme,
+                            CustomParticleColor = match.Effects.CustomParticleColor
+                        };
                     }
                 }
 
@@ -1237,7 +1636,7 @@ namespace CharacterSelectPlugin
                     imagePathToUpload = match.ImagePath;
                 }
 
-                // Attach image if found (no 'using' here, so it isn't disposed too early)
+                // Attach image if found
                 if (!string.IsNullOrEmpty(imagePathToUpload))
                 {
                     imageStream = File.OpenRead(imagePathToUpload);
@@ -1247,55 +1646,65 @@ namespace CharacterSelectPlugin
                     form.Add(imageContent, "image", $"{Guid.NewGuid()}.png");
                 }
 
-                // Upload JSON
+                // Upload JSON - The profile parameter already has the correct data!
                 string json = JsonConvert.SerializeObject(profile);
                 form.Add(new StringContent(json, Encoding.UTF8, "application/json"), "profile");
 
-                // Send
-                string urlSafeName = Uri.EscapeDataString(characterName);
-                var response = await http.PostAsync(
-                    $"https://character-select-profile-server-production.up.railway.app/upload/{urlSafeName}",
-                    form
-                );
+                // Add a flag to indicate this is an update, not a new profile
+                form.Add(new StringContent("true", Encoding.UTF8, "text/plain"), "isUpdate");
 
-                // Now that the request has been sent, we can dispose the image content/stream
+                // Send both CS+ character name and physical character name
+                form.Add(new StringContent(profile.CharacterName ?? "Unknown", Encoding.UTF8, "text/plain"), "csCharacterName");
+
+                string urlSafeName = Uri.EscapeDataString(characterName);
+
+                // Use PUT for updates instead of POST to preserve likes
+                var request = new HttpRequestMessage(HttpMethod.Put, $"https://character-select-profile-server-production.up.railway.app/upload/{urlSafeName}")
+                {
+                    Content = form
+                };
+
+                Plugin.Log.Info($"[UploadProfile] Updating profile for CS+ character '{profile.CharacterName}' as physical character '{characterName}'");
+
+                var response = await http.SendAsync(request);
+
                 imageContent?.Dispose();
                 imageStream?.Dispose();
 
                 // Process response
                 var responseJson = await response.Content.ReadAsStringAsync();
-                var updated = JsonConvert.DeserializeObject<RPProfile>(responseJson);
 
-                if (updated?.ProfileImageUrl is { Length: > 0 })
+                if (response.IsSuccessStatusCode)
                 {
-                    profile.ProfileImageUrl = updated.ProfileImageUrl;
-                    if (rpMatch != null)
-                    {
-                        match.RPProfile.ProfileImageUrl = updated.ProfileImageUrl;
-                        Plugin.Log.Debug(
-                            $"[UploadProfile] Updated ProfileImageUrl for {characterName} = {updated.ProfileImageUrl}"
-                        );
-                        config?.Save();
-                    }
-                }
+                    var updated = JsonConvert.DeserializeObject<RPProfile>(responseJson);
 
-                if (!response.IsSuccessStatusCode)
-                    Plugin.Log.Warning(
-                        $"[UploadProfile] Failed to upload profile for {characterName}: {response.StatusCode}"
-                    );
+                    if (updated?.ProfileImageUrl is { Length: > 0 })
+                    {
+                        profile.ProfileImageUrl = updated.ProfileImageUrl;
+
+                        // Update the stored profile with the new image URL
+                        if (match?.RPProfile != null)
+                        {
+                            match.RPProfile.ProfileImageUrl = updated.ProfileImageUrl;
+                            Plugin.Log.Debug($"[UploadProfile] Updated ProfileImageUrl for {characterName} = {updated.ProfileImageUrl}");
+                            config?.Save();
+                        }
+                    }
+
+                    Plugin.Log.Info($"[UploadProfile] Successfully updated profile for CS+ character {profile.CharacterName} as {characterName}");
+                }
                 else
-                    Plugin.Log.Debug(
-                        $"[UploadProfile] Successfully uploaded profile for {characterName}"
-                    );
+                {
+                    Plugin.Log.Warning($"[UploadProfile] Failed to upload profile for {characterName}: {response.StatusCode}");
+                    Plugin.Log.Warning($"[UploadProfile] Server response: {responseJson}");
+                }
             }
             catch (NullReferenceException nre)
             {
-                // missing sub‐fields can produce NREs—debug‐log and continue
                 Plugin.Log.Debug($"[UploadProfile] NullReference for {characterName}: {nre.Message}");
             }
             catch (Exception ex)
             {
-                // other errors still get logged as errors
                 Plugin.Log.Error($"[UploadProfile] Exception: {ex}");
             }
         }
@@ -1338,7 +1747,22 @@ namespace CharacterSelectPlugin
                 }
 
                 string json = await response.Content.ReadAsStringAsync();
-                return RPProfileJson.Deserialize(json);
+                var profile = RPProfileJson.Deserialize(json);
+
+                // Ensure we got all the background and effects data
+                if (profile != null)
+                {
+                    Plugin.Log.Debug($"[DownloadProfile] Downloaded profile for {characterName}");
+                    Plugin.Log.Debug($"[DownloadProfile] Profile belongs to CS+ character: {profile.CharacterName}");
+                    Plugin.Log.Debug($"[DownloadProfile] BackgroundImage: {profile.BackgroundImage ?? "null"}");
+                    Plugin.Log.Debug($"[DownloadProfile] Effects: {(profile.Effects != null ? "present" : "null")}");
+                    if (profile.Effects != null)
+                    {
+                        Plugin.Log.Debug($"[DownloadProfile] Effects - Fireflies: {profile.Effects.Fireflies}, Leaves: {profile.Effects.FallingLeaves}, etc.");
+                    }
+                }
+
+                return profile;
             }
             catch (Exception ex)
             {
@@ -1366,7 +1790,7 @@ namespace CharacterSelectPlugin
                     line.StartsWith("/spose", StringComparison.OrdinalIgnoreCase)
                 )
                 {
-                    continue; // Omit this line entirely
+                    continue;
                 }
 
                 // Rewriting self-targeting lines to <t>
@@ -1444,26 +1868,25 @@ namespace CharacterSelectPlugin
             var player = ClientState.LocalPlayer!;
             uint currentJobId = player.ClassJob.RowId;
 
-            if (Configuration.ReapplyDesignOnJobChange &&
-    Configuration.LastKnownJobId != 0 &&
-    currentJobId != Configuration.LastKnownJobId)
+            if (Configuration.ReapplyDesignOnJobChange && currentJobId != Configuration.LastKnownJobId)
             {
-                Plugin.Log.Debug($"[JobSwitch] Detected job change: {Configuration.LastKnownJobId} → {currentJobId}");
+                var oldJob = Configuration.LastKnownJobId;
+                Configuration.LastKnownJobId = currentJobId;
 
                 if (!Configuration.EnableAutomations)
                 {
-                    bool reapplied = false;
+                    Plugin.Log.Debug($"[JobSwitch] Detected job change: {oldJob} → {currentJobId}");
+                    var reapplied = false;
 
                     if (!string.IsNullOrEmpty(Configuration.LastUsedDesignCharacterKey) &&
                         Configuration.LastUsedDesignByCharacter.TryGetValue(Configuration.LastUsedDesignCharacterKey, out var designName))
                     {
                         var designCharacter = Characters.FirstOrDefault(c => c.Name == Configuration.LastUsedDesignCharacterKey);
                         var design = designCharacter?.Designs.FirstOrDefault(d => d.Name == designName);
-
                         if (design != null)
                         {
-                            Plugin.Log.Debug($"[JobSwitch] Reapplying design {design.Name} for {designCharacter.Name}");
-                            ExecuteMacro(design.Macro, designCharacter, design.Name);
+                            Plugin.Log.Debug($"[JobSwitch] Reapplying design {design.Name} for {designCharacter.Name} (filtered)");
+                            ExecuteMacro(design.Macro, designCharacter, design.Name, filterJobChanges: true);
                             reapplied = true;
                         }
                     }
@@ -1473,16 +1896,10 @@ namespace CharacterSelectPlugin
                         var character = Characters.FirstOrDefault(c => c.Name == Configuration.LastUsedCharacterKey);
                         if (character != null)
                         {
-                            Plugin.Log.Debug($"[JobSwitch] Reapplying character macro for {character.Name}");
-                            ExecuteMacro(character.Macros, character, null);
+                            Plugin.Log.Debug($"[JobSwitch] Reapplying character macro for {character.Name} (filtered)");
+                            ExecuteMacro(character.Macros, character, null, filterJobChanges: true);
                             reapplied = true;
                         }
-                    }
-
-                    // Only update LastKnownJobId if actually reapplied
-                    if (reapplied)
-                    {
-                        Configuration.LastKnownJobId = currentJobId;
                     }
                 }
             }
@@ -1616,26 +2033,28 @@ namespace CharacterSelectPlugin
                     ClientState.TerritoryType != 0 &&
                     (Configuration.EnableLoginDelay ? DateTime.Now - loginTime > TimeSpan.FromSeconds(3) : true)) // give a short delay to load
                 {
-                    if (Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))
+                    // Main Character Only Logic
+                    if (Configuration.EnableMainCharacterOnly && !string.IsNullOrEmpty(Configuration.MainCharacterName))
                     {
-                        var character = Characters.FirstOrDefault(c =>
-                            $"{c.Name}@{ClientState.LocalPlayer!.HomeWorld.Value.Name}" == lastUsedKey);
-
-                        if (character != null)
+                        // Only apply the designated main character
+                        var mainCharacter = Characters.FirstOrDefault(c => c.Name == Configuration.MainCharacterName);
+                        if (mainCharacter != null)
                         {
-                            Plugin.Log.Debug($"[AutoLoad] ✅ Applying {character.Name} for {fullKey}");
-                            ApplyProfile(character, -1);
-                            lastAppliedCharacter = fullKey; // mark it
+                            Plugin.Log.Debug($"[AutoLoad-Main] ✅ Applying main character {mainCharacter.Name} for {fullKey}");
+                            ApplyProfile(mainCharacter, -1);
+                            lastAppliedCharacter = fullKey;
                         }
-                        else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
+                        else
                         {
-                            Plugin.Log.Debug($"[AutoLoad] ❌ No match found for {lastUsedKey}");
-                            lastAppliedCharacter = $"!notfound:{lastUsedKey}"; // mark it so it doesn't log again
+                            Plugin.Log.Debug($"[AutoLoad-Main] ❌ Main character '{Configuration.MainCharacterName}' not found, falling back to normal behavior");
+                            // Fall back to normal behavior if main character doesn't exist
+                            ApplyLastUsedCharacter(fullKey);
                         }
                     }
                     else
                     {
-                        Plugin.Log.Debug($"[AutoLoad] ❌ No previous character stored for {fullKey}");
+                        // Normal behavior: apply last used character
+                        ApplyLastUsedCharacter(fullKey);
                     }
                 }
             }
@@ -1682,6 +2101,280 @@ namespace CharacterSelectPlugin
                 shouldApplyPoses = false;
                 framesSinceLogin = 0;
             }
+        }
+        private void ApplyLastUsedCharacter(string fullKey)
+        {
+            if (Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))
+            {
+                var character = Characters.FirstOrDefault(c =>
+                    $"{c.Name}@{ClientState.LocalPlayer!.HomeWorld.Value.Name}" == lastUsedKey);
+
+                if (character != null)
+                {
+                    Plugin.Log.Debug($"[AutoLoad] ✅ Applying {character.Name} for {fullKey}");
+                    ApplyProfile(character, -1);
+                    lastAppliedCharacter = fullKey; // mark it
+                }
+                else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
+                {
+                    Plugin.Log.Debug($"[AutoLoad] ❌ No match found for {lastUsedKey}");
+                    lastAppliedCharacter = $"!notfound:{lastUsedKey}"; // mark it so it doesn't log again
+                }
+            }
+            else
+            {
+                Plugin.Log.Debug($"[AutoLoad] ❌ No previous character stored for {fullKey}");
+            }
+        }
+        public string FilterJobChangeCommands(string macro)
+        {
+            if (string.IsNullOrWhiteSpace(macro))
+                return macro;
+
+            try
+            {
+                var lines = macro.Split('\n');
+                var filteredLines = new List<string>();
+
+                foreach (var line in lines)
+                {
+                    var trimmedLine = line.Trim();
+
+                    // Simply skip ALL gearset change commands during reapplication
+                    if (IsGearsetChangeCommand(trimmedLine))
+                    {
+                        Log.Debug($"[JobFilter] Skipping gearset command during reapplication: {trimmedLine}");
+                        continue; // Skip this line entirely
+                    }
+
+                    filteredLines.Add(line);
+                }
+
+                string result = string.Join("\n", filteredLines);
+                Log.Debug($"[JobFilter] Filtered {lines.Length - filteredLines.Count} gearset commands");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[JobFilter] Error filtering: {ex.Message}");
+                return macro; // Return original on error
+            }
+        }
+
+
+        private bool IsGearsetChangeCommand(string command)
+        {
+            var trimmed = command.Trim();
+            return trimmed.StartsWith("/gearset change", StringComparison.OrdinalIgnoreCase) ||
+                   trimmed.StartsWith("/gs change", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private uint? ExtractGearsetNumber(string command)
+        {
+            try
+            {
+                // Extract gearset number from command
+                var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+                if (parts.Length < 3)
+                    return null;
+
+                var target = parts[2]; // Usually the third part contains the gearset number
+
+                // If it's a number, return it
+                if (uint.TryParse(target, out uint gearsetNumber))
+                {
+                    return gearsetNumber;
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+        public void SelectRandomCharacterAndDesign()
+        {
+            var random = new Random();
+
+            // Get available characters based on settings
+            var availableCharacters = Configuration.RandomSelectionFavoritesOnly
+                ? Characters.Where(c => c.IsFavorite).ToList()
+                : Characters.ToList();
+
+            // Fallback to all characters if no favourites exist
+            if (availableCharacters.Count == 0 && Configuration.RandomSelectionFavoritesOnly)
+            {
+                availableCharacters = Characters.ToList();
+                ChatGui.Print("[Character Select+] No favourite characters found, selecting from all characters.");
+            }
+
+            if (availableCharacters.Count == 0)
+            {
+                ChatGui.PrintError("[Character Select+] No characters available for random selection.");
+                return;
+            }
+
+            // Select random character
+            var selectedCharacter = availableCharacters[random.Next(availableCharacters.Count)];
+
+            // Get available designs for the selected character
+            var availableDesigns = Configuration.RandomSelectionFavoritesOnly
+                ? selectedCharacter.Designs.Where(d => d.IsFavorite).ToList()
+                : selectedCharacter.Designs.ToList();
+
+            // Fallback to all designs if no favourites exist
+            if (availableDesigns.Count == 0 && Configuration.RandomSelectionFavoritesOnly)
+            {
+                availableDesigns = selectedCharacter.Designs.ToList();
+            }
+
+            // Apply character first
+            ExecuteMacro(selectedCharacter.Macros, selectedCharacter, null);
+            SetActiveCharacter(selectedCharacter);
+
+            string message = $"[Character Select+] Random selection: {selectedCharacter.Name}";
+
+            // Apply random design if available
+            if (availableDesigns.Count > 0)
+            {
+                var selectedDesign = availableDesigns[random.Next(availableDesigns.Count)];
+                ExecuteMacro(selectedDesign.Macro, selectedCharacter, selectedDesign.Name);
+                message += $" with design '{selectedDesign.Name}'";
+
+                // Update last used design tracking
+                Configuration.LastUsedDesignCharacterKey = selectedCharacter.Name;
+                Configuration.LastUsedDesignByCharacter[selectedCharacter.Name] = selectedDesign.Name;
+            }
+            else
+            {
+                message += " (no designs available)";
+            }
+
+            // Apply poses if login is complete
+            if (isLoginComplete)
+            {
+                if (selectedCharacter.IdlePoseIndex < 7)
+                {
+                    PoseManager.ApplyPose(PoseType.Idle, selectedCharacter.IdlePoseIndex);
+                    Configuration.LastIdlePoseAppliedByPlugin = selectedCharacter.IdlePoseIndex;
+                    Configuration.Save();
+                }
+                PoseRestorer.RestorePosesFor(selectedCharacter);
+            }
+            else
+            {
+                activeCharacter = selectedCharacter;
+                shouldApplyPoses = true;
+            }
+
+            ChatGui.Print(message);
+            SaveConfiguration();
+        }
+        public string? GetTargetedPlayerName()
+        {
+            try
+            {
+                var target = TargetManager.Target;
+
+                if (target == null || target.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player)
+                    return null;
+
+                if (target is IPlayerCharacter player)
+                {
+                    string characterName = player.Name.TextValue;
+                    string worldName = player.HomeWorld.Value.Name.ToString();
+
+                    if (!string.IsNullOrWhiteSpace(characterName) && !string.IsNullOrWhiteSpace(worldName))
+                    {
+                        return $"{characterName}@{worldName}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error getting targeted player name: {ex.Message}");
+            }
+
+            return null;
+        }
+        private void MigrateBackgroundImageNames()
+        {
+            bool configChanged = false;
+
+            foreach (var character in Configuration.Characters)
+            {
+                if (!string.IsNullOrEmpty(character.BackgroundImage))
+                {
+                    string oldName = character.BackgroundImage;
+                    string newName = oldName;
+
+                    // Convert PNG to JPG
+                    if (oldName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newName = oldName.Substring(0, oldName.Length - 4) + ".jpg";
+                    }
+                    // Add .jpg if no extension
+                    else if (!oldName.Contains("."))
+                    {
+                        newName = oldName + ".jpg";
+                    }
+
+                    if (newName != oldName)
+                    {
+                        character.BackgroundImage = newName;
+                        configChanged = true;
+                        Log.Info($"Migrated background: {oldName} -> {newName}");
+                    }
+                }
+
+                if (character.RPProfile != null && !string.IsNullOrEmpty(character.RPProfile.BackgroundImage))
+                {
+                    string oldName = character.RPProfile.BackgroundImage;
+                    string newName = oldName;
+
+                    if (oldName.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newName = oldName.Substring(0, oldName.Length - 4) + ".jpg";
+                    }
+                    else if (!oldName.Contains("."))
+                    {
+                        newName = oldName + ".jpg";
+                    }
+
+                    if (newName != oldName)
+                    {
+                        character.RPProfile.BackgroundImage = newName;
+                        configChanged = true;
+                        Log.Info($"Migrated RP profile background: {oldName} -> {newName}");
+                    }
+                }
+            }
+
+            if (configChanged)
+            {
+                SaveConfiguration();
+                Log.Info("Background migration completed and saved");
+            }
+        }
+
+        public Character? GetActiveCharacter()
+        {
+            if (ClientState.LocalPlayer?.HomeWorld.IsValid != true)
+                return null;
+
+            string localName = ClientState.LocalPlayer.Name.TextValue;
+            string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+            string fullKey = $"{localName}@{worldName}";
+
+            // Find which CS+ character is currently active for this physical character
+            if (ActiveProfilesByPlayerName.TryGetValue(fullKey, out var activeCharacterName))
+            {
+                return Characters.FirstOrDefault(c => c.Name == activeCharacterName);
+            }
+
+            return null;
         }
 
         private EmoteController.PoseType TranslatePoseState(byte state)

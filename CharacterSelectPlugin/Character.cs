@@ -10,14 +10,14 @@ namespace CharacterSelectPlugin
     public class Character
     {
         public string Name { get; set; }
-        public string Macros { get; set; } = ""; // Default to empty instead of null
+        public string Macros { get; set; } = ""; 
         public string? ImagePath { get; set; }
         public List<CharacterDesign> Designs { get; set; }
         public Vector3 NameplateColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default to white
         public string PenumbraCollection { get; set; } = "";
         public string GlamourerDesign { get; set; } = "";
         public string CustomizeProfile { get; set; } = "";
-        public bool IsFavorite { get; set; } = false; // Allows favouriting
+        public bool IsFavorite { get; set; } = false; 
         public DateTime DateAdded { get; set; } = DateTime.Now; // Tracks when the character was added
         public int SortOrder { get; set; } = 0; // Tracks manual drag-drop order
         public string HonorificTitle { get; set; } = "";
@@ -26,7 +26,7 @@ namespace CharacterSelectPlugin
         public Vector3 HonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
         public Vector3 HonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
         public string MoodlePreset { get; set; } = ""; // MOODLES
-        public byte IdlePoseIndex { get; set; } = 0; // Idles!
+        public byte IdlePoseIndex { get; set; } = 7; // Idles!
         public byte SitPoseIndex { get; set; } = 255;
         public byte GroundSitPoseIndex { get; set; } = 255;
         public byte DozePoseIndex { get; set; } = 255;
@@ -40,7 +40,7 @@ namespace CharacterSelectPlugin
         public string? Abilities { get; set; }
         public string? Bio { get; set; }
         public string? RpTags { get; set; }
-        public string? RpImagePath { get; set; } // Optional override image
+        public string? RpImagePath { get; set; } 
         public RPProfile RPProfile { get; set; } = new();
         public string? LastInGameName { get; set; }
         public List<string> Tags { get; set; } = new();
@@ -59,8 +59,10 @@ namespace CharacterSelectPlugin
         public List<string> DesignTags { get; set; } = new List<string>();
         public string CharacterAutomation { get; set; } = "";
         public List<DesignFolder> DesignFolders { get; set; } = new();
-        public Vector3? OverrideAccentColor { get; set; } // if you're ever persisting the selection outside RPProfile
-
+        public Vector3? OverrideAccentColor { get; set; } 
+        public string? BackgroundImage { get; set; }
+        public ProfileEffects? Effects { get; set; }
+        public string GalleryStatus { get; set; } = "";
 
 
 
@@ -82,10 +84,11 @@ namespace CharacterSelectPlugin
             Vector3 honorificColor,
             Vector3 honorificGlow,
             string moodlePreset,
-            string characterautomation)
+            string characterautomation,
+            string galleryStatus = "")
         {
             Name = name;
-            Macros = macros ?? ""; // Prevents null macros
+            Macros = macros ?? ""; 
             ImagePath = imagePath;
             Designs = designs ?? new List<CharacterDesign>();
             NameplateColor = nameplateColor;
@@ -99,19 +102,21 @@ namespace CharacterSelectPlugin
             HonorificGlow = honorificGlow;
             MoodlePreset = moodlePreset;
             CharacterAutomation = characterautomation;
+            BackgroundImage = null;
+            Effects = new ProfileEffects();
+            GalleryStatus = galleryStatus;
         }
     }
     public class DesignFolder
     {
         public string Name { get; set; }
         public Guid Id { get; set; }
+        public Vector3? CustomColor { get; set; } = null;
 
-        // Optional parent (for future nesting)
         public Guid? ParentFolderId { get; set; } = null;
-        // Manual ordering index within its parent
         public int SortOrder { get; set; } = 0;
 
-        // <<< Add this! >>>
+        
         public DesignFolder()
         {
             Name = "";

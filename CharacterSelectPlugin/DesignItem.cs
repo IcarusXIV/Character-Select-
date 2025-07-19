@@ -1,4 +1,3 @@
-// CharacterSelectPlugin/DesignItem.cs
 using System;
 
 namespace CharacterSelectPlugin
@@ -12,17 +11,17 @@ namespace CharacterSelectPlugin
         public CharacterDesign? Design { get; }
         public int SortOrder { get; set; }
 
-        // Folder ctor
+        // Folder
         public DesignItem(DesignFolder f)
         {
             Id = f.Id;
             IsFolder = true;
             Folder = f;
-            ParentFolderId = f.ParentFolderId; // adapt if your folder tracks this differently
-            SortOrder = f.SortOrder;      // assume you’ve persisted this
+            ParentFolderId = f.ParentFolderId;
+            SortOrder = f.SortOrder;
         }
 
-        // Design ctor
+        // Design
         public DesignItem(CharacterDesign d)
         {
             Id = d.Id;

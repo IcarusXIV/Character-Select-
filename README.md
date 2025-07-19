@@ -1,10 +1,8 @@
-# **Character Select+**   
+# **Character Select+ 2.0**   
 **Effortless OC Switching at the Click of a Button**  
 
-Do you have multiple OCs and get frustrated switching between them manually?  
-Constantly reapplying settings, adjusting profiles, and trying to keep everything organized?  
-
-With **Character Select+**, all of this is handled **instantly**—no hassle, no wasted time.  
+Create and save custom character setups, then switch between them instantly in multiple ways.
+Applies Penumbra collections, Glamourer designs, Customize+ profiles, Honorifics, Moodles, and Idles all at once.  
 
 ---
 ## **Installation**  
@@ -15,55 +13,101 @@ With **Character Select+**, all of this is handled **instantly**—no hassle, no
 🔹 https://discord.gg/8JykGErcX4
 ---
 
-## **Features**  
+## **Core Features**  
 Character Select+ provides a **one-click solution** for swapping between your OCs.  
 
-### 🔹 **Core Features**  
-- ✅ **One-Click Character Swaps** – Automatically applies all saved settings.  
-- ✅ **Fully Manages:**  
-  - 🔹 **Penumbra Collections**  
-  - 🔹 **Glamourer Designs**  
-  - 🔹 **Customize+ Profiles**
-  - 🔹 **Honorific Titles**
-  - 🔹 **Moodle Presets**
-  - 🔹 **Idle Poses**  
-- ✅ **Sorting Options** – Organize by **favorites, alphabetical, most recent, or oldest**.  
-- ✅ **Advanced Mode** – Customize macros for additional control.
-- ✅ **Commands** – use chat commands to swap between Characters & Designs.  
+### 🔹 **What It Doess**  
 
-🔹 **Perfect for Role-players & Multi-OC Users** – Quickly swap between characters without navigating multiple menus.  
+✅ Save complete character appearances as profiles
+
+✅ Switch between characters with a single click, command, or dropdown
+
+✅ Multiple Designs per character (Glamourer Designs)
+
+✅ Character Gallery - Share your characters with other players
+
+✅ Detailed RP profiles with backgrounds and effects
+
+✅ Immersive Dialogue - NPCs use your character's name, pronouns (he/him, she/her, they/them, and any you may identify as), and race in dialogue!
+
+### 🔹 **Organization Features**
+
+✅ Tag and search your characters
+
+✅ Drag and drop reordering
+
+✅ Favourite important profiles/designs
+
+✅ Copy designs between characters
+
+✅ Preview images for your Designs for quick identification
+
+### 🔹 **Advanced Options**
+
+✅ Glamourer Automations & Customize+ profiles for specific Designs (each Design can have its own C+ Profile)
+
+✅ Add game commands to designs (job changes, emotes, minion summons, etc.)
+
+✅ Auto-apply the last applied CS+ Character on login or job change
+
+✅ Apply character setups to other players/minions
+
+✅ Quick Switch Window with just two dropdown menus and an apply button for quick swapping
 
 ---
 
-## **How It Works**  
-With **Character Select+**, you can:  
-🔹 **Save multiple characters** with their unique settings.  
-🔹 **Instantly swap between them** with a single click.  
-🔹 **Fine-tune every detail** in the editor, from visual elements to macro commands.  
+## **Commands**  
+
+🔹 /select - Open main window
+
+🔹 /select [CharacterName] - Apply character
+
+🔹 /select [CharacterName] [DesignName] - Apply specific design
+
+🔹 /viewrp [target] - View RP profiles
+
+🔹 /gallery - Opens the Gallery 
 
 ---
 
-## **Settings & Customization**  
-- **Profile Display Options:** Adjust icon size, spacing, and layout.  
-- **Favorite Your OCs:** Keep frequently used characters at the top.  
-- **Advanced Mode:** Customize macros manually for even more control.  
-- **Edit & Update On the Fly:** Modify character setups.  
+## **Perfect For:**  
+
+🔹 Role-players - Quickly swap between characters without navigating multiple menus
+
+🔹 Multi-OC Users - Manage multiple characters effortlessly
+
+🔹 GPosers - Switch between setups for different scenes
+
+🔹 Anyone who loves character customization - Streamlined character management
 
 ---
 
 ## **Why Character Select+?**  
 ### **Before:**  
-- Manually switching between character setups.  
-- Wasting time adjusting settings in menus.  
+- Manually switching between character setups
+- 
+- Wasting time adjusting settings across multiple plugins
+- 
+- Losing track of which designs belong to which character 
 
 ### **After:**  
-✔ A **single button press** applies everything instantly.  
-✔ Just **play and enjoy**—without breaking immersion.  
+✔ A single button press applies everything instantly
+
+✔ Organized character management with galleries and profiles
+
+✔ Immersive dialogue that recognizes your character
+
+✔ Just play and enjoy—without breaking immersion
 
 ---
 
 ## **Preview**  
-![Character Select UI](https://github.com/user-attachments/assets/783fb4a4-0385-47da-a336-ab12235e8005)
+<img width="1051" height="700" alt="DesignPanel" src="https://github.com/user-attachments/assets/937ef458-45b7-4d2c-889d-3bf50a820d22" />
+
+<img width="735" height="499" alt="Gallery" src="https://github.com/user-attachments/assets/b0e5a656-f5cc-441e-8337-330a20b32d9a" />
+
+<img width="420" height="580" alt="RPProfile" src="https://github.com/user-attachments/assets/6a956ef1-b25e-414a-9bc3-61859fbcf2fd" />
+
 
 
 ## **Support Character Select+**  
@@ -73,4 +117,4 @@ If you love **Character Select+** and would like to show your support, you can d
 
 Any support is very appreciated and helps keep the plugin updated and improves future features! 💙
 
-**For inquiries, contact Kid Icarus.**  
+**For inquiries, contact Icarus.**  

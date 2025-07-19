@@ -1,116 +1,427 @@
 using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
+using Dalamud.Interface.Textures.TextureWraps;
 using ImGuiNET;
+using System;
+using System.IO;
 using System.Numerics;
+using System.Collections.Generic;
 
 namespace CharacterSelectPlugin.Windows
 {
     public class PatchNotesWindow : Window
     {
         private readonly Plugin plugin;
+        private bool hasScrolledToEnd = false;
+        private bool wasOpen = false; // Track if window was open last frame
 
-        public PatchNotesWindow(Plugin plugin) : base("Character Select+ – What's New?", ImGuiWindowFlags.AlwaysAutoResize)
+        // Particle system for banner effects
+        private struct Particle
+        {
+            public Vector2 Position;
+            public Vector2 Velocity;
+            public float Life;
+            public float MaxLife;
+            public float Size;
+            public Vector4 Color;
+        }
+
+        private List<Particle> particles = new List<Particle>();
+        private float particleTimer = 0f;
+        private Random particleRandom = new Random();
+
+        public PatchNotesWindow(Plugin plugin) : base("Character Select+ – What's New?",
+            ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoTitleBar)
         {
             this.plugin = plugin;
             IsOpen = false;
+
+            SizeConstraints = new WindowSizeConstraints
+            {
+                MinimumSize = new Vector2(800, 650),
+                MaximumSize = new Vector2(800, 650)
+            };
         }
 
         public override void Draw()
         {
-            ImGui.SetNextWindowSizeConstraints(new Vector2(480, 1051), new Vector2(float.MaxValue, float.MaxValue));
-            ImGui.PushTextWrapPos();
-
-            ImGui.TextColored(new Vector4(0.2f, 1.0f, 0.2f, 1.0f), $"★ New in v{Plugin.CurrentPluginVersion}");
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            // Latest Patch Notes
-            if (ImGui.CollapsingHeader("v1.1.0.8 - v1.1.1.2 – April 18 2025", ImGuiTreeNodeFlags.DefaultOpen))
+            // Reset scroll tracking if window was just opened
+            if (IsOpen && !wasOpen)
             {
-                // Apply Character on Login
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf4fc"); ImGui.PopFont(); ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Apply Character on Login");
-                ImGui.BulletText("New opt-in setting in the plugin options.");
-                ImGui.BulletText("Character Select+ will remember the last applied character.");
-                ImGui.BulletText("Next time you log in, it will automatically apply that character.");
-                ImGui.BulletText("⚠️ May conflict if you are using Glamourer Automations.");
-                ImGui.Separator();
+                hasScrolledToEnd = false;
+            }
+            wasOpen = IsOpen;
 
-                // Apply Appearance on Job Change
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf4fc"); ImGui.PopFont(); ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Apply Appearance on Job Change");
-                ImGui.BulletText("New opt-in setting in the plugin options.");
-                ImGui.BulletText("Character Select+ will remember the last applied character and/or design.");
-                ImGui.BulletText("When you switch between jobs, it will automatically apply that character/design.");
-                ImGui.BulletText("⚠️ WILL 100 percent conflict if you are using Glamourer Automations.");
-                ImGui.Separator();
+            ImGui.SetNextWindowSize(new Vector2(800, 650), ImGuiCond.Always);
 
-                // Designs
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf07b"); ImGui.PopFont(); ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Design Panel Rework");
-                ImGui.BulletText("Buttons now only appear on hover, keeping the panel clean and focused.");
-                ImGui.BulletText("Reorder designs by dragging the colored handle‐bar on the left — click and drag to move.");
-                ImGui.BulletText("Create new folders inline via the folder icon next to the + button, no extra windows needed.");
-                ImGui.BulletText("Drag-and-drop designs into, out of, and between folders directly within the panel.");
-                ImGui.BulletText("Right-click folders for inline Rename/Delete context menu, with instant application.");
-                ImGui.Separator();
+            // UI Stylin'
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.08f, 0.95f));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.15f, 0.15f, 0.18f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.2f, 0.2f, 0.25f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.25f, 0.25f, 0.3f, 1.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8, 8));
 
-                // Compact Quick Switch
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf0a0"); ImGui.PopFont(); ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Compact Quick Character Switch");
-                ImGui.BulletText("Toggleable setting to hide the title bar and window frame for a slim bar.");
-                ImGui.BulletText("Keeps dropdowns and apply button only, preserving full switch functionality.");
-                ImGui.Separator();
+            try
+            {
+                DrawModernHeader();
+                DrawPatchNotes();
+                DrawBottomButton();
+            }
+            finally
+            {
+                ImGui.PopStyleVar(3);
+                ImGui.PopStyleColor(6);
+            }
+        }
 
-                // UI Scaling Option
-                ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf00e"); ImGui.PopFont(); ImGui.SameLine(); // <i class="fas fa-search-plus"></i>
-                ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "UI Scale Setting");
-                ImGui.BulletText("You can now adjust the plugin UI scale from the settings menu.");
-                ImGui.BulletText("Great for users on high-resolution monitors or 4K displays.");
-                ImGui.BulletText("Let me know if there are any issues using this.");
-                ImGui.BulletText("⚠️ If your UI is fine as-is, best to leave this be.");
-                ImGui.Separator();
+        private void DrawModernHeader()
+        {
+            // Window position
+            var windowPos = ImGui.GetWindowPos();
+            var windowPadding = ImGui.GetStyle().WindowPadding;
+
+            // Header area dimensions - let it start higher
+            var headerWidth = 800f - (windowPadding.X * 2);
+            var headerHeight = 180f;
+
+            // Start the header
+            var headerStart = windowPos + new Vector2(windowPadding.X, windowPadding.Y * 1.1f);
+            var headerEnd = headerStart + new Vector2(headerWidth, headerHeight);
+
+            var drawList = ImGui.GetWindowDrawList();
+
+            try
+            {
+                string pluginDirectory = Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? "";
+                string assetsPath = Path.Combine(pluginDirectory, "Assets");
+                string imagePath = Path.Combine(assetsPath, "banner.png");
+
+                if (File.Exists(imagePath))
+                {
+                    var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                    if (texture != null)
+                    {
+                        // Calculate scaling to fill width and maintain aspect ratio
+                        var imageAspect = (float)texture.Width / texture.Height;
+                        var scaledWidth = headerWidth;
+                        var scaledHeight = scaledWidth / imageAspect;
+
+                        // Draw the banner image starting from the header position
+                        var imagePos = headerStart;
+                        drawList.AddImage(texture.ImGuiHandle, imagePos, imagePos + new Vector2(scaledWidth, scaledHeight));
+
+                        // Draw particles
+                        DrawParticleEffects(drawList, headerStart, new Vector2(scaledWidth, scaledHeight));
+                    }
+                    else
+                    {
+                        DrawGradientBackground(headerStart, headerEnd);
+                        // Add particle effects over the gradient too
+                        DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, headerHeight));
+                    }
+                }
+                else
+                {
+                    DrawGradientBackground(headerStart, headerEnd);
+                    // Add particle effects over the gradient
+                    DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, headerHeight));
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Failed to load banner image: {ex.Message}");
+                DrawGradientBackground(headerStart, headerEnd);
+                // Add particle effects over the gradient
+                DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, headerHeight));
             }
 
-            // Previous Patch Notes
-            if (ImGui.CollapsingHeader("v1.1.0.(0-7) – April 09 2025", ImGuiTreeNodeFlags.None))
+            ImGui.SetCursorPosY((windowPadding.Y * 0.5f) + headerHeight - 10);
+
+            // Version badge
+            ImGui.SetCursorPosX(9);
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1.0f), "\uf005"); // Green star
+            ImGui.PopFont();
+            ImGui.SameLine();
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.9f, 0.4f, 1.0f)); // Green text
+            ImGui.Text($"New in v{Plugin.CurrentPluginVersion}");
+            ImGui.PopStyleColor();
+
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Character Gallery, Visual Overhaul & Interactive Tutorial");
+
+            ImGui.Separator();
+            ImGui.Spacing();
+        }
+
+        private void DrawGradientBackground(Vector2 headerStart, Vector2 headerEnd)
+        {
+            // Gradient background
+            var drawList = ImGui.GetWindowDrawList();
+            uint gradientTop = ImGui.GetColorU32(new Vector4(0.2f, 0.4f, 0.8f, 0.15f));
+            uint gradientBottom = ImGui.GetColorU32(new Vector4(0.1f, 0.1f, 0.2f, 0.05f));
+            drawList.AddRectFilledMultiColor(headerStart, headerEnd, gradientTop, gradientTop, gradientBottom, gradientBottom);
+
+            // Add fallback text for gradient version
+            ImGui.SetCursorPos(new Vector2(20, 15));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
+            ImGui.Text("Character Select+ – What's New?");
+            ImGui.PopStyleColor();
+
+            ImGui.SetCursorPos(new Vector2(20, 35));
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1.0f), "\uf005");
+            ImGui.PopFont();
+            ImGui.SameLine();
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui.Text($"New in v{Plugin.CurrentPluginVersion}");
+            ImGui.PopStyleColor();
+
+            ImGui.SetCursorPos(new Vector2(20, 55));
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Character Gallery, Visual Overhaul & Interactive Tutorial");
+        }
+
+        private void DrawPatchNotes()
+        {
+            // Scrollable content area
+            ImGui.BeginChild("PatchNotesScroll", new Vector2(0, -70), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
+
+            // Track scroll position for enabling button
+            float currentScrollY = ImGui.GetScrollY();
+            float maxScrollY = ImGui.GetScrollMaxY();
+
+            // Check if user has scrolled at least 85% through the content
+            if (maxScrollY > 0 && currentScrollY >= (maxScrollY * 0.85f))
+            {
+                hasScrolledToEnd = true;
+            }
+
+            ImGui.PushTextWrapPos();
+
+            // Latest Patch Notes - v2.0.0.0 (always open for 2.0)
+            if (DrawModernCollapsingHeader("v2.0.0.0 – Character Gallery & Visual Overhaul", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
+            {
+                Draw120Notes();
+
+                // Show scroll indicator if haven't scrolled enough
+                if (!hasScrolledToEnd)
+                {
+                    ImGui.Spacing();
+                    ImGui.Spacing();
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 0.8f));
+                    ImGui.Text("↓ Scroll down to see all new features before continuing ↓");
+                    ImGui.PopStyleColor();
+                    ImGui.Spacing();
+                }
+            }
+
+            // Previous Patch Notes - v1.1
+            if (DrawModernCollapsingHeader("v1.1.0.8 - v1.1.1.2 – April 18 2025", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
+            {
+                Draw110Notes();
+            }
+
+            // Previous Patch Notes - v1.1.0.0-7
+            if (DrawModernCollapsingHeader("v1.1.0.(0-7) – April 09 2025", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
             {
                 Draw1100Notes();
             }
 
-            ImGui.Spacing(); ImGui.Spacing();
-            float windowWidth = ImGui.GetWindowSize().X;
-            float buttonWidth = 90f;
-            ImGui.SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
-
-            if (ImGui.Button("Got it!", new Vector2(buttonWidth, 0)))
-            {
-                plugin.Configuration.LastSeenVersion = Plugin.CurrentPluginVersion;
-                plugin.Configuration.Save();
-                IsOpen = false;
-                plugin.ToggleMainUI();
-            }
-
             ImGui.PopTextWrapPos();
+            ImGui.EndChild();
         }
+
+        private bool DrawModernCollapsingHeader(string title, Vector4 titleColor, bool defaultOpen)
+        {
+            var flags = defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
+
+            ImGui.PushStyleColor(ImGuiCol.Text, titleColor);
+            bool isOpen = ImGui.CollapsingHeader(title, flags);
+            ImGui.PopStyleColor();
+
+            return isOpen;
+        }
+
+        private void DrawFeatureSection(string icon, string title, Vector4 accentColor)
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            var startPos = ImGui.GetCursorScreenPos();
+
+            // Feature section background
+            var bgMin = startPos + new Vector2(-10, -5);
+            var bgMax = startPos + new Vector2(ImGui.GetContentRegionAvail().X + 10, 25);
+            drawList.AddRectFilled(bgMin, bgMax, ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.15f, 0.6f)), 4f);
+
+            drawList.AddRectFilled(bgMin, bgMin + new Vector2(3, bgMax.Y - bgMin.Y), ImGui.GetColorU32(accentColor), 2f);
+
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 1);
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.Text(icon);
+            ImGui.PopFont();
+            ImGui.SameLine();
+            ImGui.TextColored(accentColor, title);
+            ImGui.Spacing();
+        }
+
+        private void Draw120Notes()
+        {
+            // Character Gallery (NEW!)
+            DrawFeatureSection("\uf302", "Character Gallery", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("View and share your CS+ Characters with everyone else!");
+            ImGui.BulletText("Opt-in feature - choose your main physical character to represent you");
+            ImGui.BulletText("Shows recent activity status with green globe indicators");
+            ImGui.BulletText("Like,favourite,add or even block other players' characters");
+            ImGui.BulletText("Click any profile to view their full RP Profile with backgrounds & effects");
+            ImGui.Spacing();
+
+            // Revamped RP Profiles
+            DrawFeatureSection("\uf2c2", "Revamped RP Profiles", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Complete visual redesign with new layout and styling");
+            ImGui.BulletText("50+ FFXIV location backgrounds to choose from");
+            ImGui.BulletText("Animated visual effects: butterflies, fireflies, falling leaves, and more");
+            ImGui.BulletText("Real-time preview - see changes instantly in the editor");
+            ImGui.BulletText("Right-click any player name to view their RP Profile directly");
+            ImGui.Spacing();
+
+            // Immersive Dialogue (NEW!)
+            DrawFeatureSection("\uf075", "Immersive Dialogue System", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("NPCs now use your CS+ Character's name, pronouns, and race in dialogue!");
+            ImGui.BulletText("Perfect integration with he/him, she/her, and they/them pronouns");
+            ImGui.BulletText("Granular settings: enable names, pronouns, gendered terms, or race separately");
+            ImGui.BulletText("Customizable they/them neutral titles: friend, honored one, traveler, adventurer, or choose your own!");
+            ImGui.BulletText("Only affects dialogue referring to your character - NPCs keep their own pronouns");
+            ImGui.BulletText("Requires an active CS+ character with RP Profile pronouns set");
+            ImGui.BulletText("If you find any instances in which it doesn't seem to be working please report them in the discord!");
+            ImGui.Spacing();
+
+            // Main Window UI Update
+            DrawFeatureSection("\uf53f", "Main Window Visual Overhaul", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Complete redesign with compact layout and enhanced visuals");
+            ImGui.BulletText("Character cards with integrated nameplates and action buttons");
+            ImGui.BulletText("Glowing borders and enhanced hover effects");
+            ImGui.BulletText("Optional setting for profiles to grow slightly on hover");
+            ImGui.BulletText("Crown indicator for your designated Main Character");
+            ImGui.BulletText("Resize Design Panel freely");
+            ImGui.BulletText("Drag & Drop character reordering added to Main Window (leftward movement only due to ImGui limitations)");
+            ImGui.Spacing();
+
+            // Tutorial System (NEW!)
+            DrawFeatureSection("\uf19d", "Interactive Tutorial System", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("Brand new guided tutorial for first-time users");
+            ImGui.BulletText("Highlights and points to buttons and fields you need to interact with");
+            ImGui.BulletText("Step-by-step guidance through Characters, Designs, and RP Profiles");
+            ImGui.BulletText("Can be ended at any time if you prefer to explore on your own");
+            ImGui.Spacing();
+
+            // Design Preview Images (NEW!)
+            DrawFeatureSection("\uf03e", "Design Preview Images", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Add custom preview images to your Designs");
+            ImGui.BulletText("Preview images by hovering over the Apply (✓) button");
+            ImGui.BulletText("Helps you quickly identify Designs at a glance");
+            ImGui.Spacing();
+
+            // Main Game Commands (NEW!)
+            DrawFeatureSection("\uf120", "Base Game Command Support", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("Add base game commands through Advanced Mode");
+            ImGui.BulletText("Example: Add '/gearset change 1' to switch jobs when applying Designs");
+            ImGui.BulletText("Perfect combo with 'Reapply Last Design on Job Change' setting");
+            ImGui.Spacing();
+
+            // Random Character + Outfit (NEW!)
+            DrawFeatureSection("\uf074", "Random Character & Outfit", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("New 'Random' button for spontaneous character switching");
+            ImGui.BulletText("Randomly picks from your CS+ Characters and their Designs");
+            ImGui.BulletText("Setting to limit random selection to only favourited items");
+            ImGui.Spacing();
+
+            // Main CS+ Character (NEW!)
+            DrawFeatureSection("\uf521", "Main CS+ Character", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("Designate your main CS+ Character with a crown indicator");
+            ImGui.BulletText("Crown display is optional - toggle in settings");
+            ImGui.BulletText("'Reapply on Login' can be set to only apply your Main Character");
+            ImGui.Spacing();
+
+            // Quick Character Switch Improvements
+            DrawFeatureSection("\uf0e7", "Quick Character Switch Updates", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Now remembers your last used character like Apply on Login");
+            ImGui.BulletText("Ready to go when you log in as that character");
+            ImGui.BulletText("Will also switch to be on your current CS+ Character if applied through other methods");
+            ImGui.Spacing();
+
+            // Bug Fixes & QoL
+            DrawFeatureSection("\uf085", "Bug Fixes & Quality of Life", new Vector4(0.8f, 0.8f, 0.9f, 1.0f));
+            ImGui.BulletText("Fixed Quick Switch window scroll issues");
+            ImGui.BulletText("Disabled window docking to prevent UI conflicts");
+            ImGui.BulletText("Added ghost images for drag and drop operations");
+            ImGui.BulletText("Automatic character config backup on updates or every 7 days");
+            ImGui.BulletText("Various performance improvements and optimizations");
+        }
+
+        private void Draw110Notes()
+        {
+            // Apply Character on Login
+            DrawFeatureSection("\uf4fc", "Apply Character on Login", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("New opt-in setting in the plugin options.");
+            ImGui.BulletText("Character Select+ will remember the last applied character.");
+            ImGui.BulletText("Next time you log in, it will automatically apply that character.");
+            ImGui.BulletText("⚠️ May conflict if you are using Glamourer Automations.");
+            ImGui.Spacing();
+
+            // Apply Appearance on Job Change
+            DrawFeatureSection("\uf4fc", "Apply Appearance on Job Change", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("New opt-in setting in the plugin options.");
+            ImGui.BulletText("Character Select+ will remember the last applied character and/or design.");
+            ImGui.BulletText("When you switch between jobs, it will automatically apply that character/design.");
+            ImGui.BulletText("⚠️ WILL 100 percent conflict if you are using Glamourer Automations.");
+            ImGui.Spacing();
+
+            // Designs
+            DrawFeatureSection("\uf07b", "Design Panel Rework", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Buttons now only appear on hover, keeping the panel clean and focused.");
+            ImGui.BulletText("Reorder designs by dragging the coloured handle‐bar on the left — click and drag to move.");
+            ImGui.BulletText("Create new folders inline via the folder icon next to the + button, no extra windows needed.");
+            ImGui.BulletText("Drag-and-drop designs into, out of, and between folders directly within the panel.");
+            ImGui.BulletText("Right-click folders for inline Rename/Delete context menu, with instant application.");
+            ImGui.Spacing();
+
+            // Compact Quick Switch
+            DrawFeatureSection("\uf0a0", "Compact Quick Character Switch", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Toggleable setting to hide the title bar and window frame for a slim bar.");
+            ImGui.BulletText("Keeps dropdowns and apply button only, preserving full switch functionality.");
+            ImGui.Spacing();
+
+            // UI Scaling Option
+            DrawFeatureSection("\uf00e", "UI Scale Setting", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("You can now adjust the plugin UI scale from the settings menu.");
+            ImGui.BulletText("Great for users on high-resolution monitors or 4K displays.");
+            ImGui.BulletText("Let me know if there are any issues using this.");
+            ImGui.BulletText("⚠️ If your UI is fine as-is, best to leave this be.");
+            ImGui.Spacing();
+        }
+
         private void Draw1100Notes()
         {
             // RP Profile Panel
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf2c2"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "RolePlay Profile Panel");
+            DrawFeatureSection("\uf2c2", "RolePlay Profile Panel", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Add bios, pronouns, orientation, and more for each character.");
             ImGui.BulletText("Choose a unique image or reuse the character image.");
             ImGui.BulletText("Use pan and zoom controls to fine-tune the RP portrait.");
             ImGui.BulletText("Control visibility: keep private or share with others.");
-            ImGui.BulletText("Once applied, that character’s RP profile is active.");
-            ImGui.BulletText("You can view others’ profiles (if shared) and vice versa.");
+            ImGui.BulletText("Once applied, that character's RP profile is active.");
+            ImGui.BulletText("You can view others' profiles (if shared) and vice versa.");
             ImGui.BulletText("Use /viewrp self | /t | First Last@World to view.");
             ImGui.BulletText("Right-click in the party list, friends list, or chat to access shared RP cards.");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Glamourer Automations
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf5c3"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Glamourer Automations for Characters & Designs");
+            DrawFeatureSection("\uf5c3", "Glamourer Automations for Characters & Designs", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Characters & Designs can now trigger specific Glamourer Automation profiles.");
             ImGui.BulletText("This is *opt-in* — toggle it in plugin settings.");
             ImGui.BulletText("If no automation is assigned, the design defaults to 'None'.");
@@ -119,56 +430,212 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("1. Open Glamourer > Automations.");
             ImGui.BulletText("2. Create an Automation named 'None'.");
             ImGui.BulletText("3. Add your in-game character name beside 'Any World' then Set to Character.");
-            ImGui.BulletText("4. That’s it. Don’t touch anything else, you’re done!");
-            ImGui.Separator();
+            ImGui.BulletText("4. That's it. Don't touch anything else, you're done!");
+            ImGui.Spacing();
 
             // Customize+
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf234"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Customize+ Profiles for Designs");
+            DrawFeatureSection("\uf234", "Customize+ Profiles for Designs", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Each design can now assign its own Customize+ profile.");
             ImGui.BulletText("This gives you finer control over visual changes per design.");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Manual Reordering
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf0b0"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Manual Character Reordering");
+            DrawFeatureSection("\uf0b0", "Manual Character Reordering", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Use the 'Reorder Characters' button at the bottom-left.");
             ImGui.BulletText("Drag and drop profiles, then press Save to lock it in.");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Search
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf002"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Character Search Bar");
+            DrawFeatureSection("\uf002", "Character Search Bar", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Click the magnifying glass to search by name instantly.");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Tagging
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf07b"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Tagging System");
+            DrawFeatureSection("\uf07b", "Tagging System", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Add comma-separated 'tags' to organize characters.");
             ImGui.BulletText("Click the filter icon to filter — characters can appear in multiple tags!");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Apply to Target
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf140"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Right-click → Apply to Target");
+            DrawFeatureSection("\uf140", "Right-click → Apply to Target", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Right-click a character in Character Select+ with a target selected.");
             ImGui.BulletText("Apply their setup — or even one of their individual designs — to the target.");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Copy Designs
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf0c5"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.8f, 0.95f, 1.0f, 1.0f), "Copy Designs Between Characters");
+            DrawFeatureSection("\uf0c5", "Copy Designs Between Characters", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Hold Shift and click the '+' button in Designs to open the Design Importer.");
             ImGui.BulletText("Click the + beside a design to copy it. Repeat as needed!");
-            ImGui.Separator();
+            ImGui.Spacing();
 
             // Other changes
-            ImGui.PushFont(UiBuilder.IconFont); ImGui.Text("\uf085"); ImGui.PopFont(); ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.65f, 0.65f, 0.9f, 1.0f), "Other Changes");
+            DrawFeatureSection("\uf085", "Other Changes", new Vector4(0.8f, 0.8f, 0.9f, 1.0f));
             ImGui.BulletText("Older Design macros were automatically upgraded.");
             ImGui.BulletText("Various UI tweaks, bugfixes, and behind-the-scenes improvements.");
         }
 
+        private void DrawBottomButton()
+        {
+            ImGui.Spacing();
+            ImGui.Spacing();
+
+            // Center the button
+            float windowWidth = ImGui.GetWindowSize().X;
+            float buttonWidth = 90f;
+            ImGui.SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
+
+            // Button is only enabled if user has scrolled enough
+            bool buttonEnabled = hasScrolledToEnd;
+
+            if (!buttonEnabled)
+            {
+                ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f); // Make it look disabled
+            }
+
+            // Styled button - purple when enabled, gray when disabled
+            if (buttonEnabled)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.2f, 0.4f, 0.8f)); // Purple base
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.3f, 0.5f, 1f)); // Purple hover
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.25f, 0.15f, 0.35f, 1f)); // Purple active
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f)); // Gray base
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+            }
+
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+
+            bool buttonClicked = ImGui.Button("Got it!", new Vector2(buttonWidth, 30));
+
+            // Show tooltip when disabled
+            if (!buttonEnabled && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip("Read through the new features first! There's a lot!");
+            }
+
+            if (buttonClicked && buttonEnabled)
+            {
+                plugin.Configuration.LastSeenVersion = Plugin.CurrentPluginVersion;
+                plugin.Configuration.Save();
+                IsOpen = false;
+                plugin.ToggleMainUI();
+            }
+
+            ImGui.PopStyleVar(!buttonEnabled ? 2 : 1);
+            ImGui.PopStyleColor(3);
+        }
+
+        // Optional debug method - temporarily call this in Draw() to see scroll values
+        private void DrawDebugInfo()
+        {
+            ImGui.Spacing();
+            ImGui.Text($"Scroll Debug Info:");
+
+            // Get the scroll values from the child window
+            if (ImGui.BeginChild("PatchNotesScroll", Vector2.Zero, false))
+            {
+                float currentScrollY = ImGui.GetScrollY();
+                float maxScrollY = ImGui.GetScrollMaxY();
+                ImGui.EndChild();
+
+                ImGui.Text($"Current: {currentScrollY:F1}, Max: {maxScrollY:F1}");
+                ImGui.Text($"Progress: {(maxScrollY > 0 ? (currentScrollY / maxScrollY * 100) : 0):F1}%");
+                ImGui.Text($"hasScrolledToEnd: {hasScrolledToEnd}");
+                ImGui.Text($"85% threshold: {maxScrollY * 0.85f:F1}");
+            }
+        }
+
+        private void DrawParticleEffects(ImDrawListPtr drawList, Vector2 bannerStart, Vector2 bannerSize)
+        {
+            float deltaTime = ImGui.GetIO().DeltaTime;
+            particleTimer += deltaTime;
+
+            // Spawn new particles more frequently and across the entire banner
+            if (particleTimer > 0.15f && particles.Count < 40) // More particles, spawn faster
+            {
+                SpawnParticle(bannerStart, bannerSize);
+                particleTimer = 0f;
+            }
+
+            // Update and draw existing particles
+            for (int i = particles.Count - 1; i >= 0; i--)
+            {
+                var particle = particles[i];
+
+                // Update particle
+                particle.Position += particle.Velocity * deltaTime;
+                particle.Life -= deltaTime;
+
+                // Remove dead particles or ones that left the banner area
+                if (particle.Life <= 0 ||
+                    particle.Position.X > bannerStart.X + bannerSize.X + 50 ||
+                    particle.Position.Y < bannerStart.Y - 50 ||
+                    particle.Position.Y > bannerStart.Y + bannerSize.Y + 50)
+                {
+                    particles.RemoveAt(i);
+                    continue;
+                }
+
+                // Calculate alpha based on life remaining
+                float alpha = Math.Min(1f, particle.Life / particle.MaxLife);
+                var color = new Vector4(particle.Color.X, particle.Color.Y, particle.Color.Z, particle.Color.W * alpha);
+
+                // Draw particle as a small circle
+                drawList.AddCircleFilled(
+                    particle.Position,
+                    particle.Size,
+                    ImGui.GetColorU32(color)
+                );
+
+                // Subtle glow effect
+                if (alpha > 0.3f)
+                {
+                    var glowColor = new Vector4(color.X, color.Y, color.Z, color.W * 0.15f);
+                    drawList.AddCircleFilled(
+                        particle.Position,
+                        particle.Size * 2.5f,
+                        ImGui.GetColorU32(glowColor)
+                    );
+                }
+
+                particles[i] = particle;
+            }
+        }
+
+        private void SpawnParticle(Vector2 bannerStart, Vector2 bannerSize)
+        {
+            var particle = new Particle
+            {
+                // Spawn randomly across the ENTIRE banner area
+                Position = new Vector2(
+                    bannerStart.X + (float)particleRandom.NextDouble() * bannerSize.X,
+                    bannerStart.Y + (float)particleRandom.NextDouble() * bannerSize.Y
+                ),
+
+                Velocity = new Vector2(
+                    -10f + (float)particleRandom.NextDouble() * 20f,
+                    -15f + (float)particleRandom.NextDouble() * -10f
+                ),
+
+                MaxLife = 6f + (float)particleRandom.NextDouble() * 4f,
+                Size = 1.5f + (float)particleRandom.NextDouble() * 2.5f,
+
+                // More visible colors - brighter and more opaque
+                Color = particleRandom.Next(5) switch
+                {
+                    0 => new Vector4(0.7f, 0.9f, 1.0f, 0.8f),  // Bright blue
+                    1 => new Vector4(1.0f, 0.7f, 1.0f, 0.7f),  // Bright purple  
+                    2 => new Vector4(1.0f, 1.0f, 1.0f, 0.6f),  // Bright white
+                    3 => new Vector4(0.8f, 1.0f, 1.0f, 0.7f),  // Bright cyan
+                    _ => new Vector4(0.9f, 0.8f, 1.0f, 0.6f)   // Light lavender
+                }
+            };
+
+            particle.Life = particle.MaxLife;
+            particles.Add(particle);
+        }
     }
 }

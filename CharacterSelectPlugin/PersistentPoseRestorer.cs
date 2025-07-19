@@ -1,89 +1,49 @@
-// CharacterSelectPlugin/Managers/PoseRestorer.cs
+using CharacterSelectPlugin.Managers;
+using CharacterSelectPlugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
-using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using System;
 
-namespace CharacterSelectPlugin.Managers;
-
-public unsafe class PoseRestorer
+public unsafe class SimplifiedPoseRestorer
 {
     private readonly IClientState clientState;
-    private readonly Plugin plugin;
+    private readonly ImprovedPoseManager poseManager;
 
-    public PoseRestorer(IClientState clientState, Plugin plugin)
+    public SimplifiedPoseRestorer(IClientState clientState, ImprovedPoseManager poseManager)
     {
         this.clientState = clientState;
-        this.plugin = plugin;
+        this.poseManager = poseManager;
     }
 
     public void RestorePosesFor(Character character)
     {
-        if (clientState.LocalPlayer == null) return;
-
+        if (clientState.LocalPlayer == null)
+            return;
         Plugin.Framework.RunOnTick(() =>
         {
-            ApplyPose(character);
-        });
+            ApplyCharacterPoses(character);
+        }, delayTicks: 30);
     }
 
-    private void ApplyPose(Character character)
+    private void ApplyCharacterPoses(Character character)
     {
-        var local = clientState.LocalPlayer;
-        if (local == null || local.Address == IntPtr.Zero)
+        if (clientState.LocalPlayer?.Address == IntPtr.Zero)
             return;
 
-        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)local.Address;
-
-        // This also ensures you're not in cutscene or a bad player state
-        if (charPtr->GameObject.ObjectIndex == 0xFFFF)
-            return;
-
-        TrySetPose(EmoteController.PoseType.Idle, character.IdlePoseIndex, charPtr);
-        TrySetPose(EmoteController.PoseType.Sit, character.SitPoseIndex, charPtr);
-        TrySetPose(EmoteController.PoseType.GroundSit, character.GroundSitPoseIndex, charPtr);
-        TrySetPose(EmoteController.PoseType.Doze, character.DozePoseIndex, charPtr);
-    }
-
-    private void TrySetPose(EmoteController.PoseType type, byte desired, FFXIVClientStructs.FFXIV.Client.Game.Character.Character* charPtr)
-    {
-        if (desired >= 254) return;
-
-        byte current = PlayerState.Instance()->SelectedPoses[(int)type];
-        if (current == desired) return;
-
-        PlayerState.Instance()->SelectedPoses[(int)type] = desired;
-
-        switch (type)
+        var poses = new[]
         {
-            case EmoteController.PoseType.Idle:
-                plugin.Configuration.LastIdlePoseAppliedByPlugin = desired;
-                break;
-            case EmoteController.PoseType.Sit:
-                plugin.Configuration.LastSitPoseAppliedByPlugin = desired;
-                break;
-            case EmoteController.PoseType.GroundSit:
-                plugin.Configuration.LastGroundSitPoseAppliedByPlugin = desired;
-                break;
-            case EmoteController.PoseType.Doze:
-                plugin.Configuration.LastDozePoseAppliedByPlugin = desired;
-                break;
-        }
-
-        plugin.Configuration.Save();
-
-        if (TranslatePoseState(charPtr->ModeParam) == type)
-            charPtr->EmoteController.CPoseState = desired;
-    }
-
-    private EmoteController.PoseType TranslatePoseState(byte state)
-    {
-        return state switch
-        {
-            1 => EmoteController.PoseType.GroundSit,
-            2 => EmoteController.PoseType.Sit,
-            3 => EmoteController.PoseType.Doze,
-            _ => EmoteController.PoseType.Idle
+            (EmoteController.PoseType.Idle, character.IdlePoseIndex),
+            (EmoteController.PoseType.Sit, character.SitPoseIndex),
+            (EmoteController.PoseType.GroundSit, character.GroundSitPoseIndex),
+            (EmoteController.PoseType.Doze, character.DozePoseIndex)
         };
+
+        foreach (var (type, index) in poses)
+        {
+            if (index < 7) 
+            {
+                poseManager.ApplyPose(type, index);
+            }
+        }
     }
 }

@@ -1,3 +1,4 @@
+using CharacterSelectPlugin.Windows;
 using Dalamud.Configuration;
 using Dalamud.Plugin;
 using Newtonsoft.Json;
@@ -5,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Numerics;
+using System.Text.Json.Serialization;
 
 namespace CharacterSelectPlugin
 {
@@ -14,8 +16,6 @@ namespace CharacterSelectPlugin
         public int Version { get; set; } = 1;
         public List<Character> Characters { get; set; } = new List<Character>();
         public Vector3 NewCharacterColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
-
-        // Existing Settings
         public bool IsConfigWindowMovable { get; set; } = true;
         public bool SomePropertyToBeSavedAndWithADefault { get; set; } = false;
 
@@ -55,7 +55,58 @@ namespace CharacterSelectPlugin
         public bool EnablePoseAutoSave { get; set; } = true;
         public bool EnableSafeMode { get; set; } = false;
         public bool QuickSwitchCompact { get; set; } = false;
+        public bool EnableCharacterHoverEffects { get; set; } = false;
+        public HashSet<string> FavoriteGalleryProfiles { get; set; } = new();
+        public HashSet<string> LikedGalleryProfiles { get; set; } = new();
+        public List<FavoriteSnapshot> FavoriteSnapshots { get; set; } = new();
+        public bool ShowRecentlyActiveStatus { get; set; } = true;
+        public bool HasSeenTutorial { get; set; } = false;
+        public bool TutorialActive { get; set; } = false;
+        public int CurrentTutorialStep { get; set; } = 0;
+        public bool ShowTutorialOnStartup { get; set; } = true;
+        public Dictionary<uint, uint> GearsetJobMapping { get; set; } = new();
+        public uint? LastUsedGearset { get; set; } = null;
+        public string? GalleryMainCharacter { get; set; } = null; // Format: "CharacterName@Server"
+        public bool EnableGalleryAutoRefresh { get; set; } = true;
+        public int GalleryAutoRefreshSeconds { get; set; } = 30;
+        [DefaultValue(false)]
+        public bool RandomSelectionFavoritesOnly { get; set; } = false;
+        public string? MainCharacterName { get; set; } = null; 
+        public bool EnableMainCharacterOnly { get; set; } = false;
+        public bool ShowMainCharacterCrown { get; set; } = true;
+        public HashSet<string> BlockedGalleryProfiles { get; set; } = new();
+        public float DesignPanelWidth { get; set; } = 300f;
+        public HashSet<string> FollowedPlayers { get; set; } = new();
+        [JsonPropertyName("enableDialogueIntegration")]
+        public bool EnableDialogueIntegration { get; set; } = false;
 
+        [JsonPropertyName("replaceNameInDialogue")]
+        public bool ReplaceNameInDialogue { get; set; } = true;
+
+        [JsonPropertyName("replacePronounsInDialogue")]
+        public bool ReplacePronounsInDialogue { get; set; } = true;
+
+        [JsonPropertyName("enableSmartGrammarInDialogue")]
+        public bool EnableSmartGrammarInDialogue { get; set; } = true;
+
+        [JsonPropertyName("showDialogueReplacementPreview")]
+        public bool ShowDialogueReplacementPreview { get; set; } = false;
+        // New enhanced dialogue settings
+        [JsonPropertyName("enableLuaHookDialogue")]
+        public bool EnableLuaHookDialogue { get; set; } = true;
+
+        [JsonPropertyName("replaceGenderedTerms")]
+        public bool ReplaceGenderedTerms { get; set; } = true;
+
+        [JsonPropertyName("enableAdvancedTitleReplacement")]
+        public bool EnableAdvancedTitleReplacement { get; set; } = true;
+
+        [JsonPropertyName("theyThemStyle")]
+        public GenderNeutralStyle TheyThemStyle { get; set; } = GenderNeutralStyle.Friend;
+
+        [JsonPropertyName("customGenderNeutralTitle")]
+        public string CustomGenderNeutralTitle { get; set; } = "friend";
+        public bool EnableRaceReplacement { get; set; } = false;
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)
@@ -82,8 +133,40 @@ namespace CharacterSelectPlugin
             public byte GroundSit { get; set; } = 255;
             public byte Doze { get; set; } = 255;
         }
+        public enum GenderNeutralStyle
+        {
+            Friend, 
+            HonoredOne, 
+            Traveler, 
+            Adventurer, 
+            Custom  
+        }
 
+        public string GetGenderNeutralTitle()
+        {
+            return TheyThemStyle switch
+            {
+                GenderNeutralStyle.Friend => "friend",
+                GenderNeutralStyle.HonoredOne => "honored one",
+                GenderNeutralStyle.Traveler => "traveler",
+                GenderNeutralStyle.Adventurer => "adventurer",
+                GenderNeutralStyle.Custom => CustomGenderNeutralTitle,
+                _ => "friend"
+            };
+        }
 
+        public string GetGenderNeutralFormalTitle()
+        {
+            return TheyThemStyle switch
+            {
+                GenderNeutralStyle.Friend => "friend",
+                GenderNeutralStyle.HonoredOne => "one",
+                GenderNeutralStyle.Traveler => "traveler",
+                GenderNeutralStyle.Adventurer => "adventurer",
+                GenderNeutralStyle.Custom => CustomGenderNeutralTitle,
+                _ => "friend"
+            };
+        }
 
         public void Save()
         {

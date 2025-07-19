@@ -11,20 +11,21 @@ namespace CharacterSelectPlugin
         public string AdvancedMacro { get; set; } // Stores Advanced Mode macro separately
         public string GlamourerDesign { get; set; } // Store Glamourer Design separately
         public DateTime DateAdded { get; set; } = DateTime.UtcNow; // Automatically set when created
-        public bool IsFavorite { get; set; }     // Used for sorting by Favorites
+        public bool IsFavorite { get; set; }     // Sorting by Favourites
         public string Automation { get; set; } = "";
         public string CustomizePlusProfile { get; set; } = "";
+        public string? PreviewImagePath { get; set; } = null;
         public string Tag { get; set; } = "Unsorted";
         public List<string> KnownTags { get; set; } = new();
         public List<string> DesignTags { get; set; } = new List<string>();
-        public Guid? FolderId { get; set; } = null; // null = Unsorted
+        public Guid? FolderId { get; set; } = null; 
         public Guid Id { get; set; } = Guid.NewGuid();
         public int SortOrder { get; set; } = 0;
 
 
 
 
-        public CharacterDesign(string name, string macro, bool isAdvancedMode = false, string advancedMacro = "", string glamourerDesign = "", string automation = "", string customizePlusProfile = "")
+        public CharacterDesign(string name, string macro, bool isAdvancedMode = false, string advancedMacro = "", string glamourerDesign = "", string automation = "", string customizePlusProfile = "", string? previewImagePath = null)
         {
             Name = name;
             Macro = macro;
@@ -33,6 +34,7 @@ namespace CharacterSelectPlugin
             GlamourerDesign = glamourerDesign; // Store Glamourer Design
             Automation = automation; // Store Glamourer Automation
             CustomizePlusProfile = customizePlusProfile; // Store Design C+ Profiles
+            PreviewImagePath = previewImagePath;
             DateAdded = DateTime.UtcNow;
             IsFavorite = false;  // Default to not favourited
         }
