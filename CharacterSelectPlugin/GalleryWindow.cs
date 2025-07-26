@@ -67,10 +67,35 @@ namespace CharacterSelectPlugin.Windows
         Alphabetical
     }
 
+    public class Announcement
+    {
+        public string Id { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string Type { get; set; } = "info"; // info, warning, update, maintenance
+        public DateTime CreatedAt { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    public class ReportRequest
+    {
+        public string ReportedCharacterId { get; set; } = "";
+        public string ReportedCharacterName { get; set; } = "";
+        public string ReporterCharacter { get; set; } = "";
+        public string Reason { get; set; } = "";
+        public string Details { get; set; } = "";
+    }
+    public enum ReportReason
+    {
+        InappropriateContent,
+        Spam,
+        MaliciousLinks,
+        Other
+    }
     public class GalleryWindow : Window
     {
         private readonly Plugin plugin;
-        private enum GalleryTab { Gallery, Friends, Favourites, Blocked, Settings }
+        private enum GalleryTab { Gallery, Friends, Favourites, Blocked, Announcements, Settings }
         private GalleryTab currentTab = GalleryTab.Gallery;
 
         // Gallery data
@@ -99,6 +124,21 @@ namespace CharacterSelectPlugin.Windows
         private readonly Dictionary<string, IDalamudTextureWrap?> textureCache = new();
         private DateTime lastTextureCacheCleanup = DateTime.MinValue;
         private readonly Dictionary<string, string?> imagePathCache = new();
+        private bool shouldResetScroll = false;
+        private List<Announcement> announcements = new();
+        private DateTime lastAnnouncementUpdate = DateTime.MinValue;
+        private readonly TimeSpan announcementUpdateInterval = TimeSpan.FromMinutes(5);
+        private DateTime lastSeenAnnouncements = DateTime.MinValue;
+        private string lastErrorMessage = "";
+        private DateTime lastErrorTime = DateTime.MinValue;
+
+        // Report dialog state
+        private bool showReportDialog = false;
+        private string reportTargetCharacterId = "";
+        private string reportTargetCharacterName = "";
+        private ReportReason selectedReportReason = ReportReason.InappropriateContent;
+        private string customReportReason = "";
+        private string reportDetails = "";
 
         private void ClearPerformanceCaches()
         {
@@ -152,7 +192,7 @@ namespace CharacterSelectPlugin.Windows
                 {
                     var profileKey = GetProfileKey(favorite);
                     currentFavoritedProfiles.Add(profileKey);
-                    Plugin.Log.Debug($"[Gallery] Restored favourite: {profileKey} for {ownerKey}");
+                    Plugin.Log.Debug($"[Gallery] Restored favourites");
                 }
             }
 
@@ -328,13 +368,14 @@ namespace CharacterSelectPlugin.Windows
                     GalleryTab newActiveTab = currentTab;
 
                     var tabTextColors = new Vector4[]
-                    {
-        new Vector4(0.4f, 0.8f, 0.8f, 1.0f),  // Cyan - Settings
-        new Vector4(0.4f, 0.8f, 0.4f, 1.0f), // Green - Friends  
-        new Vector4(1.0f, 0.8f, 0.2f, 1.0f), // Yellow - Favourites
-        new Vector4(1.0f, 0.4f, 0.4f, 1.0f), // Red - Blocked
-        new Vector4(1.0f, 0.6f, 0.2f, 1.0f)  // Orange - Settings
-                    };
+{
+    new Vector4(0.4f, 0.8f, 0.8f, 1.0f),  // Cyan - Gallery
+    new Vector4(0.4f, 0.8f, 0.4f, 1.0f), // Green - Friends  
+    new Vector4(1.0f, 0.8f, 0.2f, 1.0f), // Yellow - Favourites
+    new Vector4(1.0f, 0.4f, 0.4f, 1.0f), // Red - Blocked
+    new Vector4(0.8f, 0.4f, 1.0f, 1.0f), // Purple - Announcements
+    new Vector4(1.0f, 1.0f, 1.0f, 1.0f)  // White - Settings
+};
 
                     // Dark tab backgrounds
                     ImGui.PushStyleColor(ImGuiCol.Tab, new Vector4(0.12f, 0.12f, 0.12f, 0.8f));
@@ -393,8 +434,54 @@ namespace CharacterSelectPlugin.Windows
                     }
                     else ImGui.PopStyleColor(1);
 
+                    // Announcements Tab with notification badge
+                    bool hasNewAnnouncements = announcements.Any(a => a.CreatedAt > lastSeenAnnouncements);
+
+                    ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Announcements ? tabTextColors[4] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
+
+                    if (ImGui.BeginTabItem("Announcements"))
+                    {
+                        newActiveTab = GalleryTab.Announcements;
+                        ImGui.PopStyleColor(1);
+
+                        // Draw notification dot AFTER the tab is created
+                        if (hasNewAnnouncements && currentTab != GalleryTab.Announcements)
+                        {
+                            var drawList = ImGui.GetWindowDrawList();
+                            var tabMin = ImGui.GetItemRectMin();
+                            var tabMax = ImGui.GetItemRectMax();
+                            var dotCenter = new Vector2(tabMax.X - (6 * totalScale), tabMin.Y + (6 * totalScale));
+                            drawList.AddCircleFilled(dotCenter, 3 * totalScale, ImGui.GetColorU32(new Vector4(1.0f, 0.3f, 0.3f, 1.0f)));
+                        }
+
+                        // Mark as seen when entering the tab
+                        if (hasNewAnnouncements)
+                        {
+                            lastSeenAnnouncements = DateTime.Now;
+                            plugin.Configuration.LastSeenAnnouncements = lastSeenAnnouncements;
+                            plugin.Configuration.Save();
+                        }
+
+                        DrawAnnouncementsTab(totalScale);
+                        ImGui.EndTabItem();
+                    }
+                    else
+                    {
+                        ImGui.PopStyleColor(1);
+
+                        // Draw notification dot when NOT on the tab
+                        if (hasNewAnnouncements)
+                        {
+                            var drawList = ImGui.GetWindowDrawList();
+                            var tabMin = ImGui.GetItemRectMin();
+                            var tabMax = ImGui.GetItemRectMax();
+                            var dotCenter = new Vector2(tabMax.X - (6 * totalScale), tabMin.Y + (6 * totalScale));
+                            drawList.AddCircleFilled(dotCenter, 3 * totalScale, ImGui.GetColorU32(new Vector4(1.0f, 0.3f, 0.3f, 1.0f)));
+                        }
+                    }
+
                     // Settings Tab
-                    ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Settings ? tabTextColors[4] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Settings ? tabTextColors[5] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
                     if (ImGui.BeginTabItem("Settings"))
                     {
                         newActiveTab = GalleryTab.Settings;
@@ -412,6 +499,8 @@ namespace CharacterSelectPlugin.Windows
                 }
 
                 DrawImagePreview(totalScale);
+                DrawReportDialog(totalScale);
+                DrawErrorMessage();
 
                 // Draw gallery effects
                 float deltaTime = ImGui.GetIO().DeltaTime;
@@ -496,15 +585,6 @@ namespace CharacterSelectPlugin.Windows
 
         private void DrawGalleryTab(float scale)
         {
-            // Apply form styling to controls, doesn't it look snazzy?
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.28f, 0.28f, 0.28f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
-
-            // Search bar and controls
             ImGui.PushID("SearchSection");
             float searchAvailableWidth = ImGui.GetContentRegionAvail().X;
             float clearButtonWidth = 0f;
@@ -527,7 +607,7 @@ namespace CharacterSelectPlugin.Windows
             }
             ImGui.PopID();
 
-            // Sort and Refresh controls...lots of controls, I wonder if that means something?
+            // Sort and Refresh controls
             ImGui.Text("Sort:");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(120 * scale);
@@ -552,8 +632,6 @@ namespace CharacterSelectPlugin.Windows
             {
                 _ = LoadGalleryData();
             }
-
-            ImGui.PopStyleColor(6);
 
             // Show refresh status
             if (lastSuccessfulRefresh != DateTime.MinValue)
@@ -637,39 +715,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.4f, 1.0f), "(Updating...)");
             }
 
-            // Popular tags
-            if (popularTags.Count > 0)
-            {
-                var reallyPopularTags = popularTags.Take(6).ToList();
-                if (reallyPopularTags.Count > 0)
-                {
-                    ImGui.Text("Popular Tags:");
-                    ImGui.SameLine();
-
-                    // Keep original button styling but change text to purple
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.6f, 1.0f, 1.0f)); // Purple text
-
-                    for (int i = 0; i < reallyPopularTags.Count; i++)
-                    {
-                        var tag = reallyPopularTags[i];
-                        if (ImGui.SmallButton(tag))
-                        {
-                            searchFilter = tag;
-                            FilterProfiles();
-                            currentPage = 0;
-                        }
-                        if (i < reallyPopularTags.Count - 1) ImGui.SameLine();
-                    }
-
-                    ImGui.PopStyleColor(4);
-                }
-            }
-
-            ImGui.Separator();
-
             if (isLoading)
             {
                 ImGui.Text("Loading character showcase...");
@@ -690,41 +735,54 @@ namespace CharacterSelectPlugin.Windows
                 return;
             }
 
+            // Popular tags with button styling
+            if (popularTags.Count > 0)
+            {
+                var reallyPopularTags = popularTags.Take(6).ToList();
+                if (reallyPopularTags.Count > 0)
+                {
+                    ImGui.Text("Popular Tags:");
+                    ImGui.SameLine();
+
+                    // Button styling for tags only
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.6f, 1.0f, 1.0f)); // Purple text
+
+                    for (int i = 0; i < reallyPopularTags.Count; i++)
+                    {
+                        var tag = reallyPopularTags[i];
+                        if (ImGui.SmallButton(tag))
+                        {
+                            searchFilter = tag;
+                            FilterProfiles();
+                            currentPage = 0;
+                        }
+                        if (i < reallyPopularTags.Count - 1) ImGui.SameLine();
+                    }
+
+                    ImGui.PopStyleColor(4); // Pop tag button styles
+                }
+            }
+
+            ImGui.Separator();
+
             // Pagination
             int totalPages = (int)Math.Ceiling((double)filteredProfiles.Count / PROFILES_PER_PAGE);
             int startIndex = currentPage * PROFILES_PER_PAGE;
             int endIndex = Math.Min(startIndex + PROFILES_PER_PAGE, filteredProfiles.Count);
 
-            ImGui.Text($"Page {currentPage + 1} of {totalPages} ({filteredProfiles.Count} profiles)");
-            ImGui.SameLine();
-
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
-
-            if (currentPage > 0)
-            {
-                if (ImGui.Button("< Previous"))
-                {
-                    currentPage--;
-                }
-                ImGui.SameLine();
-            }
-
-            if (currentPage < totalPages - 1)
-            {
-                if (ImGui.Button("Next >"))
-                {
-                    currentPage++;
-                }
-            }
-
-            ImGui.PopStyleColor(3);
+            DrawPaginationControls(totalPages, scale, "top");
 
             ImGui.Separator();
 
-            ImGui.BeginChild("GalleryContent", new Vector2(0, 0), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
-
+            ImGui.BeginChild("GalleryContent", new Vector2(0, -20 * scale), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
+            if (shouldResetScroll)
+            {
+                ImGui.SetScrollY(0);
+                shouldResetScroll = false;
+            }
             float availableWidth = ImGui.GetContentRegionAvail().X;
             var style = ImGui.GetStyle();
             float scrollbarWidth = style.ScrollbarSize;
@@ -764,6 +822,7 @@ namespace CharacterSelectPlugin.Windows
             }
 
             ImGui.EndChild();
+            DrawPaginationControls(totalPages, scale, "bottom");
         }
 
         public void RefreshLikeStatesAfterProfileUpdate(string characterName)
@@ -876,12 +935,12 @@ namespace CharacterSelectPlugin.Windows
                 if (profile != null)
                 {
                     downloadedProfiles[characterId] = profile;
-                    Plugin.Log.Debug($"[Gallery] Profile loaded for {characterId}, image URL: {profile.ProfileImageUrl}");
+                    Plugin.Log.Debug($"[Gallery] Profile loaded for {SanitizeForLogging(characterId)}");
                 }
             }
             catch (Exception ex)
             {
-                Plugin.Log.Error($"[Gallery] Failed to load profile for {characterId}: {ex.Message}");
+                Plugin.Log.Error($"[Gallery] Failed to load profile for {SanitizeForLogging(characterId)}: {ex.Message}");
             }
         }
 
@@ -896,6 +955,8 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Text($"Your Favourited Characters ({favoriteSnapshots.Count})");
             ImGui.Separator();
+
+            FavoriteSnapshot? toRemove = null; // Track which item to remove
 
             ImGui.BeginChild("FavouritesContent", new Vector2(0, 0), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
@@ -929,13 +990,22 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.SetCursorPosX(ImGui.GetCursorPosX() + cardPadding);
                 }
 
-                DrawCompactFavoriteCard(favorite, new Vector2(cardWidth, cardHeight), scale);
+                DrawCompactFavoriteCard(favorite, new Vector2(cardWidth, cardHeight), scale, ref toRemove);
                 idx++;
             }
 
             ImGui.EndChild();
+
+            // Remove item AFTER the loop, when it's safe
+            if (toRemove != null)
+            {
+                favoriteSnapshots.Remove(toRemove);
+                plugin.Configuration.FavoriteSnapshots = favoriteSnapshots;
+                plugin.Configuration.Save();
+                EnsureFavoritesFilteredByCSCharacter();
+            }
         }
-        private void DrawCompactFavoriteCard(FavoriteSnapshot favorite, Vector2 cardSize, float scale)
+        private void DrawCompactFavoriteCard(FavoriteSnapshot favorite, Vector2 cardSize, float scale, ref FavoriteSnapshot? toRemove)
         {
             var drawList = ImGui.GetWindowDrawList();
             var cardMin = ImGui.GetCursorScreenPos();
@@ -1051,25 +1121,25 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.3f));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
 
-            if (ImGui.Button($"★##{snapKey}_remove_{favorite.FavoritedAt.Ticks}", new Vector2(20 * scale, 20 * scale)))
-            {
-                favoriteSnapshots.Remove(favorite);
-                plugin.Configuration.FavoriteSnapshots = favoriteSnapshots;
-                plugin.Configuration.Save();
+            bool removeClicked = ImGui.Button($"★##{snapKey}_remove_{favorite.FavoritedAt.Ticks}", new Vector2(20 * scale, 20 * scale));
 
-                EnsureFavoritesFilteredByCSCharacter();
-            }
-            ImGui.PopStyleColor(4);
+            ImGui.PopStyleColor(4); // Always pop styles, even if clicked!
 
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("Remove from favourites");
             }
 
+            // Mark for removal, but DO NOT remove inside the loop!
+            if (removeClicked)
+            {
+                toRemove = favorite;
+            }
+
             ImGui.EndChild();
         }
 
-        private void DrawFavoriteCard(FavoriteSnapshot favorite, Vector2 cardSize, float scale)
+        private void DrawFavoriteCard(FavoriteSnapshot favorite, Vector2 cardSize, float scale, ref FavoriteSnapshot? toRemove)
         {
             var drawList = ImGui.GetWindowDrawList();
             var cardMin = ImGui.GetCursorScreenPos();
@@ -1184,19 +1254,19 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.3f));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
 
-            if (ImGui.Button($"★##{snapKey}_remove_{favorite.FavoritedAt.Ticks}", new Vector2(25 * scale, 25 * scale)))
-            {
-                favoriteSnapshots.Remove(favorite);
-                plugin.Configuration.FavoriteSnapshots = favoriteSnapshots;
-                plugin.Configuration.Save();
+            bool removeClicked = ImGui.Button($"★##{snapKey}_remove_{favorite.FavoritedAt.Ticks}", new Vector2(25 * scale, 25 * scale));
 
-                EnsureFavoritesFilteredByCSCharacter();
-            }
-            ImGui.PopStyleColor(4);
+            ImGui.PopStyleColor(4); // Always pop styles, even if clicked!
 
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("Remove from favourites");
+            }
+
+            // Mark for removal, but DO NOT remove inside the loop!
+            if (removeClicked)
+            {
+                toRemove = favorite;
             }
 
             ImGui.EndChild();
@@ -1398,49 +1468,6 @@ namespace CharacterSelectPlugin.Windows
                         {
                             ImGui.TextColored(new Vector4(1f, 0.6f, 0.4f, 1f), "⚠ Status will be truncated to 2 lines in gallery");
                         }
-
-                        if (!string.IsNullOrEmpty(currentStatus))
-                        {
-                            ImGui.Text("Preview:");
-                            var previewLines = new List<string>();
-                            for (int i = 0; i < Math.Min(statusLines.Length, 2); i++)
-                            {
-                                var line = statusLines[i].Trim();
-                                if (!string.IsNullOrEmpty(line))
-                                {
-                                    if (line.Length > 50)
-                                    {
-                                        line = line.Substring(0, 47) + "...";
-                                    }
-                                    previewLines.Add(line);
-                                }
-                            }
-
-                            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.1f, 0.15f, 0.8f));
-                            ImGui.BeginChild("StatusPreview", new Vector2(-1, 40 * scale), true);
-
-                            // Tell us how you really feel...
-                            for (int i = 0; i < previewLines.Count; i++)
-                            {
-                                var line = previewLines[i];
-                                if (i == 0)
-                                {
-                                    line = $"\"{line}";
-                                }
-                                if (i == previewLines.Count - 1)
-                                {
-                                    line = $"{line}\"";
-                                }
-                                ImGui.TextColored(new Vector4(0.9f, 0.85f, 0.9f, 1.0f), line);
-                            }
-
-                            if (previewLines.Count == 0)
-                            {
-                                ImGui.TextDisabled("(empty status)");
-                            }
-                            ImGui.EndChild();
-                            ImGui.PopStyleColor();
-                        }
                     });
                 }
             }
@@ -1601,6 +1628,99 @@ namespace CharacterSelectPlugin.Windows
             }
 
             return options.Distinct().OrderBy(x => x).ToList();
+        }
+        private void DrawPaginationControls(int totalPages, float scale, string idSuffix = "")
+        {
+            ImGui.Text($"Page {currentPage + 1} of {totalPages} ({filteredProfiles.Count} profiles)");
+            ImGui.SameLine();
+
+            SafeStyleScope(3, 0, () => {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
+
+                bool pageChanged = false;
+
+                // First page button
+                if (currentPage > 0)
+                {
+                    if (ImGui.Button($"First##{idSuffix}"))
+                    {
+                        currentPage = 0;
+                        shouldResetScroll = true;
+                        pageChanged = true;
+                    }
+                    ImGui.SameLine();
+                }
+                else
+                {
+                    ImGui.BeginDisabled();
+                    ImGui.Button($"First##{idSuffix}");
+                    ImGui.EndDisabled();
+                    ImGui.SameLine();
+                }
+
+                // Previous page button
+                if (currentPage > 0)
+                {
+                    if (ImGui.Button($"< Previous##{idSuffix}"))
+                    {
+                        currentPage--;
+                        shouldResetScroll = true;
+                        pageChanged = true;
+                    }
+                    ImGui.SameLine();
+                }
+                else
+                {
+                    ImGui.BeginDisabled();
+                    ImGui.Button($"< Previous##{idSuffix}");
+                    ImGui.EndDisabled();
+                    ImGui.SameLine();
+                }
+
+                // Next page button
+                if (currentPage < totalPages - 1)
+                {
+                    if (ImGui.Button($"Next >##{idSuffix}"))
+                    {
+                        currentPage++;
+                        shouldResetScroll = true;
+                        pageChanged = true;
+                    }
+                    ImGui.SameLine();
+                }
+                else
+                {
+                    ImGui.BeginDisabled();
+                    ImGui.Button($"Next >##{idSuffix}");
+                    ImGui.EndDisabled();
+                    ImGui.SameLine();
+                }
+
+                // Last page button
+                if (currentPage < totalPages - 1)
+                {
+                    if (ImGui.Button($"Last##{idSuffix}"))
+                    {
+                        currentPage = totalPages - 1;
+                        shouldResetScroll = true;
+                        pageChanged = true;
+                    }
+                }
+                else
+                {
+                    ImGui.BeginDisabled();
+                    ImGui.Button($"Last##{idSuffix}");
+                    ImGui.EndDisabled();
+                }
+
+                // Force close any open context menus when page changes
+                if (pageChanged)
+                {
+                    ImGui.CloseCurrentPopup();
+                }
+            });
         }
 
         private void DrawProfileCard(GalleryProfile profile, Vector2 cardSize, float scale)
@@ -1886,15 +2006,24 @@ namespace CharacterSelectPlugin.Windows
                 float lineHeight = ImGui.GetTextLineHeight();
                 int maxAllowedLines = Math.Max(1, Math.Min(2, (int)(availableHeight / lineHeight)));
 
+                // Replace line breaks with spaces for consistent wrapping
+                var cleanedBio = profile.Bio.Replace("\n", " ").Replace("\r", " ");
+
+                // Remove extra spaces
+                while (cleanedBio.Contains("  "))
+                {
+                    cleanedBio = cleanedBio.Replace("  ", " ");
+                }
+
                 var lines = new List<string>();
-                var words = profile.Bio.Split(' ');
+                var words = cleanedBio.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var currentLine = "";
                 int wordIndex = 0;
 
                 foreach (var word in words)
                 {
                     var testLine = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
-                    // Include quotes in width calculations, x(2+3* scale)2 for quotes, we're mathematically inclined here
+                    // Include quotes in width calculations
                     if (ImGui.CalcTextSize($"\"{testLine}\"").X <= bioMaxWidth)
                     {
                         currentLine = testLine;
@@ -1913,7 +2042,6 @@ namespace CharacterSelectPlugin.Windows
                             currentLine = word.Length > 30 ? word.Substring(0, 27) + "..." : word;
                             wordIndex++;
                         }
-                        // As the wise Yoshi P once said, "If you have two lines, you have two lines"
                         if (lines.Count >= Math.Min(2, maxAllowedLines)) break;
                     }
                 }
@@ -1942,7 +2070,7 @@ namespace CharacterSelectPlugin.Windows
                     lines[lastLineIndex] = lastLine + "...";
                 }
 
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + bioMaxWidth);
+                // Render lines with proper spacing
                 for (int i = 0; i < lines.Count; i++)
                 {
                     var line = lines[i];
@@ -1954,46 +2082,14 @@ namespace CharacterSelectPlugin.Windows
                     {
                         line = $"{line}\"";
                     }
+
                     ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.85f, 1.0f), line);
-                }
-                ImGui.PopTextWrapPos();
-            }
 
-            ImGui.EndGroup();
-
-            if (!string.IsNullOrEmpty(profile.Tags))
-            {
-                ImGui.SetCursorPos(new Vector2(12 * scale, imageSize.Y + (18 * scale)));
-
-                float tagsMaxWidth = cardSize.X - (12 * scale) - (70 * scale);
-
-                var tags = profile.Tags.Split(',').Select(t => t.Trim()).Where(t => !string.IsNullOrEmpty(t)).ToList();
-                var displayTags = new List<string>();
-                float currentWidth = 0;
-
-                foreach (var tag in tags)
-                {
-                    var tagText = $"Tags: {string.Join(", ", displayTags.Concat(new[] { tag }))}";
-                    var testWidth = ImGui.CalcTextSize(tagText).X;
-
-                    if (testWidth <= tagsMaxWidth)
+                    // Only add spacing between lines, not after the last one
+                    if (i < lines.Count - 1)
                     {
-                        displayTags.Add(tag);
-                        currentWidth = testWidth;
+                        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (lineHeight * 0.1f)); // Small gap between lines
                     }
-                    else
-                    {
-                        break;
-                    }
-                }
-
-                if (displayTags.Count > 0)
-                {
-                    var finalTagText = displayTags.Count < tags.Count ?
-                        $"Tags: {string.Join(", ", displayTags)}..." :
-                        $"Tags: {string.Join(", ", displayTags)}";
-
-                    ImGui.TextColored(new Vector4(0.8f, 0.6f, 1.0f, 1.0f), finalTagText);
                 }
             }
 
@@ -2021,42 +2117,43 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetCursorPos(new Vector2(cardSize.X - (65 * scale), cardSize.Y - (22 * scale)));
 
             // Like button
-            if (isLiked)
-            {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.85f, 0.3f, 0.4f, 0.2f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.85f, 0.3f, 0.4f, 0.3f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.85f, 0.3f, 0.4f, 1.0f));
-            }
-            else
-            {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.85f, 0.3f, 0.4f, 0.1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.85f, 0.3f, 0.4f, 0.2f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
-            }
-
-            if (ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale)))
-            {
-                bool wasLiked = isLiked;
-                ToggleLike(characterKey);
-
-                Vector2 effectPos = ImGui.GetItemRectMin() + ImGui.GetItemRectSize() / 2;
-                string likeEffectKey = $"like_{characterKey}";
-                if (!galleryLikeEffects.ContainsKey(likeEffectKey))
-                    galleryLikeEffects[likeEffectKey] = new LikeSparkEffect();
-                galleryLikeEffects[likeEffectKey].Trigger(effectPos, !wasLiked);
-
-                if (useStateFreeze)
+            SafeStyleScope(4, 0, () => {
+                if (isLiked)
                 {
-                    var currentLikeKey = $"{csCharacterKey}|{characterKey}";
-                    if (frozenLikedProfiles.ContainsKey(currentLikeKey))
-                        frozenLikedProfiles.Remove(currentLikeKey);
-                    else
-                        frozenLikedProfiles[currentLikeKey] = true;
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.85f, 0.3f, 0.4f, 0.2f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.85f, 0.3f, 0.4f, 0.3f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.85f, 0.3f, 0.4f, 1.0f));
                 }
-            }
-            ImGui.PopStyleColor(4);
+                else
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.85f, 0.3f, 0.4f, 0.1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.85f, 0.3f, 0.4f, 0.2f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
+                }
+
+                if (ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale)))
+                {
+                    bool wasLiked = isLiked;
+                    ToggleLike(characterKey);
+
+                    Vector2 effectPos = ImGui.GetItemRectMin() + ImGui.GetItemRectSize() / 2;
+                    string likeEffectKey = $"like_{characterKey}";
+                    if (!galleryLikeEffects.ContainsKey(likeEffectKey))
+                        galleryLikeEffects[likeEffectKey] = new LikeSparkEffect();
+                    galleryLikeEffects[likeEffectKey].Trigger(effectPos, !wasLiked);
+
+                    if (useStateFreeze)
+                    {
+                        var currentLikeKey = $"{csCharacterKey}|{characterKey}";
+                        if (frozenLikedProfiles.ContainsKey(currentLikeKey))
+                            frozenLikedProfiles.Remove(currentLikeKey);
+                        else
+                            frozenLikedProfiles[currentLikeKey] = true;
+                    }
+                }
+            });
 
             // Like count
             ImGui.SameLine();
@@ -2072,22 +2169,29 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (2f * scale));
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() - (1f * scale));
 
-            if (isFavorited)
-            {
+            // Favourite button
+            bool favoriteClicked = false;
+            SafeStyleScope(4, 0, () => {
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.2f, 0.2f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.3f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
-            }
-            else
-            {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.2f, 0.1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.2f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
-            }
 
-            if (ImGui.Button($"★##{characterKey}_fav", new Vector2(16 * scale, 18 * scale)))
+                if (isFavorited)
+                {
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.2f, 0.2f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.3f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
+                }
+                else
+                {
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.2f, 0.1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.2f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
+                }
+
+                favoriteClicked = ImGui.Button($"★##{characterKey}_fav", new Vector2(16 * scale, 18 * scale));
+            });
+
+            // Handle the click after styles are safely popped
+            if (favoriteClicked)
             {
                 bool wasFavorited = isFavorited;
                 ToggleBookmark(profile);
@@ -2106,7 +2210,6 @@ namespace CharacterSelectPlugin.Windows
                         frozenFavoritedProfiles.Add(characterKey);
                 }
             }
-            ImGui.PopStyleColor(4);
 
             if (ImGui.IsItemHovered())
             {
@@ -2197,6 +2300,21 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.PopStyleColor();
                     ImGui.Spacing();
 
+                    // Report option with icon
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.6f, 0.2f, 1.0f));
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.Text("\uf071"); // Warning triangle icon
+                    ImGui.PopFont();
+                    ImGui.PopStyleColor();
+                    ImGui.SameLine(0, 4 * scale);
+
+                    if (ImGui.Selectable("Report this profile"))
+                    {
+                        OpenReportDialog(GetProfileKey(profile), profile.CharacterName);
+                    }
+
+                    ImGui.Spacing();
+
                     // Block option with icon
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.3f, 0.3f, 1.0f));
                     ImGui.PushFont(UiBuilder.IconFont);
@@ -2221,6 +2339,7 @@ namespace CharacterSelectPlugin.Windows
             }
             ImGui.EndChild();
         }
+
 
         private bool IsCharacterRecentlyActive(GalleryProfile profile)
         {
@@ -2424,7 +2543,6 @@ namespace CharacterSelectPlugin.Windows
 
                         File.SetLastAccessTime(localPath, DateTime.Now);
 
-                        Plugin.Log.Debug($"[Gallery] Downloaded image: {imageUrl}");
                     }
                     catch (Exception ex)
                     {
@@ -2484,7 +2602,7 @@ namespace CharacterSelectPlugin.Windows
             bool isCurrentlyLiked = existingLikerCharacter != null;
 
             Plugin.Log.Info($"[Like Debug] CS+ Character: {csCharacterKey}");
-            Plugin.Log.Info($"[Like Debug] CharacterId passed: {characterId}");
+            Plugin.Log.Info($"[Like Debug] CharacterId passed: {SanitizeForLogging(characterId)}");
             Plugin.Log.Info($"[Like Debug] Target Profile Name: {stableLikeTarget}");
             Plugin.Log.Info($"[Like Debug] Currently Liked by: {existingLikerCharacter ?? "None"}");
             Plugin.Log.Info($"[Like Debug] Action: {(isCurrentlyLiked ? "Unlike" : "Like")}");
@@ -2516,7 +2634,7 @@ namespace CharacterSelectPlugin.Windows
 
                     request.Headers.Add("X-Character-Key", csCharacterKey);
 
-                    Plugin.Log.Info($"[Like Debug] HTTP {method} to: {endpoint}");
+                    Plugin.Log.Info($"[Like Debug] HTTP {method} to gallery like endpoint");
                     Plugin.Log.Info($"[Like Debug] Using CS+ Character: {csCharacterKey}");
 
                     var response = await httpClient.SendAsync(request);
@@ -2599,7 +2717,7 @@ namespace CharacterSelectPlugin.Windows
             if (existing != null)
             {
                 favoriteSnapshots.Remove(existing);
-                Plugin.Log.Debug($"[Gallery] Removed favourite: {galleryKey} for {ownerKey}");
+                Plugin.Log.Debug($"[Gallery] Removed favourite: {SanitizeForLogging(galleryKey)} for {ownerKey}");
             }
             else
             {
@@ -2615,7 +2733,7 @@ namespace CharacterSelectPlugin.Windows
 
                 if (alreadyExists)
                 {
-                    Plugin.Log.Warning($"[Gallery] Attempted to add duplicate favourite: {galleryKey} for {ownerKey}");
+                    Plugin.Log.Warning($"[Gallery] Attempted to add duplicate favourite: {SanitizeForLogging(galleryKey)} for {ownerKey}");
                     return;
                 }
 
@@ -2625,7 +2743,7 @@ namespace CharacterSelectPlugin.Windows
                                )
                                .Replace("/", "_")
                                .Replace("+", "-");
-                var fileName = $"fav_{ownerKey}_{galleryKey}_{hash}.png";
+                var fileName = $"fav_{ownerKey}_{SanitizeForLogging(galleryKey)}_{hash}.png";
                 var localPath = Path.Combine(
                                     Plugin.PluginInterface.GetPluginConfigDirectory(),
                                     fileName
@@ -2649,7 +2767,7 @@ namespace CharacterSelectPlugin.Windows
                 };
 
                 favoriteSnapshots.Add(snap);
-                Plugin.Log.Debug($"[Gallery] Added favourite: {galleryKey} for {ownerKey}");
+                Plugin.Log.Debug($"[Gallery] Added favourite: {SanitizeForLogging(galleryKey)} for {ownerKey}");
 
                 _ = DownloadFavoriteImageAsync(profile.ProfileImageUrl!, localPath)
                        .ContinueWith(_ => plugin.Configuration.Save());
@@ -3353,22 +3471,29 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (2f * scale));
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() - (1f * scale));
 
+            // Always push exactly 4 style colors
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+
             if (isFavorited)
             {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.2f, 0.2f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.3f));
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
             }
             else
             {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.2f, 0.1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.7f, 0.2f, 0.2f));
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
             }
 
-            if (ImGui.Button($"★##{characterKey}_fav", new Vector2(16 * scale, 18 * scale)))
+            bool favoriteClicked = ImGui.Button($"★##{characterKey}_fav", new Vector2(16 * scale, 18 * scale));
+
+            // Always pop exactly 4 style colors
+            ImGui.PopStyleColor(4);
+
+            // Handle the click after popping colors
+            if (favoriteClicked)
             {
                 bool wasFavorited = isFavorited;
                 ToggleBookmark(profile);
@@ -3387,7 +3512,6 @@ namespace CharacterSelectPlugin.Windows
                         frozenFavoritedProfiles.Add(characterKey);
                 }
             }
-            ImGui.PopStyleColor(4);
 
             if (ImGui.IsItemHovered())
             {
@@ -3403,6 +3527,21 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.BeginPopupContextItem($"FriendContextMenu_{characterKey}"))
             {
                 var friendPlayerKey = ExtractPhysicalCharacterFromId(profile.CharacterId);
+                
+                // Report option with icon  
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.6f, 0.2f, 1.0f));
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.Text("\uf071"); // Warning triangle icon
+                ImGui.PopFont();
+                ImGui.PopStyleColor();
+                ImGui.SameLine(0, 4 * scale);
+
+                if (ImGui.Selectable("Report this profile"))
+                {
+                    OpenReportDialog(GetProfileKey(profile), profile.CharacterName);
+                }
+
+                ImGui.Spacing();
 
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.3f, 0.3f, 1.0f));
                 ImGui.PushFont(UiBuilder.IconFont);
@@ -3648,7 +3787,6 @@ namespace CharacterSelectPlugin.Windows
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
-                    Plugin.Log.Info($"Gallery response: {json}");
                     var rawProfiles = JsonConvert.DeserializeObject<List<GalleryProfile>>(json) ?? new();
 
                     // Get user's main character setting
@@ -3848,7 +3986,7 @@ namespace CharacterSelectPlugin.Windows
         {
             if (loadingProfiles.Contains(characterId))
             {
-                Plugin.Log.Debug($"[Gallery] Already loading profile for {characterId}, skipping");
+                Plugin.Log.Debug($"[Gallery] Already loading profile for {SanitizeForLogging(characterId)}, skipping");
                 return;
             }
 
@@ -3863,16 +4001,16 @@ namespace CharacterSelectPlugin.Windows
                 if (profile != null && !cts.Token.IsCancellationRequested)
                 {
                     downloadedProfiles[characterId] = profile;
-                    Plugin.Log.Debug($"[Gallery] Profile loaded for {characterId}");
+                    Plugin.Log.Debug($"[Gallery] Profile loaded for {SanitizeForLogging(characterId)}");
                 }
             }
             catch (OperationCanceledException)
             {
-                Plugin.Log.Warning($"[Gallery] Profile loading timed out for {characterId}");
+                Plugin.Log.Warning($"[Gallery] Profile loading timed out for {SanitizeForLogging(characterId)}");
             }
             catch (Exception ex)
             {
-                Plugin.Log.Error($"[Gallery] Failed to load profile for {characterId}: {ex.Message}");
+                Plugin.Log.Error($"[Gallery] Failed to load profile for {SanitizeForLogging(characterId)}: {ex.Message}");
             }
             finally
             {
@@ -3999,7 +4137,6 @@ namespace CharacterSelectPlugin.Windows
                 if (likeKey.StartsWith(csCharacterKey + "|"))
                 {
                     likedProfiles[likeKey] = true;
-                    Plugin.Log.Debug($"[Gallery] Restored like: {likeKey}");
                 }
             }
 
@@ -4013,7 +4150,9 @@ namespace CharacterSelectPlugin.Windows
 
             if (hasChanged)
             {
-                Plugin.Log.Info($"[Gallery] Character changed from {lastActiveCharacter?.Name ?? "null"} to {currentActiveCharacter?.Name ?? "null"}");
+                var lastCharName = lastActiveCharacter?.Name ?? "null";
+                var currentCharName = currentActiveCharacter?.Name ?? "null";
+                Plugin.Log.Info($"[Gallery] Character changed from {lastCharName} to {currentCharName}");
 
                 downloadedProfiles.Clear();
                 LoadBlockedProfiles();
@@ -4079,7 +4218,7 @@ namespace CharacterSelectPlugin.Windows
         private void BlockProfile(GalleryProfile profile)
         {
             var profileKey = GetProfileKey(profile);
-            string mainCharacterName = profile.CharacterName ?? profileKey;
+            string mainCharacterName = profile.CharacterName ?? SanitizeForLogging(profileKey);
 
             if (!blockedProfiles.Contains(mainCharacterName))
             {
@@ -4164,6 +4303,336 @@ namespace CharacterSelectPlugin.Windows
 
             return null;
         }
+        private async Task LoadAnnouncements()
+        {
+            try
+            {
+                using var http = new HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(10);
+                var response = await http.GetAsync("https://character-select-profile-server-production.up.railway.app/announcements");
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var serverAnnouncements = JsonConvert.DeserializeObject<List<Announcement>>(json) ?? new();
+                    announcements = serverAnnouncements.OrderByDescending(a => a.CreatedAt).ToList();
+                    lastAnnouncementUpdate = DateTime.Now;
+                    Plugin.Log.Debug($"[Gallery] Loaded {announcements.Count} announcements");
+                }
+                else
+                {
+                    Plugin.Log.Warning($"[Gallery] Failed to load announcements: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Gallery] Error loading announcements: {ex.Message}");
+            }
+        }
+
+        // Submit a report to the server
+        private async Task SubmitReport(string characterId, string characterName, ReportReason reason, string details, string customReason = "")
+        {
+            try
+            {
+                var activeCharacter = GetActiveCharacter();
+                if (activeCharacter == null)
+                {
+                    Plugin.ChatGui.PrintError("[Gallery] No active character found for reporting");
+                    return;
+                }
+
+                string reporterName = activeCharacter.LastInGameName ?? activeCharacter.Name;
+                string reasonText = reason == ReportReason.Other ? customReason : GetReportReasonText(reason);
+
+                var reportRequest = new ReportRequest
+                {
+                    ReportedCharacterId = characterId,
+                    ReportedCharacterName = characterName,
+                    ReporterCharacter = reporterName,
+                    Reason = reasonText,
+                    Details = details
+                };
+
+                using var http = new HttpClient();
+                var json = JsonConvert.SerializeObject(reportRequest);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                var response = await http.PostAsync(
+                    "https://character-select-profile-server-production.up.railway.app/reports",
+                    content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    Plugin.ChatGui.Print($"[Gallery] Report submitted successfully for {characterName}");
+
+                    // Close the report dialog
+                    showReportDialog = false;
+                    reportTargetCharacterId = "";
+                    reportTargetCharacterName = "";
+                    reportDetails = "";
+                    customReportReason = "";
+                }
+                else
+                {
+                    Plugin.ChatGui.PrintError($"[Gallery] Failed to submit report: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Gallery] Error submitting report: {ex.Message}");
+                Plugin.ChatGui.PrintError("[Gallery] Failed to submit report due to network error");
+            }
+        }
+
+        // Get user-friendly text for report reasons
+        private string GetReportReasonText(ReportReason reason)
+        {
+            return reason switch
+            {
+                ReportReason.InappropriateContent => "Inappropriate Content",
+                ReportReason.Spam => "Spam",
+                ReportReason.MaliciousLinks => "Malicious Links",
+                ReportReason.Other => "Other",
+                _ => "Other"
+            };
+        }
+
+        // Open the report dialog for a specific character
+        private void OpenReportDialog(string characterId, string characterName)
+        {
+            reportTargetCharacterId = characterId;
+            reportTargetCharacterName = characterName;
+            selectedReportReason = ReportReason.InappropriateContent;
+            customReportReason = "";
+            reportDetails = "";
+            showReportDialog = true;
+        }
+
+        // Draw the report dialog popup
+        private void DrawReportDialog(float scale)
+        {
+            if (!showReportDialog || string.IsNullOrEmpty(reportTargetCharacterName))
+                return;
+
+            ImGui.SetNextWindowSize(new Vector2(500 * scale, 400 * scale), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowPos(ImGui.GetMainViewport().GetCenter(), ImGuiCond.FirstUseEver, new Vector2(0.5f, 0.5f));
+
+            // Dark styling for report dialog
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.TitleBg, new Vector4(0.8f, 0.3f, 0.3f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, new Vector4(0.9f, 0.4f, 0.4f, 1.0f));
+
+            if (ImGui.Begin($"Report Profile: {reportTargetCharacterName}##ReportDialog", ref showReportDialog,
+                ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.NoCollapse))
+            {
+                ImGui.Text($"You are reporting: {reportTargetCharacterName}");
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                // Reason selection
+                ImGui.Text("Reason for report:");
+                ImGui.SetNextItemWidth(-1);
+
+                string[] reasonOptions = Enum.GetValues<ReportReason>()
+                    .Select(GetReportReasonText)
+                    .ToArray();
+
+                int selectedIndex = (int)selectedReportReason;
+                if (ImGui.Combo("##ReportReason", ref selectedIndex, reasonOptions, reasonOptions.Length))
+                {
+                    selectedReportReason = (ReportReason)selectedIndex;
+                }
+
+                // Custom reason input if "Other" is selected
+                if (selectedReportReason == ReportReason.Other)
+                {
+                    ImGui.Spacing();
+                    ImGui.Text("Please specify:");
+                    ImGui.SetNextItemWidth(-1);
+                    ImGui.InputText("##CustomReason", ref customReportReason, 100);
+                }
+
+                ImGui.Spacing();
+                ImGui.Text("Additional details (optional):");
+                ImGui.SetNextItemWidth(-1);
+                ImGui.InputTextMultiline("##ReportDetails", ref reportDetails, 500, new Vector2(-1, 100 * scale));
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                // Buttons
+                bool canSubmit = selectedReportReason != ReportReason.Other || !string.IsNullOrWhiteSpace(customReportReason);
+
+                if (!canSubmit)
+                {
+                    ImGui.BeginDisabled();
+                }
+
+                if (ImGui.Button("Submit Report", new Vector2(120 * scale, 0)))
+                {
+                    _ = SubmitReport(reportTargetCharacterId, reportTargetCharacterName, selectedReportReason, reportDetails, customReportReason);
+                }
+
+                if (!canSubmit)
+                {
+                    ImGui.EndDisabled();
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    {
+                        ImGui.SetTooltip("Please specify a reason when selecting 'Other'");
+                    }
+                }
+
+                ImGui.SameLine();
+                if (ImGui.Button("Cancel", new Vector2(120 * scale, 0)))
+                {
+                    showReportDialog = false;
+                }
+
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f),
+                    "Reports are reviewed by administrators. False reports may result in restrictions.");
+            }
+            ImGui.End();
+
+            ImGui.PopStyleColor(3);
+        }
+
+        // Draw the announcements tab
+        private void DrawAnnouncementsTab(float scale)
+        {
+            // Auto-load announcements if needed
+            if (DateTime.Now - lastAnnouncementUpdate > announcementUpdateInterval)
+            {
+                _ = LoadAnnouncements();
+            }
+
+            if (announcements.Count == 0)
+            {
+                ImGui.Text("No announcements at this time.");
+                if (ImGui.Button("Refresh"))
+                {
+                    _ = LoadAnnouncements();
+                }
+                return;
+            }
+
+            ImGui.Text($"Announcements ({announcements.Count})");
+            if (ImGui.Button("Refresh"))
+            {
+                _ = LoadAnnouncements();
+            }
+
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            ImGui.BeginChild("AnnouncementsContent", new Vector2(0, 0), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
+
+            foreach (var announcement in announcements)
+            {
+                DrawAnnouncementCard(announcement, scale);
+                ImGui.Spacing();
+            }
+
+            ImGui.EndChild();
+        }
+
+        // Draw individual announcement card
+        private void DrawAnnouncementCard(Announcement announcement, float scale)
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            var cardMin = ImGui.GetCursorScreenPos();
+            var cardWidth = ImGui.GetContentRegionAvail().X - (20 * scale);
+            var cardHeight = 120 * scale; // Dynamic height based on content
+
+            // Determine colors based on announcement type
+            Vector4 accentColor = announcement.Type switch
+            {
+                "warning" => new Vector4(1.0f, 0.6f, 0.2f, 1.0f), // Orange
+                "maintenance" => new Vector4(0.8f, 0.3f, 0.3f, 1.0f), // Red
+                "update" => new Vector4(0.3f, 0.8f, 0.3f, 1.0f), // Green
+                _ => new Vector4(0.3f, 0.7f, 1.0f, 1.0f) // Blue for info
+            };
+
+            var cardMax = cardMin + new Vector2(cardWidth, cardHeight);
+            var bgColor = new Vector4(0.08f, 0.08f, 0.12f, 0.95f);
+            var borderColor = new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.6f);
+
+            // Draw card background
+            drawList.AddRectFilled(cardMin, cardMax, ImGui.GetColorU32(bgColor), 8f * scale);
+            drawList.AddRectFilled(cardMin, cardMin + new Vector2(6f * scale, cardHeight), ImGui.GetColorU32(accentColor), 8f * scale, ImDrawFlags.RoundCornersLeft);
+            drawList.AddRect(cardMin, cardMax, ImGui.GetColorU32(borderColor), 8f * scale, ImDrawFlags.None, 1f * scale);
+
+            ImGui.BeginChild($"announcement_{announcement.Id}", new Vector2(cardWidth, cardHeight), false);
+
+            // Header with title and type
+            ImGui.SetCursorPos(new Vector2(15 * scale, 10 * scale));
+            ImGui.PushStyleColor(ImGuiCol.Text, accentColor);
+            ImGui.PushFont(UiBuilder.DefaultFont);
+            ImGui.Text(announcement.Title);
+            ImGui.PopFont();
+            ImGui.PopStyleColor();
+
+            // Type label - properly aligned to right edge
+            string typeText = announcement.Type.ToUpper();
+            var typeTextSize = ImGui.CalcTextSize(typeText);
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(cardWidth - typeTextSize.X - (15 * scale)); // 15 = right padding
+            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), typeText);
+
+            // Message
+            ImGui.SetCursorPos(new Vector2(15 * scale, 35 * scale));
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + cardWidth - (30 * scale));
+            ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), announcement.Message);
+            ImGui.PopTextWrapPos();
+
+            // Date
+            ImGui.SetCursorPos(new Vector2(15 * scale, cardHeight - (25 * scale)));
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f),
+                $"Posted: {announcement.CreatedAt:MMM dd, yyyy}");
+
+            ImGui.EndChild();
+        }
+        private string SanitizeForLogging(string characterId)
+        {
+            // Extract just the CS+ character name from characterId format: "CSName_PhysicalName@Server"
+            var underscoreIndex = characterId.IndexOf('_');
+            if (underscoreIndex > 0)
+            {
+                return characterId.Substring(0, underscoreIndex);
+            }
+
+            // If no underscore, might be just a character name already
+            return characterId.Contains('@') ? characterId.Split('@')[0] : characterId;
+        }
+        private void SafeStyleScope(int colorCount, int varCount, Action action)
+        {
+            try
+            {
+                action();
+            }
+            finally
+            {
+                if (colorCount > 0) ImGui.PopStyleColor(colorCount);
+                if (varCount > 0) ImGui.PopStyleVar(varCount);
+            }
+        }
+
+        private void ShowErrorMessage(string message)
+        {
+            lastErrorMessage = message;
+            lastErrorTime = DateTime.Now;
+        }
+
+        private void DrawErrorMessage()
+        {
+            if (!string.IsNullOrEmpty(lastErrorMessage) && DateTime.Now - lastErrorTime < TimeSpan.FromSeconds(5))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.4f, 0.4f, 1.0f));
+                ImGui.Text($"⚠ {lastErrorMessage}");
+                ImGui.PopStyleColor();
+            }
+        }
 
         public void EmergencyStop()
         {
@@ -4185,6 +4654,11 @@ namespace CharacterSelectPlugin.Windows
             EnsureLikesFilteredByCSCharacter();
             EnsureFavoritesFilteredByCSCharacter();
             _ = LoadGalleryData();
+            _ = LoadAnnouncements();
+            if (plugin.Configuration.LastSeenAnnouncements != DateTime.MinValue)
+            {
+                lastSeenAnnouncements = plugin.Configuration.LastSeenAnnouncements;
+            }
         }
 
         public override void OnClose()

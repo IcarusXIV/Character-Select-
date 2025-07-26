@@ -29,30 +29,21 @@ namespace CharacterSelectPlugin
         private readonly IChatGui chatGui;
         private readonly IClientState clientState;
         private readonly IPluginLog log;
+        private readonly ICondition condition;
 
-        // PrefPro Inspo
+        // Hook delegates - Lua hooks for they/them support
         private delegate int GetStringPrototype(RaptureTextModule* textModule, byte* text, void* decoder, Utf8String* stringStruct);
         private Hook<GetStringPrototype>? getStringHook;
 
         private delegate byte GetLuaVarPrototype(nint poolBase, nint a2, nint a3);
         private Hook<GetLuaVarPrototype>? getLuaVarHook;
 
-        // Lua function hooks
-        public delegate nuint LuaFunction(nuint a1);
-        private Hook<LuaFunction>? getSexHook;
-        private Hook<LuaFunction>? getRaceHook;
-        private Hook<LuaFunction>? getTribeHook;
-
-        // Pointers to Lua data
-        private byte* luaSexPtr;
-        private byte* luaRacePtr;
-        private byte* luaTribePtr;
-
-        // Name replacement byte patterns
+        // Name replacement byte patterns (from PrefPro)
         private static readonly byte[] FullNameBytes = { 0x02, 0x29, 0x03, 0xEB, 0x02, 0x03 };
         private static readonly byte[] FirstNameBytes = { 0x02, 0x2C, 0x0D, 0xFF, 0x07, 0x02, 0x29, 0x03, 0xEB, 0x02, 0x03, 0xFF, 0x02, 0x20, 0x02, 0x03 };
         private static readonly byte[] LastNameBytes = { 0x02, 0x2C, 0x0D, 0xFF, 0x07, 0x02, 0x29, 0x03, 0xEB, 0x02, 0x03, 0xFF, 0x02, 0x20, 0x03, 0x03 };
 
+        // Comprehensive verb conjugation patterns for they/them
         private static readonly Dictionary<Regex, string> ConjugationPatterns = new Dictionary<Regex, string>
         {
             { new Regex(@"\bthey\s+(finds)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they find" },
@@ -81,15 +72,12 @@ namespace CharacterSelectPlugin
             { new Regex(@"\bthey\s+(speaks)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they speak" },
             { new Regex(@"\bthey\s+(tells)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they tell" },
             { new Regex(@"\bthey\s+(asks)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they ask" },
-            { new Regex(@"\bthey\s+(answers)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they answer" },
             { new Regex(@"\bthey\s+(works)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they work" },
             { new Regex(@"\bthey\s+(lives)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they live" },
             { new Regex(@"\bthey\s+(runs)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they run" },
             { new Regex(@"\bthey\s+(walks)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they walk" },
             { new Regex(@"\bthey\s+(stands)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they stand" },
             { new Regex(@"\bthey\s+(sits)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they sit" },
-            { new Regex(@"\bthey\s+(eats)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they eat" },
-            { new Regex(@"\bthey\s+(drinks)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they drink" },
             { new Regex(@"\bthey\s+(travels)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they travel" },
             { new Regex(@"\bthey\s+(arrives)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they arrive" },
             { new Regex(@"\bthey\s+(leaves)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they leave" },
@@ -137,18 +125,23 @@ namespace CharacterSelectPlugin
             { new Regex(@"\bthey\s+(journeys)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they journey" },
             { new Regex(@"\bthey's\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), "they're" }
         };
+
+        // Pre-compiled regex patterns for better performance
         private static readonly Regex HeRegex = new Regex(@"\bhe\b", RegexOptions.Compiled);
         private static readonly Regex HeCapitalRegex = new Regex(@"\bHe\b", RegexOptions.Compiled);
         private static readonly Regex SheRegex = new Regex(@"\bshe\b", RegexOptions.Compiled);
         private static readonly Regex SheCapitalRegex = new Regex(@"\bShe\b", RegexOptions.Compiled);
         private static readonly Regex HisRegex = new Regex(@"\bhis\b", RegexOptions.Compiled);
         private static readonly Regex HisCapitalRegex = new Regex(@"\bHis\b", RegexOptions.Compiled);
+        private static readonly Regex LadRegex = new Regex(@"\blad\b", RegexOptions.Compiled);
+        private static readonly Regex LadCapitalRegex = new Regex(@"\bLad\b", RegexOptions.Compiled);
+        // Context-aware "her" patterns - distinguishes possessive vs object
         private static readonly Regex HerPossessiveRegex = new Regex(@"\bher(?=\s+(?!a\b|an\b|the\b)[A-Z][a-z]+)", RegexOptions.Compiled);
         private static readonly Regex HerPossessiveCapitalRegex = new Regex(@"\bHer(?=\s+(?!a\b|an\b|the\b)[A-Z][a-z]+)", RegexOptions.Compiled);
         private static readonly Regex HerPossessiveLowerRegex = new Regex(@"\bher(?=\s+(?!a\b|an\b|the\b|to\b|and\b|or\b|but\b)[a-z]+)", RegexOptions.Compiled);
-        private static readonly Regex HerPossessiveLowerCapitalRegex = new Regex(@"\bHer(?=\s+(?!a\b|an\b|the\b|to\b|and\b|or\b|but\b)[a-z]+)", RegexOptions.Compiled);
-        private static readonly Regex HerRegex = new Regex(@"\bher\b", RegexOptions.Compiled);
-        private static readonly Regex HerCapitalRegex = new Regex(@"\bHer\b", RegexOptions.Compiled);
+        private static readonly Regex HerObjectRegex = new Regex(@"\bher\b", RegexOptions.Compiled);
+        private static readonly Regex HerObjectCapitalRegex = new Regex(@"\bHer\b", RegexOptions.Compiled);
+
         private static readonly Regex HimRegex = new Regex(@"\bhim\b", RegexOptions.Compiled);
         private static readonly Regex HimCapitalRegex = new Regex(@"\bHim\b", RegexOptions.Compiled);
         private static readonly Regex HimselfRegex = new Regex(@"\bhimself\b", RegexOptions.Compiled);
@@ -157,33 +150,37 @@ namespace CharacterSelectPlugin
         private static readonly Regex HerselfCapitalRegex = new Regex(@"\bHerself\b", RegexOptions.Compiled);
 
         // Title regex patterns
-        private static readonly Regex LadyRegex = new Regex(@"\blady\b", RegexOptions.Compiled);
-        private static readonly Regex LadyCapitalRegex = new Regex(@"\bLady\b", RegexOptions.Compiled);
-        private static readonly Regex MistressRegex = new Regex(@"\bmistress\b", RegexOptions.Compiled);
-        private static readonly Regex MistressCapitalRegex = new Regex(@"\bMistress\b", RegexOptions.Compiled);
-        private static readonly Regex DameRegex = new Regex(@"\bdame\b", RegexOptions.Compiled);
-        private static readonly Regex DameCapitalRegex = new Regex(@"\bDame\b", RegexOptions.Compiled);
-        private static readonly Regex MadamRegex = new Regex(@"\bmadam\b", RegexOptions.Compiled);
-        private static readonly Regex MadamCapitalRegex = new Regex(@"\bMadam\b", RegexOptions.Compiled);
         private static readonly Regex WomanRegex = new Regex(@"\bwoman\b", RegexOptions.Compiled);
         private static readonly Regex WomanCapitalRegex = new Regex(@"\bWoman\b", RegexOptions.Compiled);
+        private static readonly Regex ManRegex = new Regex(@"\bman\b", RegexOptions.Compiled);
+        private static readonly Regex ManCapitalRegex = new Regex(@"\bMan\b", RegexOptions.Compiled);
+        private static readonly Regex LadyRegex = new Regex(@"\blady\b", RegexOptions.Compiled);
+        private static readonly Regex LadyCapitalRegex = new Regex(@"\bLady\b", RegexOptions.Compiled);
+        private static readonly Regex SirRegex = new Regex(@"\bsir\b", RegexOptions.Compiled);
+        private static readonly Regex SirCapitalRegex = new Regex(@"\bSir\b", RegexOptions.Compiled);
+        private static readonly Regex MistressRegex = new Regex(@"\bmistress\b", RegexOptions.Compiled);
+        private static readonly Regex MistressCapitalRegex = new Regex(@"\bMistress\b", RegexOptions.Compiled);
+        private static readonly Regex MasterRegex = new Regex(@"\bmaster\b", RegexOptions.Compiled);
+        private static readonly Regex MasterCapitalRegex = new Regex(@"\bMaster\b", RegexOptions.Compiled);
         private static readonly Regex GirlRegex = new Regex(@"\bgirl\b", RegexOptions.Compiled);
         private static readonly Regex GirlCapitalRegex = new Regex(@"\bGirl\b", RegexOptions.Compiled);
+        private static readonly Regex BoyRegex = new Regex(@"\bboy\b", RegexOptions.Compiled);
+        private static readonly Regex BoyCapitalRegex = new Regex(@"\bBoy\b", RegexOptions.Compiled);
+        private static readonly Regex MadamRegex = new Regex(@"\bmadam\b", RegexOptions.Compiled);
+        private static readonly Regex MadamCapitalRegex = new Regex(@"\bMadam\b", RegexOptions.Compiled);
+        private static readonly Regex DameRegex = new Regex(@"\bdame\b", RegexOptions.Compiled);
+        private static readonly Regex DameCapitalRegex = new Regex(@"\bDame\b", RegexOptions.Compiled);
         private static readonly Regex LassRegex = new Regex(@"\blass\b", RegexOptions.Compiled);
         private static readonly Regex LassCapitalRegex = new Regex(@"\bLass\b", RegexOptions.Compiled);
         private static readonly Regex MaidenRegex = new Regex(@"\bmaiden\b", RegexOptions.Compiled);
         private static readonly Regex MaidenCapitalRegex = new Regex(@"\bMaiden\b", RegexOptions.Compiled);
-        // Male title regex patterns
-        private static readonly Regex SirRegex = new Regex(@"\bsir\b", RegexOptions.Compiled);
-        private static readonly Regex SirCapitalRegex = new Regex(@"\bSir\b", RegexOptions.Compiled);
-        private static readonly Regex LordRegex = new Regex(@"\blord\b", RegexOptions.Compiled);
-        private static readonly Regex LordCapitalRegex = new Regex(@"\bLord\b", RegexOptions.Compiled);
-        private static readonly Regex ManRegex = new Regex(@"\bman\b", RegexOptions.Compiled);
-        private static readonly Regex ManCapitalRegex = new Regex(@"\bMan\b", RegexOptions.Compiled);
-
+        private static readonly Regex BrotherRegex = new Regex(@"\bbrother\b", RegexOptions.Compiled);
+        private static readonly Regex BrotherCapitalRegex = new Regex(@"\bBrother\b", RegexOptions.Compiled);
+        private static readonly Regex SisterRegex = new Regex(@"\bsister\b", RegexOptions.Compiled);
+        private static readonly Regex SisterCapitalRegex = new Regex(@"\bSister\b", RegexOptions.Compiled);
 
         public NPCDialogueProcessor(Plugin plugin, ISigScanner sigScanner, IGameInteropProvider gameInteropProvider,
-            IChatGui chatGui, IClientState clientState, IPluginLog log)
+            IChatGui chatGui, IClientState clientState, IPluginLog log, ICondition condition)
         {
             this.plugin = plugin;
             this.sigScanner = sigScanner;
@@ -191,11 +188,12 @@ namespace CharacterSelectPlugin
             this.chatGui = chatGui;
             this.clientState = clientState;
             this.log = log;
+            this.condition = condition;
 
             try
             {
                 InitializeHooks();
-                log.Info("[Dialogue] Enhanced pronoun processor initialized with multiple hooks.");
+                log.Info("[Dialogue] Multi-pronoun dialogue processor initialized.");
             }
             catch (Exception ex)
             {
@@ -205,39 +203,20 @@ namespace CharacterSelectPlugin
 
         private void InitializeHooks()
         {
-            // Text decoder hook
+            // Main text processing hook (PrefPro my beloved)
             var getStringSignature = "48 89 5C 24 ?? 48 89 6C 24 ?? 48 89 74 24 ?? 57 48 83 EC 20 83 B9 ?? ?? ?? ?? ?? 49 8B F9 49 8B F0 48 8B EA 48 8B D9 75 09 48 8B 01 FF 90";
             var getStringPtr = sigScanner.ScanText(getStringSignature);
             getStringHook = gameInteropProvider.HookFromAddress<GetStringPrototype>(getStringPtr, GetStringDetour);
             getStringHook.Enable();
 
-            // Lua variable hook
-            var getLuaVar = "E8 ?? ?? ?? ?? 48 85 DB 74 1B 48 8D 8F";
-            var getLuaVarPtr = sigScanner.ScanText(getLuaVar);
-            getLuaVarHook = gameInteropProvider.HookFromAddress<GetLuaVarPrototype>(getLuaVarPtr, GetLuaVarDetour);
-            getLuaVarHook.Enable();
-
-            // Lua function hooks
+            // Add Lua hook for they/them gender forcing
             try
             {
-                var sexFunctionAddress = GetLuaFunctionAddress("return Pc.GetSex");
-                var raceFunctionAddress = GetLuaFunctionAddress("return Pc.GetRace");
-                var tribeFunctionAddress = GetLuaFunctionAddress("return Pc.GetTribe");
-
-                getSexHook = gameInteropProvider.HookFromAddress<LuaFunction>(sexFunctionAddress, SexFunctionDetour);
-                getRaceHook = gameInteropProvider.HookFromAddress<LuaFunction>(raceFunctionAddress, RaceFunctionDetour);
-                getTribeHook = gameInteropProvider.HookFromAddress<LuaFunction>(raceFunctionAddress, TribeFunctionDetour);
-
-                // Get static addresses for Lua data
-                luaSexPtr = (byte*)GetStaticAddressFromPtr(sexFunctionAddress + 0x32);
-                luaRacePtr = (byte*)GetStaticAddressFromPtr(raceFunctionAddress + 0x32);
-                luaTribePtr = (byte*)GetStaticAddressFromPtr(tribeFunctionAddress + 0x32);
-
-                getSexHook.Enable();
-                getRaceHook.Enable();
-                getTribeHook.Enable();
-
-                log.Debug($"[Dialogue] Lua hooks initialized - Sex: {sexFunctionAddress:X}, Race: {raceFunctionAddress:X}, Tribe: {tribeFunctionAddress:X}");
+                var getLuaVar = "E8 ?? ?? ?? ?? 48 85 DB 74 1B 48 8D 8F";
+                var getLuaVarPtr = sigScanner.ScanText(getLuaVar);
+                getLuaVarHook = gameInteropProvider.HookFromAddress<GetLuaVarPrototype>(getLuaVarPtr, GetLuaVarDetour);
+                getLuaVarHook.Enable();
+                log.Info("[Dialogue] Lua gender override hook enabled.");
             }
             catch (Exception ex)
             {
@@ -245,45 +224,208 @@ namespace CharacterSelectPlugin
             }
         }
 
-        // Lua function address resolution
-        private nint GetLuaFunctionAddress(string code)
+        private bool IsInCutscene()
         {
-            var l = Framework.Instance()->LuaState.State;
-            l->luaL_loadbuffer(code, code.Length, "test_chunk");
-            if (l->lua_pcall(0, 1, 0) != 0)
-                throw new Exception(l->lua_tostring(-1));
-            var luaFunc = *(nint*)l->index2adr(-1);
-            l->lua_pop(1);
-            return *(nint*)(luaFunc + 0x20);
+            if (condition == null) return false;
+
+            return condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInCutSceneEvent] ||
+                   condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.WatchingCutscene] ||
+                   condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.WatchingCutscene78] ||
+                   condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInQuestEvent];
         }
 
-        // Static address resolution
-        private static unsafe IntPtr GetStaticAddressFromPtr(nint instructionAddress)
+        private bool IsChat(string textString)
         {
-            try
+            if (string.IsNullOrEmpty(textString)) return false;
+
+            // These are dialogue
+            if (textString.Contains("woman�man") ||
+                textString.Contains("women�men") ||
+                textString.Contains("herself�himself"))
+                return false;
+
+            // Skip if it's clearly chat log content, not live dialogue
+            // Long narrative text with ellipses and chat markers
+            if (textString.Contains("����") &&
+                textString.Contains("...") &&
+                textString.Length > 150)
+                return true;
+
+            // Specific narrative patterns that indicate chat log content
+            if (textString.Contains("...") && textString.Length > 100 && (
+                textString.Contains("they carved") ||
+                textString.Contains("did they put") ||
+                textString.Contains("tempestuous winds") ||
+                textString.Contains("dread wyrm") ||
+                textString.Contains("hard-fought victory") ||
+                textString.Contains("secrets laid bare")))
+                return true;
+
+            // Standard chat patterns
+            if (textString.Contains("[Mare Synchronos]") ||
+                textString.Contains("[Mare]") ||
+                textString.Contains("Mare:") ||
+                textString.Contains("is now online") ||
+                textString.Contains("is now offline"))
+                return true;
+
+            if (textString.StartsWith("H") && textString.EndsWith("H") && textString.Length > 2)
+                return true;
+
+            var cleanText = Regex.Replace(textString, @"[^\u0020-\u007E]", "");
+            if (Regex.IsMatch(cleanText, @"^[A-Z][a-z]+\s+[A-Z][a-z]+\s*:"))
+                return true;
+            if (Regex.IsMatch(textString, @"^[A-Z][a-z]+\s+[A-Z][a-z]+\s*:"))
+                return true;
+
+            if (textString.StartsWith("[") ||
+                textString.StartsWith("<") ||
+                textString.StartsWith("/") ||
+                textString.Contains(">>") ||
+                textString.Contains("<<") ||
+                textString.Contains(" says") ||
+                textString.Contains(" tells") ||
+                Regex.IsMatch(textString, @"^\s*\[.*?\]"))
+                return true;
+
+            var text = textString.Trim();
+            if (text.Length < 50)
             {
-                var instructionPtr = (byte*)instructionAddress;
-                for (int i = 0; i < 64; i++)
+                if (text.StartsWith("...") || text.EndsWith("...")) return true;
+                if (text.StartsWith("*") || text.EndsWith("*")) return true;
+                if (text.StartsWith("(") && text.EndsWith(")")) return true;
+                if (text.Contains("((") || text.Contains("))")) return true;
+            }
+
+            return false;
+        }
+
+        // Chat detection for post-processing
+        private bool IsDefinitelyChat(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+
+            // Unicode characters for better pattern matching
+            var cleanText = Regex.Replace(text, @"[^\u0020-\u007E]", "");
+
+            // Player Name: message
+            if (Regex.IsMatch(cleanText, @"[A-Z][a-z]+\s+[A-Z][a-z]+\s*:"))
+                return true;
+
+            // Chat commands
+            if (text.StartsWith("/say") || text.StartsWith("/tell") || text.StartsWith("/shout") ||
+                text.StartsWith("/yell") || text.StartsWith("/party") || text.StartsWith("/fc") ||
+                text.StartsWith("/ls") || text.StartsWith("/cwls"))
+                return true;
+
+            // Chat channel indicators
+            if (text.Contains("[Say]") || text.Contains("[Yell]") || text.Contains("[Shout]") ||
+                text.Contains("[Tell]") || text.Contains("[Party]") || text.Contains("[FC]") ||
+                text.Contains("[LS") || text.Contains("[CWLS") || text.Contains("[Novice"))
+                return true;
+
+            return false;
+        }
+
+        private bool IsUIElement(string textString)
+        {
+            var text = textString.Trim();
+
+            // Skip if too short
+            if (text.Length < 10) return true;
+
+            // Skip job/class names
+            var jobNames = new[] { "Paladin", "Warrior", "Dark Knight", "Gunbreaker", "White Mage", "Scholar",
+                                   "Astrologian", "Sage", "Monk", "Dragoon", "Ninja", "Samurai", "Reaper",
+                                   "Black Mage", "Summoner", "Red Mage", "Blue Mage", "Bard", "Machinist",
+                                   "Dancer", "Carpenter", "Blacksmith", "Armorer", "Goldsmith", "Leatherworker",
+                                   "Weaver", "Alchemist", "Culinarian", "Miner", "Botanist", "Fisher",
+                                   "Gladiator", "Marauder", "Conjurer", "Thaumaturge", "Pugilist", "Lancer",
+                                   "Rogue", "Archer" };
+
+            foreach (var job in jobNames)
+            {
+                if (text.Contains(job)) return true;
+            }
+
+            // Skip numbers/stats
+            if (Regex.IsMatch(text, @"^\d+(\.\d+)?$")) return true;
+            if (Regex.IsMatch(text, @"^\d+/\d+$")) return true;
+
+            // Skip time stamps
+            if (Regex.IsMatch(text, @"\d+:\d+")) return true;
+
+            // Skip world names
+            if (text.Contains("World") || text.Contains("Server")) return true;
+
+            // Skip single words (likely UI labels)
+            if (!text.Contains(" ") && text.Length < 15) return true;
+
+            return false;
+        }
+
+        // Check if text contains emote patterns that shouldn't be touched
+        private bool ContainsEmotePattern(string text)
+        {
+            // FFXIV emote pattern: H��I��emoteNameIH
+            if (Regex.IsMatch(text, @"H[^\w]*I[^\w]*\w+I[^\w]*H"))
+            {
+                return true;
+            }
+            return false;
+        }
+
+        // Check if text has player-specific patterns
+        private bool HasPlayerSpecificPattern(string text)
+        {
+            // Patterns that clearly refer to the player even without gender selection flags
+            var playerPatterns = new[]
+            {
+                @"\b(men|women|man|woman|sir|madam|master|mistress|lady|lord)\s+(like\s+you|such\s+as\s+you)\b",
+                @"\bgood\s+(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                @"\b(thank\s+you|well\s+done|excellent),?\s+(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                @"\byou\s+(are|were)\s+(a|an)?\s*(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                @"\b(listen|hear\s+me),?\s+(man|woman|sir|madam|master|mistress|lady|lord)\b"
+            };
+
+            foreach (var pattern in playerPatterns)
+            {
+                if (Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase))
                 {
-                    if (instructionPtr[i] == 0x48 && instructionPtr[i + 1] == 0x8B)
-                    {
-                        var displacement = *(int*)(instructionPtr + i + 3);
-                        return (IntPtr)(instructionAddress + i + 7 + displacement);
-                    }
+                    return true;
                 }
-                throw new Exception("Could not find static address");
             }
-            catch
-            {
-                throw new Exception("Failed to resolve static address");
-            }
+            return false;
         }
 
-        // Text decoder detour
+        // Check if text refers to NPCs
+        private bool IsNPCReference(string text)
+        {
+            // Patterns that refer to NPCs, not the player
+            var npcPatterns = new[]
+            {
+                @"\b(a|an|the|this|that)\s+(suspicious|strange|mysterious|unknown|dead|evil|certain|particular)\s+(man|woman|person)\b"
+            };
+
+            foreach (var pattern in npcPatterns)
+            {
+                if (Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Main text processing detour
         private int GetStringDetour(RaptureTextModule* textModule, byte* text, void* decoder, Utf8String* stringStruct)
         {
+
             try
             {
+                var textSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);
+                var textString = System.Text.Encoding.UTF8.GetString(textSpan);
+
                 if (!plugin.Configuration.EnableDialogueIntegration)
                     return getStringHook!.Original(textModule, text, decoder, stringStruct);
 
@@ -291,31 +433,126 @@ namespace CharacterSelectPlugin
                 if (activeCharacter?.RPProfile?.Pronouns == null)
                     return getStringHook!.Original(textModule, text, decoder, stringStruct);
 
-                // Use the IsDefinitelyNPCDialogue method to filter
-                if (!IsDefinitelyNPCDialogue(textModule, text, decoder))
+                // Only process text with gender/name flags (0x02)
+                if (!textSpan.Contains((byte)0x02))
+                {
+                    // DEBUG: Log text without 0x02 flags that contains gendered terms
+                    if (textString.Contains("sir") || textString.Contains("lady") || textString.Contains("master") || textString.Contains("mistress"))
+                    {
+                    }
+                    return getStringHook!.Original(textModule, text, decoder, stringStruct);
+                }
+
+                // Skip if text contains emote patterns
+                if (ContainsEmotePattern(textString))
                 {
                     return getStringHook!.Original(textModule, text, decoder, stringStruct);
                 }
 
+                // Check for player tags in original text before processing
+                var originalHex = Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(textString));
+                
+                // Use hex flags
+                bool hasPlayerNameFlags = originalHex.Contains("022C0D") || originalHex.Contains("022903");
+                bool hasDirectPlayerFlags = originalHex.Contains("022003");
+                bool mentionsPlayerName = textString.Contains(activeCharacter.Name) ||
+                                         textString.Contains(activeCharacter.Name.Split(' ')[0]);
+
+                // Detect visible gender selection patterns
+                bool hasVisibleGenderSelection =
+                    // Check for both words in same string
+                    (textString.Contains("women") && textString.Contains("men")) ||
+                    (textString.Contains("woman") && textString.Contains("man")) ||
+                    (textString.Contains("Mistress") && textString.Contains("Master")) ||
+                    (textString.Contains("herself") && textString.Contains("himself")) ||
+                    (textString.Contains("her") && textString.Contains("his") && textString.Length < 200) || // Short text with both pronouns
+                                                                                                             // Look for separator characters that indicate selections
+                    textString.Contains("�") || // Any gender selection separator
+                                                // Specific patterns seen in logs
+                    textString.Contains("��madam�sir") ||
+                    textString.Contains("madam�sir") ||
+                    // Original patterns as backup
+                    textString.Contains("��women�men") ||
+                    textString.Contains("women�men") ||
+                    textString.Contains("��woman�man") ||
+                    textString.Contains("woman�man") ||
+                    textString.Contains("��Mistress�Master") ||
+                    textString.Contains("Mistress�Master");
+
+                // Add player-specific pattern detection
+                bool hasPlayerSpecificPattern = HasPlayerSpecificPattern(textString);
+
+                // Check if this is an NPC reference that shouldn't be changed
+                bool isNPCReference = IsNPCReference(textString);
+
+                // Replace pronouns if player indicators detected & it's not an NPC reference
+                bool shouldReplacePronouns = (hasDirectPlayerFlags || mentionsPlayerName ||
+            hasVisibleGenderSelection || hasPlayerSpecificPattern) && !isNPCReference;
+
+
                 var pronounSet = PronounParser.Parse(activeCharacter.RPProfile.Pronouns);
 
-                // Handle name replacement
+                
+                // Skip chat messages
+                if (IsChat(textString))
+                    return getStringHook!.Original(textModule, text, decoder, stringStruct);
+
+                // Skip UI elements
+                if (IsUIElement(textString))
+                    return getStringHook!.Original(textModule, text, decoder, stringStruct);
+
+                // Only process if we're in a cutscene or it looks like proper dialogue
+                if (!IsInCutscene() && textString.Length < 30)
+                    return getStringHook!.Original(textModule, text, decoder, stringStruct);
+
+                // Handle name replacement first (exactly like bestie, PrefPro)
                 if (plugin.Configuration.ReplaceNameInDialogue && !string.IsNullOrEmpty(activeCharacter.Name))
                     HandleNameReplacement(ref text, activeCharacter);
 
-                // Call original function (let game generate variants naturally)
+                // Process the result
                 var result = getStringHook!.Original(textModule, text, decoder, stringStruct);
 
-                // Post-process for they/them: Replace gendered titles and pronouns
-                if (pronounSet.Subject.Equals("they", StringComparison.OrdinalIgnoreCase)
-                    && stringStruct != null && stringStruct->BufUsed > 0)
+                // Post process: Direct string replacement for pronouns
+                if (stringStruct != null && stringStruct->BufUsed > 0 && shouldReplacePronouns)
                 {
                     var gameGeneratedText = stringStruct->ToString();
-                    var processed = ProcessTheyThemText(gameGeneratedText, pronounSet, activeCharacter);
 
-                    if (processed != gameGeneratedText)
+                    // Skip if post-processed text contains emote patterns
+                    if (ContainsEmotePattern(gameGeneratedText))
                     {
-                        stringStruct->SetString(processed);
+                        log.Info($"[EMOTE SKIP POST] Skipping emote in post-process: '{gameGeneratedText.Substring(0, Math.Min(50, gameGeneratedText.Length))}'");
+                        return result;
+                    }
+
+                    // Safety net for post-processing
+                    if (IsDefinitelyChat(gameGeneratedText))
+                    {
+                        return result;
+                    }
+
+                    // Only process readable text that looks like dialogue
+                    if (!string.IsNullOrEmpty(gameGeneratedText) &&
+                        gameGeneratedText.Length > 15 &&
+                        !gameGeneratedText.Contains("0x") &&
+                        !gameGeneratedText.Contains("+") &&
+                        gameGeneratedText.Contains(" ") &&
+                        !IsUIElement(gameGeneratedText) &&
+                        !IsChat(gameGeneratedText))
+                    {
+                       
+
+                        // Process pronouns
+                        var processed = ProcessPronounsAndTitles(gameGeneratedText, pronounSet, activeCharacter);
+
+                        if (processed != gameGeneratedText)
+                        {
+                            log.Info($"[Dialogue] CHANGED: '{gameGeneratedText}' -> '{processed}'");
+                            SafeSetString(stringStruct, processed);
+                        }
+                        else if (gameGeneratedText.Contains("men") || gameGeneratedText.Contains("sir") ||
+                                 gameGeneratedText.Contains("woman") || gameGeneratedText.Contains("master"))
+                        {
+                        }
                     }
                 }
 
@@ -328,145 +565,316 @@ namespace CharacterSelectPlugin
             }
         }
 
-        private string ProcessTheyThemText(string text, PronounSet pronounSet, Character activeCharacter)
+        // Process all pronouns using PronounSet
+        private string ProcessPronounsAndTitles(string text, PronounSet pronounSet, Character activeCharacter)
         {
             var processed = text;
-
-            // Get the player's chosen neutral title
-            var neutralTitle = "Adventurer"; // Default fallback
-            var capitalizedTitle = "Adventurer"; // Default fallback
-
-            if (plugin.Configuration.EnableAdvancedTitleReplacement)
+            if (Regex.IsMatch(text, @"\b[A-Z][a-z]{4,}\s+and\s+(his|her|their)\b"))
             {
-                neutralTitle = plugin.Configuration.GetGenderNeutralTitle();
-                capitalizedTitle = char.ToUpper(neutralTitle[0]) + neutralTitle.Substring(1);
+                return processed; // Don't replace pronouns in NPC contexts
+            }
+            // Skip if text contains flag codes
+            if (text.Contains("+0%") || text.Contains("0x") || text.Length < 10)
+                return processed;
+
+            // Skip if text contains emote patterns
+            if (ContainsEmotePattern(text))
+                return processed;
+
+            // Skip UI elements
+            if (IsUIElement(text))
+                return processed;
+
+            // Skip if this is clearly an NPC reference
+            if (IsNPCReference(text))
+            {
+                return processed;
             }
 
-            // Replace player-addressed titles and phrases
-            processed = Regex.Replace(processed, @"\bSir\b", capitalizedTitle);
-            processed = Regex.Replace(processed, @"\bsir\b", neutralTitle);
-            processed = Regex.Replace(processed, @"\bLady\b", capitalizedTitle);
-            processed = Regex.Replace(processed, @"\blady\b", neutralTitle);
-            processed = Regex.Replace(processed, @"\bMaster\b", capitalizedTitle);
-            processed = Regex.Replace(processed, @"\bmaster\b", neutralTitle);
-            processed = Regex.Replace(processed, @"\bMistress\b", capitalizedTitle);
-            processed = Regex.Replace(processed, @"\bmistress\b", neutralTitle);
-            processed = Regex.Replace(processed, @"\bDame\b", capitalizedTitle);
-            processed = Regex.Replace(processed, @"\bdame\b", neutralTitle);
+            // Get neutral title for replacements
+            var neutralTitle = "adventurer";
+            if (plugin.Configuration.EnableAdvancedTitleReplacement)
+            {
+                neutralTitle = plugin.Configuration.GetGenderNeutralTitle().ToLower();
+            }
+            var capitalizedNeutralTitle = char.ToUpper(neutralTitle[0]) + neutralTitle.Substring(1);
 
-            // Replace player-addressed phrases
-            processed = Regex.Replace(processed, @"\bmy dear man\b", $"my dear {neutralTitle}", RegexOptions.IgnoreCase);
-            processed = Regex.Replace(processed, @"\bmy dear woman\b", $"my dear {neutralTitle}", RegexOptions.IgnoreCase);
-            processed = Regex.Replace(processed, @"\bmy good man\b", $"my good {neutralTitle}", RegexOptions.IgnoreCase);
-            processed = Regex.Replace(processed, @"\bmy good woman\b", $"my good {neutralTitle}", RegexOptions.IgnoreCase);
-            processed = Regex.Replace(processed, @"\byoung man\b", $"young {neutralTitle}", RegexOptions.IgnoreCase);
-            processed = Regex.Replace(processed, @"\byoung woman\b", $"young {neutralTitle}", RegexOptions.IgnoreCase);
 
-            // Replace pronouns
-            processed = Regex.Replace(processed, @"\bhe\b", pronounSet.Subject);
-            processed = Regex.Replace(processed, @"\bHe\b", char.ToUpper(pronounSet.Subject[0]) + pronounSet.Subject.Substring(1));
-            processed = Regex.Replace(processed, @"\bshe\b", pronounSet.Subject);
-            processed = Regex.Replace(processed, @"\bShe\b", char.ToUpper(pronounSet.Subject[0]) + pronounSet.Subject.Substring(1));
-            processed = Regex.Replace(processed, @"\bhis\b", pronounSet.Possessive);
-            processed = Regex.Replace(processed, @"\bHis\b", char.ToUpper(pronounSet.Possessive[0]) + pronounSet.Possessive.Substring(1));
-            processed = Regex.Replace(processed, @"\bher\b", pronounSet.Object);
-            processed = Regex.Replace(processed, @"\bHer\b", char.ToUpper(pronounSet.Object[0]) + pronounSet.Object.Substring(1));
-            processed = Regex.Replace(processed, @"\bhim\b", pronounSet.Object);
-            processed = Regex.Replace(processed, @"\bHim\b", char.ToUpper(pronounSet.Object[0]) + pronounSet.Object.Substring(1));
-            processed = Regex.Replace(processed, @"\bhimself\b", pronounSet.Reflexive);
-            processed = Regex.Replace(processed, @"\bHimself\b", char.ToUpper(pronounSet.Reflexive[0]) + pronounSet.Reflexive.Substring(1));
-            processed = Regex.Replace(processed, @"\bherself\b", pronounSet.Reflexive);
-            processed = Regex.Replace(processed, @"\bHerself\b", char.ToUpper(pronounSet.Reflexive[0]) + pronounSet.Reflexive.Substring(1));
+            // Replace pronouns using PronounSet
+            var subjectLower = pronounSet.Subject.ToLower();
+            var subjectCapital = char.ToUpper(pronounSet.Subject[0]) + pronounSet.Subject.Substring(1).ToLower();
+            var possessiveLower = pronounSet.Possessive.ToLower();
+            var possessiveCapital = char.ToUpper(pronounSet.Possessive[0]) + pronounSet.Possessive.Substring(1).ToLower();
+            var objectLower = pronounSet.Object.ToLower();
+            var objectCapital = char.ToUpper(pronounSet.Object[0]) + pronounSet.Object.Substring(1).ToLower();
+            var reflexiveLower = pronounSet.Reflexive.ToLower();
+            var reflexiveCapital = char.ToUpper(pronounSet.Reflexive[0]) + pronounSet.Reflexive.Substring(1).ToLower();
 
-            // Fix verb conjugations
-            processed = FixVerbConjugation(processed);
+            // Replace basic pronouns - only if ReplacePronounsInDialogue is enabled
+            if (plugin.Configuration.ReplacePronounsInDialogue)
+            {
+                processed = HeRegex.Replace(processed, subjectLower);
+                processed = HeCapitalRegex.Replace(processed, subjectCapital);
+                processed = SheRegex.Replace(processed, subjectLower);
+                processed = SheCapitalRegex.Replace(processed, subjectCapital);
+
+                // Replace possessive pronouns
+                processed = HisRegex.Replace(processed, possessiveLower);
+                processed = HisCapitalRegex.Replace(processed, possessiveCapital);
+
+                // Context-aware "her" replacement
+                processed = HerPossessiveRegex.Replace(processed, possessiveLower);
+                processed = HerPossessiveCapitalRegex.Replace(processed, possessiveCapital);
+                processed = HerPossessiveLowerRegex.Replace(processed, possessiveLower);
+
+                // Object "her" -> object pronoun
+                processed = HerObjectRegex.Replace(processed, objectLower);
+                processed = HerObjectCapitalRegex.Replace(processed, objectCapital);
+
+                // Object pronouns
+                processed = HimRegex.Replace(processed, objectLower);
+                processed = HimCapitalRegex.Replace(processed, objectCapital);
+
+                // Reflexive pronouns
+                processed = HimselfRegex.Replace(processed, reflexiveLower);
+                processed = HimselfCapitalRegex.Replace(processed, reflexiveCapital);
+                processed = HerselfRegex.Replace(processed, reflexiveLower);
+                processed = HerselfCapitalRegex.Replace(processed, reflexiveCapital);
+            }
+
+            // Title replacement
+            if (plugin.Configuration.ReplaceGenderedTerms)
+            {
+                // Handle gender selection patterns with separators
+                processed = Regex.Replace(processed, @"��woman�man", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"woman�man", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��women�men", neutralTitle + "s", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"women�men", neutralTitle + "s", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��madam�sir", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"madam�sir", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��Mistress�Master", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"Mistress�Master", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��Master�Mistress", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"Master�Mistress", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��sir�madam", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"sir�madam", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��man�woman", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"man�woman", neutralTitle, RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"��men�women", neutralTitle + "s", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"men�women", neutralTitle + "s", RegexOptions.IgnoreCase);
+
+                // Handle player-specific patterns with context-aware replacement
+                processed = Regex.Replace(processed, @"\b(men|women|man|woman)\s+(like\s+you)\b",
+                    $"{neutralTitle}s like you", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"\bgood\s+(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                    $"good {neutralTitle}", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"\bGood\s+(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                    $"Good {neutralTitle}");
+
+                // Handle individual words as before (user wants neutral terms) - only if not NPC reference
+                processed = SirRegex.Replace(processed, neutralTitle);
+                processed = SirCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = MasterRegex.Replace(processed, neutralTitle);
+                processed = MasterCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = MistressRegex.Replace(processed, neutralTitle);
+                processed = MistressCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = MadamRegex.Replace(processed, neutralTitle);
+                processed = MadamCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = DameRegex.Replace(processed, neutralTitle);
+                processed = DameCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = LadyRegex.Replace(processed, neutralTitle);
+                processed = LadyCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = BrotherRegex.Replace(processed, neutralTitle);
+                processed = BrotherCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = SisterRegex.Replace(processed, neutralTitle);
+                processed = SisterCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+
+                // Replace gendered titles/nouns (only when neutral terms enabled)
+                processed = WomanRegex.Replace(processed, neutralTitle);
+                processed = WomanCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = ManRegex.Replace(processed, neutralTitle);
+                processed = ManCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = Regex.Replace(processed, @"\bmen\b", neutralTitle + "s", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"\bMen\b", capitalizedNeutralTitle + "s");
+                processed = Regex.Replace(processed, @"\bwomen\b", neutralTitle + "s", RegexOptions.IgnoreCase);
+                processed = Regex.Replace(processed, @"\bWomen\b", capitalizedNeutralTitle + "s");
+                processed = GirlRegex.Replace(processed, neutralTitle);
+                processed = GirlCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = BoyRegex.Replace(processed, neutralTitle);
+                processed = BoyCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = LassRegex.Replace(processed, neutralTitle);
+                processed = LassCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                processed = MaidenRegex.Replace(processed, neutralTitle);
+                processed = MaidenCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+            }
+            else
+            {
+                // Natural gendered terms - let Lua hook do the work, with fallbacks
+                if (pronounSet.Subject.Equals("she", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Handle gender selection patterns for she/her
+                    processed = Regex.Replace(processed, @"��man�woman", "woman", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"man�woman", "woman", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��woman�man", "woman", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"woman�man", "woman", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��men�women", "women", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"men�women", "women", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��women�men", "women", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"women�men", "women", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��sir�madam", "madam", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"sir�madam", "madam", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��madam�sir", "madam", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"madam�sir", "madam", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��Master�Mistress", "Mistress", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"Master�Mistress", "Mistress", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��Mistress�Master", "Mistress", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"Mistress�Master", "Mistress", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��lass�lad", "lass", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"lass�lad", "lass", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��lad�lass", "lass", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"lad�lass", "lass", RegexOptions.IgnoreCase);
+                    // Handle player-specific patterns
+                    processed = Regex.Replace(processed, @"\b(men|man)\s+(like\s+you)\b", "women like you", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bgood\s+(man|sir|master|lord)\b", "good woman", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bGood\s+(man|sir|master|lord)\b", "Good woman");
+
+                    // Fallback individual word replacements if Lua hook failed
+                    processed = Regex.Replace(processed, @"\bsir\b", "madam", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bSir\b", "Madam");
+                    processed = Regex.Replace(processed, @"\bbrother\b", "sister", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bBrother\b", "Sister");
+                    processed = Regex.Replace(processed, @"\bmaster\b", "mistress", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bMaster\b", "Mistress");
+                    processed = Regex.Replace(processed, @"\bmen\b", "women", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bMen\b", "Women");
+                    processed = Regex.Replace(processed, @"\bman\b", "woman", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bMan\b", "Woman");
+                    // Basic pronoun fixes
+                    processed = Regex.Replace(processed, @"\bhe\b", "she", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bHe\b", "She");
+                    processed = Regex.Replace(processed, @"\bhim\b", "her", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bHim\b", "Her");
+                    processed = Regex.Replace(processed, @"\bhis\b", "her", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bHis\b", "Her");
+                }
+                else if (pronounSet.Subject.Equals("he", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Handle gender selection patterns for he/him
+                    processed = Regex.Replace(processed, @"��woman�man", "man", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"woman�man", "man", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��man�woman", "man", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"man�woman", "man", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��women�men", "men", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"women�men", "men", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��men�women", "men", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"men�women", "men", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��madam�sir", "sir", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"madam�sir", "sir", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��sir�madam", "sir", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"sir�madam", "sir", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��Mistress�Master", "Master", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"Mistress�Master", "Master", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��Master�Mistress", "Master", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"Master�Mistress", "Master", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��lass�lad", "lad", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"lass�lad", "lad", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��lad�lass", "lad", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"lad�lass", "lad", RegexOptions.IgnoreCase);
+                    // Handle player-specific patterns
+                    processed = Regex.Replace(processed, @"\b(women|woman)\s+(like\s+you)\b", "men like you", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bgood\s+(woman|madam|mistress|lady)\b", "good man", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bGood\s+(woman|madam|mistress|lady)\b", "Good man");
+
+                    // Fallback individual word replacements if Lua hook failed
+                    processed = Regex.Replace(processed, @"\bmadam\b", "sir", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bMadam\b", "Sir");
+                    processed = Regex.Replace(processed, @"\bsister\b", "brother", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bSister\b", "Brother");
+                    processed = Regex.Replace(processed, @"\bmistress\b", "master", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bMistress\b", "Master");
+                    processed = Regex.Replace(processed, @"\bwomen\b", "men", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bWomen\b", "Men");
+                    processed = Regex.Replace(processed, @"\bwoman\b", "man", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bWoman\b", "Man");
+                    // Basic pronoun fixes
+                    processed = Regex.Replace(processed, @"\bshe\b", "he", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bShe\b", "He");
+                    processed = Regex.Replace(processed, @"\bher\b", "his", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bHer\b", "His");
+                }
+                else if (pronounSet.Subject.Equals("they", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Handle gender selection patterns for they/them (same as neutral)
+                    processed = Regex.Replace(processed, @"��woman�man", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"woman�man", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��women�men", neutralTitle + "s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"women�men", neutralTitle + "s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��madam�sir", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"madam�sir", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��sir�madam", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"sir�madam", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��Mistress�Master", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"Mistress�Master", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��Master�Mistress", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"Master�Mistress", capitalizedNeutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��man�woman", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"man�woman", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��men�women", neutralTitle + "s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"men�women", neutralTitle + "s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��lass�lad", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"lass�lad", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"��lad�lass", neutralTitle, RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"lad�lass", neutralTitle, RegexOptions.IgnoreCase);
+                    // Handle player-specific patterns for they/them
+                    processed = Regex.Replace(processed, @"\b(men|women|man|woman)\s+(like\s+you)\b",
+                        $"{neutralTitle}s like you", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bgood\s+(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                        $"good {neutralTitle}", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bGood\s+(man|woman|sir|madam|master|mistress|lady|lord)\b",
+                        $"Good {neutralTitle}");
+
+                    // Full neutral processing for they/them
+                    processed = SirRegex.Replace(processed, neutralTitle);
+                    processed = SirCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = MasterRegex.Replace(processed, neutralTitle);
+                    processed = MasterCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = MistressRegex.Replace(processed, neutralTitle);
+                    processed = MistressCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = MadamRegex.Replace(processed, neutralTitle);
+                    processed = MadamCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = DameRegex.Replace(processed, neutralTitle);
+                    processed = DameCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = LadyRegex.Replace(processed, neutralTitle);
+                    processed = LadyCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = WomanRegex.Replace(processed, neutralTitle);
+                    processed = WomanCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+                    processed = ManRegex.Replace(processed, neutralTitle);
+                    processed = ManCapitalRegex.Replace(processed, capitalizedNeutralTitle);
+
+                    // Handle plurals for they/them
+                    processed = Regex.Replace(processed, @"\bmen\b", neutralTitle + "s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bMen\b", capitalizedNeutralTitle + "s");
+                    processed = Regex.Replace(processed, @"\bwomen\b", neutralTitle + "s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bWomen\b", capitalizedNeutralTitle + "s");
+
+                    // Fallback: Handle cases where Lua hook didn't work
+                    processed = Regex.Replace(processed, @"\bvaliant men\b", $"valiant {neutralTitle}s", RegexOptions.IgnoreCase);
+                    processed = Regex.Replace(processed, @"\bvaliant women\b", $"valiant {neutralTitle}s", RegexOptions.IgnoreCase);
+                }
+            }
+            // Apply verb conjugation fixes (only for they/them)
+            if (pronounSet.Subject.Equals("they", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var kvp in ConjugationPatterns)
+                {
+                    processed = kvp.Key.Replace(processed, kvp.Value);
+                }
+            }
 
             return processed;
         }
-        private bool IsDefinitelyNPCDialogue(RaptureTextModule* textModule, byte* text, void* decoder)
-        {
-            try
-            {
-                var textSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);
-                if (textSpan.Length == 0) return false;
 
-                var textString = System.Text.Encoding.UTF8.GetString(textSpan);
-
-                // Any text with player name format (First Last: message)
-                if (Regex.IsMatch(textString, @"[A-Z][a-z]+\s+[A-Z][a-z]+\s*:"))
-                    return false;
-
-                // Any text that starts with common chat prefixes
-                if (Regex.IsMatch(textString, @"^\s*(\[LS\]|\[FC\]|\[CWLS\]|\[Novice\]|\[Say\]|\[Yell\]|\[Shout\]|\[Tell\])"))
-                    return false;
-
-                // Short messages with colons (likely chat)
-                if (textString.Contains(":") && textString.Length < 100)
-                    return false;
-
-                // Messages that look like commands or system messages
-                if (textString.StartsWith("/") || textString.Contains(">>") || textString.Contains("<<"))
-                    return false;
-
-                // Chat bubble exclusions
-                if (textString.Length < 100 && !textSpan.Contains((byte)0x02))
-                    return false;
-
-                // Exclude messages that look like player chat (casual language patterns)
-                if (Regex.IsMatch(textString, @"^(hey|hi|hello|lol|omg|wtf|brb|gg|ty|thx|thanks|np|nvm|ok|okay)\b", RegexOptions.IgnoreCase))
-                    return false;
-
-                // Exclude if it's clearly player-to-player conversation
-                if (Regex.IsMatch(textString, @"\b(you too|same here|agreed|lmao|haha|nice|cool|awesome)\b", RegexOptions.IgnoreCase))
-                    return false;
-
-                // Exclude very short messages without formal language
-                if (textString.Length < 50 && !Regex.IsMatch(textString, @"\b(greetings|adventurer|indeed|shall|thee|thou)\b", RegexOptions.IgnoreCase))
-                    return false;
-
-                // Original exclusions continue...
-                bool hasNamePatterns = false;
-                if (textSpan.Contains((byte)0x02) && textString.Length >= 15)
-                {
-                    if (!textString.Contains("[") && !textString.Contains("]") &&
-                        !textString.Contains(": ") && !textString.Contains(" >> "))
-                    {
-                        hasNamePatterns = true;
-                    }
-                }
-
-                if (textString.Length < 30)
-                {
-                    if (hasNamePatterns)
-                    {
-                        return true;
-                    }
-                    return false;
-                }
-
-                // Only process if it has formal dialogue patterns
-                bool hasDialoguePatterns = Regex.IsMatch(textString,
-                    @"\b(greetings|well\s+done|excellent|my\s+(dear|good)|you\s+have|I\s+shall|adventurer)\b",
-                    RegexOptions.IgnoreCase);
-
-                bool hasGenderedTerms = Regex.IsMatch(textString,
-                    @"\b(sir|madam|lady|lord|master|mistress)\b",
-                    RegexOptions.IgnoreCase);
-
-                if (hasNamePatterns || hasDialoguePatterns || hasGenderedTerms)
-                {
-                    return true;
-                }
-
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        // Lua variable detour (from PrefPro, I think that makes us besties now?)
+        // Lua variable detour for pronoun gender forcing
         private byte GetLuaVarDetour(nint poolBase, IntPtr a2, IntPtr a3)
         {
             try
@@ -476,14 +884,29 @@ namespace CharacterSelectPlugin
                 {
                     var pronounSet = PronounParser.Parse(activeCharacter.RPProfile.Pronouns);
                     var oldGender = GetLuaVarGender(poolBase);
-                    var newGender = (int)GetTargetGender(pronounSet);
+                    int newGender = oldGender;
 
-                    SetLuaVarGender(poolBase, newGender);
-                    var returnValue = getLuaVarHook!.Original(poolBase, a2, a3);
-                    SetLuaVarGender(poolBase, oldGender);
+                    // Force correct gender variant based on pronouns
+                    if (pronounSet.Subject.Equals("she", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newGender = 1; // Force female variants ("women", "she")
+                    }
+                    else if (pronounSet.Subject.Equals("he", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newGender = 0; // Force male variants ("men", "he")  
+                    }
+                    else if (pronounSet.Subject.Equals("they", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newGender = 1; // Force female for they/them (then post-process)
+                    }
 
-                    log.Debug($"[Dialogue] Lua var gender override: {oldGender} -> {newGender}");
-                    return returnValue;
+                    if (newGender != oldGender)
+                    {
+                        SetLuaVarGender(poolBase, newGender);
+                        var returnValue = getLuaVarHook!.Original(poolBase, a2, a3);
+                        SetLuaVarGender(poolBase, oldGender);
+                        return returnValue;
+                    }
                 }
 
                 return getLuaVarHook!.Original(poolBase, a2, a3);
@@ -495,58 +918,7 @@ namespace CharacterSelectPlugin
             }
         }
 
-        // Lua function detours (from PrefPro's LuaHandler, if not this is really awkward...)
-        private nuint SexFunctionDetour(nuint a1)
-        {
-            try
-            {
-                var activeCharacter = plugin.GetActiveCharacter();
-                if (activeCharacter?.RPProfile?.Pronouns != null && plugin.Configuration.EnableDialogueIntegration && luaSexPtr != null)
-                {
-                    var pronounSet = PronounParser.Parse(activeCharacter.RPProfile.Pronouns);
-                    var oldSex = *luaSexPtr;
-                    var newSex = (byte)GetTargetGender(pronounSet);
-
-                    *luaSexPtr = newSex;
-                    log.Debug($"[Dialogue] Lua sex function override: {oldSex} -> {newSex}");
-                    var ret = getSexHook!.Original(a1);
-                    *luaSexPtr = oldSex;
-
-                    return ret;
-                }
-
-                return getSexHook!.Original(a1);
-            }
-            catch (Exception ex)
-            {
-                log.Error($"[Dialogue] Error in SexFunctionDetour: {ex.Message}");
-                return getSexHook!.Original(a1);
-            }
-        }
-
-        private nuint RaceFunctionDetour(nuint a1)
-        {
-            // Coming soon...
-            return getRaceHook!.Original(a1);
-        }
-        private nuint TribeFunctionDetour(nuint a1)
-        {
-            // Coming soon...
-            return getTribeHook!.Original(a1);
-        }
-
-
-        // Helper methods
-        private ulong GetTargetGender(PronounSet pronounSet)
-        {
-            if (pronounSet.Subject.Equals("he", StringComparison.OrdinalIgnoreCase))
-                return 0ul; // Male
-            else if (pronounSet.Subject.Equals("she", StringComparison.OrdinalIgnoreCase))
-                return 1ul; // Female
-            else // they/them: use female variant
-                return 1ul;
-        }
-
+        // Helper methods for Lua gender manipulation
         private int GetLuaVarGender(nint poolBase)
         {
             var genderVarId = 0x1B;
@@ -559,103 +931,16 @@ namespace CharacterSelectPlugin
             *(int*)(poolBase + 4 * genderVarId) = gender;
         }
 
-        // Helper method to check if text contains gendered pronouns (indicating it had variations)
-        private bool ContainsGenderedPronouns(string text)
-        {
-            return Regex.IsMatch(text, @"\b(he|she|his|her|him|himself|herself)\b", RegexOptions.IgnoreCase);
-        }
-
-        private string ProcessTheyThemPronouns(string text, PronounSet pronounSet, Character activeCharacter)
-        {
-            // Early exit for very short strings
-            if (text.Length < 3) return text;
-
-            var processed = text;
-
-            // PRONOUNS - Use precompiled regex patterns
-            processed = HeRegex.Replace(processed, pronounSet.Subject);
-            processed = HeCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Subject[0]) + pronounSet.Subject.Substring(1));
-            processed = SheRegex.Replace(processed, pronounSet.Subject);
-            processed = SheCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Subject[0]) + pronounSet.Subject.Substring(1));
-
-            processed = HisRegex.Replace(processed, pronounSet.Possessive);
-            processed = HisCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Possessive[0]) + pronounSet.Possessive.Substring(1));
-
-            // Handle "her" - possessive vs object
-            processed = HerPossessiveRegex.Replace(processed, pronounSet.Possessive);
-            processed = HerPossessiveCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Possessive[0]) + pronounSet.Possessive.Substring(1));
-            processed = HerPossessiveLowerRegex.Replace(processed, pronounSet.Possessive);
-            processed = HerPossessiveLowerCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Possessive[0]) + pronounSet.Possessive.Substring(1));
-            processed = HerRegex.Replace(processed, pronounSet.Object);
-            processed = HerCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Object[0]) + pronounSet.Object.Substring(1));
-
-            processed = HimRegex.Replace(processed, pronounSet.Object);
-            processed = HimCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Object[0]) + pronounSet.Object.Substring(1));
-
-            processed = HimselfRegex.Replace(processed, pronounSet.Reflexive);
-            processed = HimselfCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Reflexive[0]) + pronounSet.Reflexive.Substring(1));
-            processed = HerselfRegex.Replace(processed, pronounSet.Reflexive);
-            processed = HerselfCapitalRegex.Replace(processed, char.ToUpper(pronounSet.Reflexive[0]) + pronounSet.Reflexive.Substring(1));
-
-            // TITLES - Use configurable replacements
-            if (plugin.Configuration.EnableAdvancedTitleReplacement)
-            {
-                var neutralTitle = plugin.Configuration.GetGenderNeutralTitle();
-                var capitalizedTitle = char.ToUpper(neutralTitle[0]) + neutralTitle.Substring(1);
-
-                processed = LadyRegex.Replace(processed, neutralTitle);
-                processed = LadyCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = MistressRegex.Replace(processed, neutralTitle);
-                processed = MistressCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = DameRegex.Replace(processed, neutralTitle);
-                processed = DameCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = MadamRegex.Replace(processed, neutralTitle);
-                processed = MadamCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = WomanRegex.Replace(processed, neutralTitle);
-                processed = WomanCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = GirlRegex.Replace(processed, neutralTitle);
-                processed = GirlCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = LassRegex.Replace(processed, neutralTitle);
-                processed = LassCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = MaidenRegex.Replace(processed, neutralTitle);
-                processed = MaidenCapitalRegex.Replace(processed, capitalizedTitle);
-                // Male titles
-                processed = SirRegex.Replace(processed, neutralTitle);
-                processed = SirCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = LordRegex.Replace(processed, neutralTitle);
-                processed = LordCapitalRegex.Replace(processed, capitalizedTitle);
-                processed = ManRegex.Replace(processed, neutralTitle);
-                processed = ManCapitalRegex.Replace(processed, capitalizedTitle);
-            }
-
-            // Fix verb conjugations for they/them
-            processed = FixVerbConjugation(processed);
-
-            return processed;
-        }
-
-
-        private string FixVerbConjugation(string text)
-        {
-            foreach (var kvp in ConjugationPatterns)
-            {
-                text = kvp.Key.Replace(text, kvp.Value);
-            }
-            return text;
-        }
-
+        // Name replacement using byte patterns (exactly like PrefPro, the best there ever was)
         private void HandleNameReplacement(ref byte* text, Character character)
         {
             try
             {
                 var playerName = clientState.LocalPlayer?.Name.TextValue;
-                if (string.IsNullOrEmpty(playerName))
-                    return;
+                if (string.IsNullOrEmpty(playerName)) return;
 
                 var textSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);
-
-                if (!textSpan.Contains((byte)0x02))
-                    return;
+                if (!textSpan.Contains((byte)0x02)) return;
 
                 var seString = Dalamud.Game.Text.SeStringHandling.SeString.Parse(text, textSpan.Length);
                 var payloads = seString.Payloads;
@@ -672,27 +957,31 @@ namespace CharacterSelectPlugin
                     if (payload.Type == Dalamud.Game.Text.SeStringHandling.PayloadType.Unknown)
                     {
                         var payloadBytes = payload.Encode();
+                        var payloadHex = Convert.ToHexString(payloadBytes);
 
-                        if (ByteArrayEquals(payloadBytes, FullNameBytes))
+                        if (payloadHex.Contains(Convert.ToHexString(FullNameBytes)))
                         {
                             payloads[i] = new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(csCharacterName);
                             replaced = true;
                         }
-                        else if (ByteArrayEquals(payloadBytes, FirstNameBytes))
+                        else if (payloadHex.Contains(Convert.ToHexString(FirstNameBytes)))
                         {
                             payloads[i] = new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(csFirstName);
                             replaced = true;
                         }
-                        else if (ByteArrayEquals(payloadBytes, LastNameBytes) && !string.IsNullOrEmpty(csLastName))
+                        else if (payloadHex.Contains(Convert.ToHexString(LastNameBytes)) && !string.IsNullOrEmpty(csLastName))
                         {
                             payloads[i] = new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(csLastName);
                             replaced = true;
                         }
+                        else
+                        {
+                            
+                        }
                     }
                 }
 
-                if (!replaced)
-                    return;
+                if (!replaced) return;
 
                 var newBytes = seString.EncodeWithNullTerminator();
                 var originalLength = textSpan.Length + 1;
@@ -712,6 +1001,21 @@ namespace CharacterSelectPlugin
             }
         }
 
+        private void SafeSetString(Utf8String* stringStruct, string newText)
+        {
+            try
+            {
+                if (stringStruct != null && !string.IsNullOrEmpty(newText))
+                {
+                    stringStruct->SetString(newText);
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"[Dialogue] Failed to set string: {ex.Message}");
+            }
+        }
+
         private static bool ByteArrayEquals(ReadOnlySpan<byte> a1, ReadOnlySpan<byte> a2)
         {
             return a1.SequenceEqual(a2);
@@ -723,12 +1027,6 @@ namespace CharacterSelectPlugin
             getStringHook?.Dispose();
             getLuaVarHook?.Disable();
             getLuaVarHook?.Dispose();
-            getSexHook?.Disable();
-            getSexHook?.Dispose();
-            getRaceHook?.Disable();
-            getRaceHook?.Dispose();
-            getTribeHook?.Disable();
-            getTribeHook?.Dispose();
         }
     }
 }

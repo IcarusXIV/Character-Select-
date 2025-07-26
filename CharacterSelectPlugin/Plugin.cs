@@ -42,8 +42,9 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ITargetManager TargetManager { get; private set; } = null!;
         [PluginService] internal static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
+        [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.0.0"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.0.1"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -117,6 +118,9 @@ namespace CharacterSelectPlugin
         private bool isLoginComplete = false;
         public bool IsSecretMode { get; set; } = false;
         private Character? activeCharacter = null!;
+        private string lastExecutedGearsetCommand = "";
+        private DateTime lastGearsetCommandTime = DateTime.MinValue;
+        private readonly Dictionary<string, (string characterName, string designName, DateTime time)> lastAppliedByJob = new();
         public void RefreshTreeItems(Character character)
         {
 
@@ -283,7 +287,10 @@ namespace CharacterSelectPlugin
             // Patch Notes
             PatchNotesWindow = new PatchNotesWindow(this);
             if (Configuration.LastSeenVersion != CurrentPluginVersion)
+            {
+                PatchNotesWindow.OpenMainMenuOnClose = true;
                 PatchNotesWindow.IsOpen = true;
+            }
             // PatchNotesWindow.IsOpen = true;
             // Tutorial system - show on first launch
 
@@ -429,7 +436,8 @@ namespace CharacterSelectPlugin
                     GameInteropProvider,
                     ChatGui, 
                     ClientState, 
-                    Log  
+                    Log,
+                    Condition
                 );
             }
             catch (Exception ex)
@@ -986,12 +994,44 @@ namespace CharacterSelectPlugin
                     return;
                 }
             }
+            else
+            {
+                Log.Debug($"[ExecuteMacro] ELSE BRANCH - Manual application detected");
 
+                if (character != null && !string.IsNullOrEmpty(designName))
+                {
+                    Log.Debug($"[ExecuteMacro] Checking for recent application...");
+
+                    // Get the target gearset
+                    string targetGearset = GetTargetGearsetFromMacro(macroText);
+
+                    if (!string.IsNullOrEmpty(targetGearset))
+                    {
+                        string trackingKey = $"{character.Name}_{designName}_{targetGearset}";
+
+                        if (lastAppliedByJob.ContainsKey(trackingKey) && 
+                            (DateTime.Now - lastAppliedByJob[trackingKey].time).TotalSeconds < 60)
+                        {
+                            Log.Debug($"[ExecuteMacro] Same design+gearset applied recently, filtering job changes");
+                            macroText = FilterJobChangeCommands(macroText);
+                            Log.Debug($"[ExecuteMacro] Filtered macro: {macroText.Replace("\n", " | ")}");
+                        }
+
+                        // Update tracking with string key
+                        lastAppliedByJob[trackingKey] = (character.Name, designName, DateTime.Now);
+                        Log.Debug($"[ExecuteMacro] Updated tracking for key: {trackingKey}");
+                    }
+                }
+            }
             var pluginCommands = new List<string>();
             var gameCommands = new List<string>();
 
             // Track gearset usage for future filtering
             var currentJobId = ClientState.LocalPlayer?.ClassJob.RowId ?? 0;
+
+            // Check if this macro contains wait commands
+            bool containsWaitCommands = macroText.Split('\n')
+                .Any(line => line.Trim().StartsWith("/wait", StringComparison.OrdinalIgnoreCase));
 
             // Separate plugin commands from game commands
             foreach (var raw in macroText.Split('\n'))
@@ -999,31 +1039,39 @@ namespace CharacterSelectPlugin
                 var cmd = raw.Trim();
                 if (cmd.Length == 0) continue;
 
-                // Track gearset usage if this is a gearset command
+                // Check for duplicate gearset commands FIRST
                 if (IsGearsetChangeCommand(cmd))
                 {
-                    var gearsetNumber = ExtractGearsetNumber(cmd);
-                    if (gearsetNumber.HasValue && currentJobId > 0)
+                    // ... keep your existing gearset tracking code here
+                }
+
+                // KEY CHANGE: If macro contains waits, send ALL commands through game system
+                if (containsWaitCommands)
+                {
+                    if (cmd.StartsWith("/"))
                     {
-                        // This command will switch to whatever job is saved in this gearset
-                        Log.Debug($"[GearsetTracker] Gearset {gearsetNumber.Value} will be used");
+                        gameCommands.Add(cmd);
+                        Log.Debug($"Queued for sequential execution: '{cmd}'");
                     }
-                }
-
-                bool handledByPlugin = CommandManager.ProcessCommand(cmd);
-
-                if (handledByPlugin)
-                {
-                    Log.Debug($"Plugin command executed: '{cmd}'");
-                }
-                else if (cmd.StartsWith("/"))
-                {
-                    gameCommands.Add(cmd);
-                    Log.Debug($"Queued game command: '{cmd}'");
                 }
                 else
                 {
-                    Log.Debug($"Skipping non-command text: '{cmd}'");
+                    // Normal execution: immediate plugin commands
+                    bool handledByPlugin = CommandManager.ProcessCommand(cmd);
+
+                    if (handledByPlugin)
+                    {
+                        Log.Debug($"Plugin command executed: '{cmd}'");
+                    }
+                    else if (cmd.StartsWith("/"))
+                    {
+                        gameCommands.Add(cmd);
+                        Log.Debug($"Queued game command: '{cmd}'");
+                    }
+                    else
+                    {
+                        Log.Debug($"Skipping non-command text: '{cmd}'");
+                    }
                 }
             }
 
@@ -1051,6 +1099,20 @@ namespace CharacterSelectPlugin
 
                 Configuration.Save();
             }
+        }
+        private string GetTargetGearsetFromMacro(string macro)
+        {
+            var lines = macro.Split('\n');
+            foreach (var line in lines)
+            {
+                var cmd = line.Trim();
+                if (IsGearsetChangeCommand(cmd))
+                {
+                    var gearsetNumber = ExtractGearsetNumber(cmd);
+                    return gearsetNumber?.ToString() ?? "";
+                }
+            }
+            return "";
         }
 
         // Execute game commands using the macro system
@@ -1752,7 +1814,7 @@ namespace CharacterSelectPlugin
                 // Ensure we got all the background and effects data
                 if (profile != null)
                 {
-                    Plugin.Log.Debug($"[DownloadProfile] Downloaded profile for {characterName}");
+                    Plugin.Log.Debug($"[DownloadProfile] Downloaded profile");
                     Plugin.Log.Debug($"[DownloadProfile] Profile belongs to CS+ character: {profile.CharacterName}");
                     Plugin.Log.Debug($"[DownloadProfile] BackgroundImage: {profile.BackgroundImage ?? "null"}");
                     Plugin.Log.Debug($"[DownloadProfile] Effects: {(profile.Effects != null ? "present" : "null")}");

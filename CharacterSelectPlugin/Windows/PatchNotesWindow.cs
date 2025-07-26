@@ -14,6 +14,7 @@ namespace CharacterSelectPlugin.Windows
         private readonly Plugin plugin;
         private bool hasScrolledToEnd = false;
         private bool wasOpen = false; // Track if window was open last frame
+        public bool OpenMainMenuOnClose = false;
 
         // Particle system for banner effects
         private struct Particle
@@ -284,7 +285,7 @@ namespace CharacterSelectPlugin.Windows
             // Revamped RP Profiles
             DrawFeatureSection("\uf2c2", "Revamped RP Profiles", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Complete visual redesign with new layout and styling");
-            ImGui.BulletText("50+ FFXIV location backgrounds to choose from");
+            ImGui.BulletText("80+ FFXIV location backgrounds to choose from");
             ImGui.BulletText("Animated visual effects: butterflies, fireflies, falling leaves, and more");
             ImGui.BulletText("Real-time preview - see changes instantly in the editor");
             ImGui.BulletText("Right-click any player name to view their RP Profile directly");
@@ -292,10 +293,10 @@ namespace CharacterSelectPlugin.Windows
 
             // Immersive Dialogue (NEW!)
             DrawFeatureSection("\uf075", "Immersive Dialogue System", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
-            ImGui.BulletText("NPCs now use your CS+ Character's name, pronouns, and race in dialogue!");
-            ImGui.BulletText("Perfect integration with he/him, she/her, and they/them pronouns");
+            ImGui.BulletText("NPCs now use your CS+ Character's name, pronouns, and desired titles in dialogue!");
+            ImGui.BulletText("Integration with he/him, she/her, and they/them pronouns");
             ImGui.BulletText("Granular settings: enable names, pronouns, gendered terms, or race separately");
-            ImGui.BulletText("Customizable they/them neutral titles: friend, honored one, traveler, adventurer, or choose your own!");
+            ImGui.BulletText("Customizable they/them neutral titles: friend, Mx., traveler, adventurer, or choose your own!");
             ImGui.BulletText("Only affects dialogue referring to your character - NPCs keep their own pronouns");
             ImGui.BulletText("Requires an active CS+ character with RP Profile pronouns set");
             ImGui.BulletText("If you find any instances in which it doesn't seem to be working please report them in the discord!");
@@ -521,7 +522,11 @@ namespace CharacterSelectPlugin.Windows
                 plugin.Configuration.LastSeenVersion = Plugin.CurrentPluginVersion;
                 plugin.Configuration.Save();
                 IsOpen = false;
-                plugin.ToggleMainUI();
+                if (OpenMainMenuOnClose)
+                {
+                    plugin.ToggleMainUI();
+                }
+                OpenMainMenuOnClose = false;
             }
 
             ImGui.PopStyleVar(!buttonEnabled ? 2 : 1);

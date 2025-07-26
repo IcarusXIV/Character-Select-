@@ -79,7 +79,7 @@ namespace CharacterSelectPlugin.Windows
 
                 if (Directory.Exists(assetsPath))
                 {
-                    for (int i = 1; i <= 50; i++)
+                    for (int i = 1; i <= 80; i++)
                     {
                         string numberedFile = $"{i}.jpg";
                         string fullPath = Path.Combine(assetsPath, numberedFile);
@@ -144,7 +144,7 @@ namespace CharacterSelectPlugin.Windows
                 "33" => "Mamook 2 - @mario_ops",
                 "34" => "The Fringes - @MorgenRei",
                 "35" => "Ul'dah - @opapi_ff14",
-                "36" => "Solution 9 - @ratototo1209",
+                "36" => "Solution Nine - @ratototo1209",
                 "37" => "Kozama'uka - @reirxiv",
                 "38" => "Occult Crescent - @reirxiv",
                 "39" => "Occult Crescent 2 - @reirxiv",
@@ -153,12 +153,42 @@ namespace CharacterSelectPlugin.Windows
                 "42" => "Kozama'uka 2 - @Rishido_Cuore",
                 "43" => "Mor Dhona - @Rishido_Cuore",
                 "44" => "Old Gridania - @Rishido_Cuore",
-                "45" => "Soution 9 2 - @Rishido_Cuore",
+                "45" => "Soution Nine 2 - @Rishido_Cuore",
                 "46" => "The Black Shroud - @Rishido_Cuore",
                 "47" => "Kozama'uka 3 - @Rishido_Cuore",
                 "48" => "The Great Gubal Library - @sheri_shi_",
                 "49" => "Xelphatol - @sheri_shi_",
                 "50" => "The Qitana Ravel 2 - @ST_261",
+                "51" => "Living Memory - @anoSviX",
+                "52" => "A Cave - @Ar_FF14_",
+                "53" => "Uh..Nier Raid Place? - @BabeUnico",
+                "54" => "Il Mheg 1 - @FF14__Ciel",
+                "55" => "Garden - @FFAru7714",
+                "56" => "The Aetherial Slough - @hoka_mit",
+                "57" => "Garlemald - @igaigako",
+                "58" => "Night Flowers - @KyoBlack_xiv",
+                "59" => "Solution Nine 3 - @KyoBlack_xiv",
+                "60" => "The Black Shroud 2 - @Kyrie_FF14",
+                "61" => "Gears! - @Kyrie_FF14",
+                "62" => "Crystarium - @len_xiv",
+                "63" => "Sil'dihn Subterrane - @len_xiv",
+                "64" => "Thaleia - @len_xiv",
+                "65" => "Il Mheg 2 - @len_xiv",
+                "66" => "Ishgard 3 - @Lina_ff14_",
+                "67" => "Il Mheg 3 - @Lina_ff14_",
+                "68" => "Urqopacha - @Lina_ff14_",
+                "69" => "Mount Rokkon - @Lina_ff14_",
+                "70" => "Great Gubal Library - @Lina_ff14_",
+                "71" => "Clouds - @M_Cieux_FF14",
+                "72" => "Forest Clearing - @natsuchrome",
+                "73" => "Occult Crescent 3 - @NtatuA",
+                "74" => "Crypt in a Cave - @opheli_msb10",
+                "75" => "Mamook 3 - @Rishido_Cuore",
+                "76" => "The Azim Steppe - @Rishido_Cuore",
+                "77" => "Il Mheg 4 - @sakusaku121625",
+                "78" => "Living Memory 2 - @sheri_shi_",
+                "79" => "Puppet's Bunker - @YoshiFahrenheit",
+                "80" => "Sil'dihn Subterrane 2 - @YoshiFahrenheit",
 
                 _ => $"Background {numberStr}"
             };
@@ -782,8 +812,30 @@ namespace CharacterSelectPlugin.Windows
 
                     if (!string.IsNullOrWhiteSpace(character.LastInGameName))
                     {
-                        _ = Plugin.UploadProfileAsync(profile, character.LastInGameName);
-                        plugin.GalleryWindow.RefreshLikeStatesAfterProfileUpdate(character.Name);
+                        // Check if we should upload to gallery based on main character setting
+                        if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                        {
+                            string localName = player.Name.TextValue;
+                            string worldName = player.HomeWorld.Value.Name.ToString();
+                            string fullKey = $"{localName}@{worldName}";
+
+                            // Use the same ShouldUploadToGallery logic
+                            var userMain = plugin.Configuration.GalleryMainCharacter;
+                            bool shouldUpload = !string.IsNullOrEmpty(userMain) &&
+                                               fullKey == userMain &&
+                                               profile.Sharing == ProfileSharing.ShowcasePublic;
+
+                            if (shouldUpload)
+                            {
+                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName);
+                                plugin.GalleryWindow.RefreshLikeStatesAfterProfileUpdate(character.Name);
+                                Plugin.Log.Info($"[RPProfile] ✅ Uploaded profile for {character.Name} from RP editor");
+                            }
+                            else
+                            {
+                                Plugin.Log.Info($"[RPProfile] ⚠ Skipped gallery upload from RP editor - main character check failed");
+                            }
+                        }
                     }
 
                     IsOpen = false;

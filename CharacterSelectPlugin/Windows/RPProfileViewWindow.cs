@@ -26,6 +26,8 @@ namespace CharacterSelectPlugin.Windows
         private bool firstOpen = true;
         private float windowWidth = 420f;
         private float bioScrollY = 0f;
+        private string? imagePreviewUrl = null;
+        private bool showImagePreview = false;
 
         // Animation variables
         private float animationTime = 0f;
@@ -217,6 +219,7 @@ namespace CharacterSelectPlugin.Windows
             plugin.RPProfileViewWindowPos = ImGui.GetWindowPos();
             plugin.RPProfileViewWindowSize = ImGui.GetWindowSize();
             DrawProfileContent(rp, totalScale);
+            DrawImagePreview(totalScale);
             ImGui.End();
 
             if (stylesPushed)
@@ -226,6 +229,93 @@ namespace CharacterSelectPlugin.Windows
                 stylesPushed = false;
             }
         }
+        private void DrawImagePreview(float scale)
+        {
+            if (!showImagePreview || string.IsNullOrEmpty(imagePreviewUrl))
+                return;
+
+            var viewport = ImGui.GetMainViewport();
+            ImGui.SetNextWindowPos(viewport.Pos);
+            ImGui.SetNextWindowSize(viewport.Size);
+
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0, 0, 0, 0.9f));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0);
+
+            if (ImGui.Begin("ImagePreview", ref showImagePreview,
+                    ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize))
+            {
+                IDalamudTextureWrap? texture = null;
+
+                if (File.Exists(imagePreviewUrl!))
+                {
+                    texture = Plugin.TextureProvider.GetFromFile(imagePreviewUrl!).GetWrapOrDefault();
+                }
+
+                if (texture != null)
+                {
+                    var windowSize = ImGui.GetWindowSize();
+                    var imageSize = new Vector2(texture.Width, texture.Height);
+
+                    float scaleX = windowSize.X * 0.9f / imageSize.X;
+                    float scaleY = windowSize.Y * 0.9f / imageSize.Y;
+                    float imageScale = Math.Min(scaleX, scaleY);
+
+                    var displaySize = imageSize * imageScale;
+                    var startPos = (windowSize - displaySize) * 0.5f;
+
+                    ImGui.SetCursorPos(startPos);
+                    ImGui.Image(texture.ImGuiHandle, displaySize);
+                }
+                else
+                {
+                    // Show loading or error message
+                    var windowSize = ImGui.GetWindowSize();
+                    var textSize = ImGui.CalcTextSize("Loading image...");
+                    var textPos = (windowSize - textSize) * 0.5f;
+                    ImGui.SetCursorPos(textPos);
+                    ImGui.Text("Loading image...");
+                }
+
+                // Click anywhere to close
+                if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                    showImagePreview = false;
+            }
+            ImGui.End();
+
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor();
+        }
+        private string? GetCurrentImagePath()
+        {
+            var rp = CurrentProfile;
+            if (rp == null) return null;
+
+            // For external profiles, check if we have a downloaded image
+            if (showingExternal && !string.IsNullOrEmpty(rp.ProfileImageUrl))
+            {
+                if (imageDownloadComplete && File.Exists(downloadedImagePath))
+                    return downloadedImagePath;
+                else
+                    return null; // Still downloading or failed
+            }
+
+            // For local profiles, prefer custom image path
+            if (!string.IsNullOrEmpty(rp.CustomImagePath) && File.Exists(rp.CustomImagePath))
+            {
+                return rp.CustomImagePath;
+            }
+
+            // Fall back to character image path
+            if (!showingExternal && character?.ImagePath is { Length: > 0 } ip && File.Exists(ip))
+            {
+                return ip;
+            }
+
+            // Don't preview the default image
+            return null;
+        }
+
 
         private void DrawProfileContent(RPProfile rp, float scale)
         {
@@ -2340,6 +2430,50 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SetCursorScreenPos(cursor + offset);
             ImGui.Image(texture.ImGuiHandle, drawSize);
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) || ImGui.IsItemClicked(ImGuiMouseButton.Right))
+            {
+                string? imagePath = GetCurrentImagePath();
+                if (!string.IsNullOrEmpty(imagePath))
+                {
+                    imagePreviewUrl = imagePath;
+                    showImagePreview = true;
+                }
+            }
+            if (ImGui.IsItemHovered())
+            {
+                string? imagePath = GetCurrentImagePath();
+                if (!string.IsNullOrEmpty(imagePath))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.25f, 0.25f, 0.35f, 0.6f));
+
+                    ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(12 * scale, 10 * scale));
+                    ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 6.0f * scale);
+
+                    ImGui.BeginTooltip();
+
+                    // Image icon
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.8f, 1.0f, 1.0f));
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.Text("\uf03e"); // Image icon
+                    ImGui.PopFont();
+                    ImGui.PopStyleColor();
+                    ImGui.SameLine(0, 8 * scale);
+                    ImGui.Text("Image Preview");
+
+                    ImGui.Dummy(new Vector2(0, 2 * scale));
+                    ImGui.Separator();
+                    ImGui.Dummy(new Vector2(0, 2 * scale));
+
+                    ImGui.Text("Click to view full image");
+
+                    ImGui.EndTooltip();
+
+                    ImGui.PopStyleVar(2);
+                    ImGui.PopStyleColor(3);
+                }
+            }
             ImGui.EndChild();
         }
 
@@ -2490,7 +2624,7 @@ namespace CharacterSelectPlugin.Windows
 
         private Vector3 ResolveNameplateColor()
         {
-            Vector3 fallback = new(0.4f, 0.7f, 1.0f); // Soft blue
+            Vector3 fallback = new(0.4f, 0.7f, 1.0f);
 
             if (showingExternal && externalProfile != null)
             {

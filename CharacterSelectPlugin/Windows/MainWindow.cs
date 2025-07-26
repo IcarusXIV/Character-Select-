@@ -257,6 +257,23 @@ namespace CharacterSelectPlugin.Windows
             }
             ImGui.SameLine();
 
+            // Patch Notes Button
+            if (ImGui.Button("Patch Notes"))
+            {
+                plugin.PatchNotesWindow.OpenMainMenuOnClose = false;
+                plugin.PatchNotesWindow.IsOpen = !plugin.PatchNotesWindow.IsOpen;
+            }
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("View what's new in Character Select+");
+                ImGui.Text("See the latest features and updates!");
+                ImGui.EndTooltip();
+            }
+
+            ImGui.SameLine();
+
             // Random Button
             ImGui.PushFont(UiBuilder.IconFont);
             if (ImGui.Button("\uf522##RandomSelect", new Vector2(30, 25)))

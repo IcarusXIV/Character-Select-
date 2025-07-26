@@ -107,6 +107,7 @@ namespace CharacterSelectPlugin
         [JsonPropertyName("customGenderNeutralTitle")]
         public string CustomGenderNeutralTitle { get; set; } = "friend";
         public bool EnableRaceReplacement { get; set; } = false;
+        public DateTime LastSeenAnnouncements { get; set; } = DateTime.MinValue;
 
 
         public Configuration(IDalamudPluginInterface pluginInterface)
@@ -147,7 +148,7 @@ namespace CharacterSelectPlugin
             return TheyThemStyle switch
             {
                 GenderNeutralStyle.Friend => "friend",
-                GenderNeutralStyle.HonoredOne => "honored one",
+                GenderNeutralStyle.HonoredOne => "Mx.",
                 GenderNeutralStyle.Traveler => "traveler",
                 GenderNeutralStyle.Adventurer => "adventurer",
                 GenderNeutralStyle.Custom => CustomGenderNeutralTitle,
@@ -160,7 +161,7 @@ namespace CharacterSelectPlugin
             return TheyThemStyle switch
             {
                 GenderNeutralStyle.Friend => "friend",
-                GenderNeutralStyle.HonoredOne => "one",
+                GenderNeutralStyle.HonoredOne => "Mx.",
                 GenderNeutralStyle.Traveler => "traveler",
                 GenderNeutralStyle.Adventurer => "adventurer",
                 GenderNeutralStyle.Custom => CustomGenderNeutralTitle,

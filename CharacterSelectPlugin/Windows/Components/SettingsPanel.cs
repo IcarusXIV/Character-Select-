@@ -465,6 +465,12 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 1f));
             ImGui.TextWrapped("Requires: Completed RP Profile (name & pronouns)");
             ImGui.PopStyleColor();
+
+            // They/Them pronoun chat display warning
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.7f, 0.5f, 1f));
+            ImGui.TextWrapped("Note: Users with They/Them pronouns may occasionally see garbled text in chat. Simply switch between chat tabs to refresh the display if this occurs.");
+            ImGui.PopStyleColor();
+
             ImGui.Spacing();
 
             bool enableDialogue = plugin.Configuration.EnableDialogueIntegration;
@@ -530,13 +536,13 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 DrawTooltip("Replace gendered terms like 'sir/lady', 'man/woman' with appropriate alternatives based on your character's pronouns.");
 
-                bool replaceRace = plugin.Configuration.EnableRaceReplacement;
-                if (ImGui.Checkbox("Use CS+ Character Race", ref replaceRace))
-                {
-                    plugin.Configuration.EnableRaceReplacement = replaceRace;
-                    plugin.Configuration.Save();
-                }
-                DrawTooltip("Replace your race with your CS+ character's race from their RP Profile.");
+                //bool replaceRace = plugin.Configuration.EnableRaceReplacement;
+                //if (ImGui.Checkbox("Use CS+ Character Race", ref replaceRace))
+                //{
+                //    plugin.Configuration.EnableRaceReplacement = replaceRace;
+                //    plugin.Configuration.Save();
+                //}
+                //DrawTooltip("Replace your race with your CS+ character's race from their RP Profile.");
 
                 // They/Them settings section
                 ImGui.Spacing();
@@ -556,14 +562,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 DrawFixedSetting("Neutral Title Style:", labelWidth, inputWidth, () =>
                 {
                     var currentStyle = (int)plugin.Configuration.TheyThemStyle;
-                    string[] styleOptions = { "Friend", "Honored One", "Traveler", "Adventurer", "Custom" };
+                    string[] styleOptions = { "Friend", "Mx.", "Traveler", "Adventurer", "Custom" };
 
                     if (ImGui.Combo("##TheyThemStyle", ref currentStyle, styleOptions, styleOptions.Length))
                     {
                         plugin.Configuration.TheyThemStyle = (Configuration.GenderNeutralStyle)currentStyle;
                         plugin.Configuration.Save();
                     }
-                    DrawTooltip("Friend: \"honored sir\" → \"honored friend\"\nHonored One: \"honored sir\" → \"honored one\"\nTraveler: \"honored sir\" → \"honored traveler\"\nAdventurer: \"honored sir\" → \"honored adventurer\"");
+                    DrawTooltip("Friend: \"honored sir\" → \"honored friend\"\nMx.: \"honored sir\" → \"honored Mx.\"\nTraveler: \"honored sir\" → \"honored traveler\"\nAdventurer: \"honored sir\" → \"honored adventurer\"");
                 });
 
                 if (plugin.Configuration.TheyThemStyle == Configuration.GenderNeutralStyle.Custom)
