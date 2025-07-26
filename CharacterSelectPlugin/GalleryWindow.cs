@@ -435,7 +435,7 @@ namespace CharacterSelectPlugin.Windows
                     else ImGui.PopStyleColor(1);
 
                     // Announcements Tab with notification badge
-                    bool hasNewAnnouncements = announcements.Any(a => a.CreatedAt > lastSeenAnnouncements);
+                    bool hasNewAnnouncements = announcements.Any() && announcements.Any(a => a.CreatedAt > lastSeenAnnouncements.ToUniversalTime());
 
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Announcements ? tabTextColors[4] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
 
@@ -457,8 +457,8 @@ namespace CharacterSelectPlugin.Windows
                         // Mark as seen when entering the tab
                         if (hasNewAnnouncements)
                         {
-                            lastSeenAnnouncements = DateTime.Now;
-                            plugin.Configuration.LastSeenAnnouncements = lastSeenAnnouncements;
+                            lastSeenAnnouncements = DateTime.UtcNow;
+                            plugin.Configuration.LastSeenAnnouncements = DateTime.UtcNow;
                             plugin.Configuration.Save();
                         }
 
