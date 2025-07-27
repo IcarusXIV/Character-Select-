@@ -139,7 +139,8 @@ namespace CharacterSelectPlugin.Windows
         private ReportReason selectedReportReason = ReportReason.InappropriateContent;
         private string customReportReason = "";
         private string reportDetails = "";
-
+        private bool showReportConfirmation = false;
+        private string reportConfirmationMessage = "";
         private void ClearPerformanceCaches()
         {
             cachedCharacterColors.Clear();
@@ -500,6 +501,7 @@ namespace CharacterSelectPlugin.Windows
 
                 DrawImagePreview(totalScale);
                 DrawReportDialog(totalScale);
+                DrawReportConfirmation(totalScale);
                 DrawErrorMessage();
 
                 // Draw gallery effects
@@ -4354,7 +4356,13 @@ namespace CharacterSelectPlugin.Windows
                 };
 
                 using var http = new HttpClient();
-                var json = JsonConvert.SerializeObject(reportRequest);
+
+                var settings = new JsonSerializerSettings
+                {
+                    ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver()
+                };
+
+                var json = JsonConvert.SerializeObject(reportRequest, settings);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 var response = await http.PostAsync(
@@ -4363,25 +4371,93 @@ namespace CharacterSelectPlugin.Windows
 
                 if (response.IsSuccessStatusCode)
                 {
-                    Plugin.ChatGui.Print($"[Gallery] Report submitted successfully for {characterName}");
-
                     // Close the report dialog
                     showReportDialog = false;
                     reportTargetCharacterId = "";
                     reportTargetCharacterName = "";
                     reportDetails = "";
                     customReportReason = "";
+
+                    // Show success confirmation
+                    reportConfirmationMessage = $"Report submitted successfully for {characterName}.\n\nThank you for helping keep the gallery safe!";
+                    showReportConfirmation = true;
                 }
                 else
                 {
-                    Plugin.ChatGui.PrintError($"[Gallery] Failed to submit report: {response.StatusCode}");
+                    reportConfirmationMessage = $"Failed to submit report: {response.StatusCode}\n\nPlease try again later.";
+                    showReportConfirmation = true;
                 }
             }
             catch (Exception ex)
             {
                 Plugin.Log.Error($"[Gallery] Error submitting report: {ex.Message}");
-                Plugin.ChatGui.PrintError("[Gallery] Failed to submit report due to network error");
+                reportConfirmationMessage = "Failed to submit report due to network error.\n\nPlease check your connection and try again.";
+                showReportConfirmation = true;
             }
+        }
+        private void DrawReportConfirmation(float scale)
+        {
+            if (!showReportConfirmation || string.IsNullOrEmpty(reportConfirmationMessage))
+                return;
+
+            ImGui.SetNextWindowSize(new Vector2(400 * scale, 180 * scale), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowPos(ImGui.GetMainViewport().GetCenter(), ImGuiCond.FirstUseEver, new Vector2(0.5f, 0.5f));
+
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.TitleBg, new Vector4(0.12f, 0.12f, 0.12f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, new Vector4(0.18f, 0.18f, 0.18f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.25f, 0.25f, 0.25f, 0.6f));
+
+            // Success button styling
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
+
+            if (ImGui.Begin("Report Submitted##ReportConfirmation", ref showReportConfirmation,
+                ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize))
+            {
+                ImGui.Spacing();
+
+                // Subtle success indicator
+                ImGui.SetCursorPosX((ImGui.GetWindowWidth() - ImGui.CalcTextSize("✓").X) * 0.5f);
+                ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 1.0f), "✓");
+
+                ImGui.Spacing();
+
+                // Message with your standard text colors
+                var messageLines = reportConfirmationMessage.Split('\n');
+                foreach (var line in messageLines)
+                {
+                    var lineWidth = ImGui.CalcTextSize(line).X;
+                    ImGui.SetCursorPosX((ImGui.GetWindowWidth() - lineWidth) * 0.5f);
+
+                    if (line.Contains("successfully"))
+                    {
+                        ImGui.TextColored(new Vector4(0.92f, 0.92f, 0.92f, 1.0f), line);
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), line);
+                    }
+                }
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                // Center the OK button
+                float buttonWidth = 80 * scale;
+                ImGui.SetCursorPosX((ImGui.GetWindowWidth() - buttonWidth) * 0.5f);
+
+                if (ImGui.Button("OK", new Vector2(buttonWidth, 0)))
+                {
+                    showReportConfirmation = false;
+                    reportConfirmationMessage = "";
+                }
+            }
+            ImGui.End();
+
+            ImGui.PopStyleColor(7); // Pop style colors
         }
 
         // Get user-friendly text for report reasons

@@ -63,7 +63,7 @@ namespace CharacterSelectPlugin
         public string? BackgroundImage { get; set; }
         public ProfileEffects? Effects { get; set; }
         public string GalleryStatus { get; set; } = "";
-
+        public bool IsAdvancedMode { get; set; } = false;
 
 
 

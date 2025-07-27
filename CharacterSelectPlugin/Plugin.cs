@@ -44,7 +44,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.0.2"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.0.3"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -189,7 +189,7 @@ namespace CharacterSelectPlugin
         public Vector2? GalleryButtonPos { get; set; }
         public Vector2? GalleryButtonSize { get; set; }
         private NPCDialogueProcessor? dialogueProcessor;
-
+        public bool NewCharacterIsAdvancedMode { get; set; } = false;
 
         public unsafe Plugin(IGameInteropProvider gameInteropProvider)
         {
@@ -910,10 +910,11 @@ namespace CharacterSelectPlugin
                     NewCharacterAutomation // Glamourer Automations
                 )
                 {
-                    IdlePoseIndex = NewCharacterIdlePoseIndex, // IdLES
+                    IdlePoseIndex = NewCharacterIdlePoseIndex,
+                    IsAdvancedMode = NewCharacterIsAdvancedMode, // Use the plugin property
                     Tags = string.IsNullOrWhiteSpace(NewCharacterTag)
-    ? new List<string>()
-    : NewCharacterTag.Split(',').Select(f => f.Trim()).ToList()
+                ? new List<string>()
+                : NewCharacterTag.Split(',').Select(f => f.Trim()).ToList()
                 };
 
                 // Auto-create a Design based on Glamourer Design if available
@@ -1300,10 +1301,20 @@ namespace CharacterSelectPlugin
                 }
             }
 
-
+            // Remove old pose commands and replace with new ones (always do this)
             lines = lines
                 .Where(l => !l.TrimStart().StartsWith("/savepose", StringComparison.OrdinalIgnoreCase))
                 .ToList();
+
+            // Migrate old pose commands to new ones (always do this)
+            for (int i = 0; i < lines.Count; i++)
+            {
+                lines[i] = lines[i]
+                    .Replace("/spose", "/sidle")
+                    .Replace("/sitpose", "/ssit")
+                    .Replace("/groundsitpose", "/sgroundsit")
+                    .Replace("/dozepose", "/sdoze");
+            }
 
             // Insert /glamour automation enable {X} after last /glamour apply
             if (PluginInterface.GetPluginConfig() is Configuration config && config.EnableAutomations)
@@ -1322,13 +1333,32 @@ namespace CharacterSelectPlugin
                     string automationLine = $"/glamour automation enable {automation}";
 
                     if (lastGlamourIndex != -1)
-                        lines.Insert(lastGlamourIndex + 1, automationLine); // Insert after the last /glamour apply
+                        lines.Insert(lastGlamourIndex + 1, automationLine);
                     else
-                        lines.Insert(0, automationLine); // Fallback
+                        lines.Insert(0, automationLine);
                 }
             }
 
-            // Always ensure these are present
+            // For Advanced Mode characters
+            if (character.IsAdvancedMode)
+            {
+                // Only ensure redraw is present if there are any plugin commands
+                bool hasPluginCommands = lines.Any(l =>
+                    l.StartsWith("/penumbra", StringComparison.OrdinalIgnoreCase) ||
+                    l.StartsWith("/glamour", StringComparison.OrdinalIgnoreCase) ||
+                    l.StartsWith("/customize", StringComparison.OrdinalIgnoreCase) ||
+                    l.StartsWith("/honorific", StringComparison.OrdinalIgnoreCase) ||
+                    l.StartsWith("/moodle", StringComparison.OrdinalIgnoreCase));
+
+                if (hasPluginCommands && !lines.Any(l => l.Contains("/penumbra redraw self")))
+                {
+                    lines.Add("/penumbra redraw self");
+                }
+
+                return string.Join("\n", lines);
+            }
+
+            // For non-Advanced Mode characters, do full sanitization
             AddOrReplace("/customize profile disable <me>");
             AddOrReplace("/honorific force clear");
             AddOrReplace("/moodle remove self preset all");
@@ -1336,6 +1366,7 @@ namespace CharacterSelectPlugin
             if (!lines.Any(l => l.Contains("/penumbra redraw self")))
                 lines.Add("/penumbra redraw self");
 
+            // Handle Customize+ profile enabling
             if (!string.IsNullOrWhiteSpace(character.CustomizeProfile))
             {
                 string enableLine = $"/customize profile enable <me>, {character.CustomizeProfile}";
@@ -1348,18 +1379,10 @@ namespace CharacterSelectPlugin
                         lines.Insert(0, enableLine);
                 }
             }
-            // Migrate old pose commands to new ones
-            for (int i = 0; i < lines.Count; i++)
-            {
-                lines[i] = lines[i]
-                    .Replace("/spose", "/sidle")
-                    .Replace("/sitpose", "/ssit")
-                    .Replace("/groundsitpose", "/sgroundsit")
-                    .Replace("/dozepose", "/sdoze");
-            }
 
             return string.Join("\n", lines);
         }
+
         public static string SanitizeDesignMacro(string macro, CharacterDesign design, Character character, bool enableAutomations)
         {
             var lines = macro.Split('\n').Select(l => l.Trim()).ToList();

@@ -687,6 +687,14 @@ namespace CharacterSelectPlugin.Windows.Components
             if (ImGui.Button(isAdvancedModeCharacter ? "Exit Advanced Mode" : "Advanced Mode", new Vector2(0, 25 * scale)))
             {
                 isAdvancedModeCharacter = !isAdvancedModeCharacter;
+
+                // Update the character's advanced mode flag
+                if (IsEditWindowOpen && selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
+                {
+                    plugin.Characters[selectedCharacterIndex].IsAdvancedMode = isAdvancedModeCharacter;
+                    plugin.SaveConfiguration();
+                }
+
                 if (isAdvancedModeCharacter)
                 {
                     // When entering advanced mode, use existing macro if available, otherwise generate
@@ -1263,7 +1271,7 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
             plugin.NewCharacterMoodlePreset = "";
             plugin.NewCharacterIdlePoseIndex = 7;
-
+            plugin.NewCharacterIsAdvancedMode = false;
             // Reset local temp fields
             tempHonorificTitle = "";
             tempHonorificPrefix = "Prefix";
@@ -1377,7 +1385,13 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 advancedCharacterMacroText = character.Macros;
             }
+            // Restore advanced mode state
+            isAdvancedModeCharacter = character.IsAdvancedMode;
 
+            if (isAdvancedModeCharacter)
+            {
+                advancedCharacterMacroText = character.Macros;
+            }
             IsEditWindowOpen = true;
         }
     }
