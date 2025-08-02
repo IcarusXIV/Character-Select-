@@ -36,6 +36,7 @@ namespace CharacterSelectPlugin.Windows
         public float ImageZoom { get; set; } = 1.0f;
         public Vector2 ImageOffset { get; set; } = Vector2.Zero;
         public string GalleryStatus { get; set; } = "";
+        public bool IsNSFW { get; set; } = false;
     }
 
     public class FavoriteSnapshot
@@ -199,6 +200,10 @@ namespace CharacterSelectPlugin.Windows
 
             Plugin.Log.Debug($"[Gallery] Restored {currentFavoritedProfiles.Count} favourites for {ownerKey}");
         }
+        // TOS Modal state
+        private const int CURRENT_TOS_VERSION = 1;
+        private bool showTOSModal = false;
+        private bool hasAcceptedCurrentTOS = false;
 
         // Image preview
         private string? imagePreviewUrl = null;
@@ -269,6 +274,14 @@ namespace CharacterSelectPlugin.Windows
 
             try
             {
+                // **NEW: Check if TOS modal should be shown**
+                if (showTOSModal)
+                {
+                    DrawTOSModal(totalScale);
+                    return; // Don't draw the rest of the gallery
+                }
+
+                // **EXISTING: All your current Draw() method content below this line**
                 bool isWindowFocused = ImGui.IsWindowFocused();
 
                 // Deadlock detection and recovery
@@ -369,14 +382,14 @@ namespace CharacterSelectPlugin.Windows
                     GalleryTab newActiveTab = currentTab;
 
                     var tabTextColors = new Vector4[]
-{
-    new Vector4(0.4f, 0.8f, 0.8f, 1.0f),  // Cyan - Gallery
-    new Vector4(0.4f, 0.8f, 0.4f, 1.0f), // Green - Friends  
-    new Vector4(1.0f, 0.8f, 0.2f, 1.0f), // Yellow - Favourites
-    new Vector4(1.0f, 0.4f, 0.4f, 1.0f), // Red - Blocked
-    new Vector4(0.8f, 0.4f, 1.0f, 1.0f), // Purple - Announcements
-    new Vector4(1.0f, 1.0f, 1.0f, 1.0f)  // White - Settings
-};
+                    {
+                new Vector4(0.4f, 0.8f, 0.8f, 1.0f),  // Cyan - Gallery
+                new Vector4(0.4f, 0.8f, 0.4f, 1.0f), // Green - Friends  
+                new Vector4(1.0f, 0.8f, 0.2f, 1.0f), // Yellow - Favourites
+                new Vector4(1.0f, 0.4f, 0.4f, 1.0f), // Red - Blocked
+                new Vector4(0.8f, 0.4f, 1.0f, 1.0f), // Purple - Announcements
+                new Vector4(1.0f, 1.0f, 1.0f, 1.0f)  // White - Settings
+                    };
 
                     // Dark tab backgrounds
                     ImGui.PushStyleColor(ImGuiCol.Tab, new Vector4(0.12f, 0.12f, 0.12f, 0.8f));
@@ -536,6 +549,181 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PopStyleVar(2);
                 ImGui.PopStyleColor(4);
             }
+        }
+        private void DrawTOSModal(float scale)
+        {
+            // Center the modal
+            var viewport = ImGui.GetMainViewport();
+            var modalSize = new Vector2(650 * scale, 550 * scale);
+            var modalPos = viewport.Pos + (viewport.Size - modalSize) * 0.5f;
+
+            ImGui.SetNextWindowPos(modalPos, ImGuiCond.Always);
+            ImGui.SetNextWindowSize(modalSize, ImGuiCond.Always);
+
+            // Match patch notes styling
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.08f, 0.95f));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.15f, 0.15f, 0.18f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.2f, 0.2f, 0.25f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.25f, 0.25f, 0.3f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.25f, 0.25f, 0.25f, 0.6f));
+
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * scale, 8 * scale));
+
+            bool modalOpen = true;
+            if (ImGui.Begin("Character Select+ Gallery - Terms & Rules", ref modalOpen,
+                ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking))
+            {
+                // Header with warning
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.6f, 0.2f, 1.0f));
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.Text("\uf071"); // Warning triangle
+                ImGui.PopFont();
+                ImGui.SameLine();
+                ImGui.Text("IMPORTANT: Gallery Terms & Community Rules");
+                ImGui.PopStyleColor();
+
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                // Scrollable content
+                ImGui.BeginChild("TOSContent", new Vector2(0, -70 * scale), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
+
+                ImGui.PushTextWrapPos();
+
+                // Age verification
+                DrawTOSSection("AGE VERIFICATION REQUIRED", new Vector4(1.0f, 0.4f, 0.4f, 1.0f), scale);
+                ImGui.TextWrapped("You must be 18 years or older to use the Character Select+ Gallery. This gallery may contain user-generated content marked as NSFW (Not Safe For Work).");
+                ImGui.Spacing();
+
+                // Community rules
+                DrawTOSSection("COMMUNITY RULES", new Vector4(0.4f, 0.8f, 1.0f, 1.0f), scale);
+                ImGui.BulletText("Respect other users and their characters");
+                ImGui.BulletText("No harassment, hate speech, or discriminatory content");
+                ImGui.BulletText("Report inappropriate profiles using the right-click menu");
+                ImGui.BulletText("NSFW content must be properly marked in the RP Profile Editor");
+                ImGui.BulletText("Set your profile sharing to 'Showcase Public' to appear in the gallery");
+                ImGui.Spacing();
+
+                // Content warning
+                DrawTOSSection("CONTENT WARNING", new Vector4(1.0f, 0.8f, 0.2f, 1.0f), scale);
+                ImGui.TextWrapped("The gallery contains user-generated content. While moderated, you may encounter:");
+                ImGui.BulletText("Adult themes and mature content (when NSFW is enabled)");
+                ImGui.BulletText("Roleplay content that may not align with your preferences");
+                ImGui.BulletText("Fan-created characters and stories");
+                ImGui.Spacing();
+
+                // Privacy notice
+                DrawTOSSection("PRIVACY & DATA", new Vector4(0.6f, 1.0f, 0.6f, 1.0f), scale);
+                ImGui.BulletText("Your profiles are only visible based on your sharing settings");
+                ImGui.BulletText("You can block users and report inappropriate content");
+                ImGui.BulletText("NSFW content is hidden by default - enable in Settings if desired");
+                ImGui.BulletText("Your interaction data (likes, favorites) is stored locally");
+                ImGui.Spacing();
+
+                // Moderation
+                DrawTOSSection("MODERATION", new Vector4(0.8f, 0.4f, 1.0f, 1.0f), scale);
+                ImGui.BulletText("Violations may result in profile removal or gallery bans");
+                ImGui.BulletText("Appeals can be made through official Character Select+ channels");
+                ImGui.BulletText("Moderators reserve the right to remove any content");
+                ImGui.Spacing();
+
+                // Agreement text
+                ImGui.Separator();
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+                ImGui.TextWrapped("By clicking 'I Accept', you confirm that you are 18+ years old and agree to follow these community rules and terms of service.");
+                ImGui.PopStyleColor();
+
+                ImGui.PopTextWrapPos();
+                ImGui.EndChild();
+
+                // Bottom buttons
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                float buttonWidth = 120 * scale;
+                float totalButtonWidth = buttonWidth * 2 + (20 * scale);
+                float availableWidth = ImGui.GetContentRegionAvail().X;
+                float buttonStartX = (availableWidth - totalButtonWidth) * 0.5f;
+
+                ImGui.SetCursorPosX(buttonStartX);
+
+                // Accept button
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.2f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.7f, 0.3f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.8f, 0.4f, 1.0f));
+
+                if (ImGui.Button("I Accept (18+)", new Vector2(buttonWidth, 35 * scale)))
+                {
+                    // User accepted TOS
+                    plugin.Configuration.LastAcceptedGalleryTOSVersion = CURRENT_TOS_VERSION;
+                    plugin.Configuration.Save();
+
+                    hasAcceptedCurrentTOS = true;
+                    showTOSModal = false;
+
+                    // Now load the gallery data
+                    _ = LoadGalleryData();
+
+                    Plugin.Log.Info($"[Gallery] User accepted TOS version {CURRENT_TOS_VERSION}");
+                }
+
+                ImGui.PopStyleColor(3);
+
+                ImGui.SameLine();
+
+                // Decline button
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.7f, 0.3f, 0.3f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.8f, 0.4f, 0.4f, 1.0f));
+
+                if (ImGui.Button("Decline", new Vector2(buttonWidth, 35 * scale)))
+                {
+                    // User declined - close the gallery window
+                    IsOpen = false;
+                    Plugin.Log.Info("[Gallery] User declined TOS - gallery closed");
+                }
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("This will close the gallery.\nYou can reopen it anytime to accept the terms.");
+                }
+
+                ImGui.PopStyleColor(3);
+            }
+            ImGui.End();
+
+            ImGui.PopStyleVar(3);
+            ImGui.PopStyleColor(7);
+
+            // If user closed modal without accepting, close gallery
+            if (!modalOpen)
+            {
+                IsOpen = false;
+            }
+        }
+
+        // Simplified section header
+        private void DrawTOSSection(string title, Vector4 accentColor, float scale)
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            var startPos = ImGui.GetCursorScreenPos();
+
+            // Simple background bar
+            var bgMin = startPos + new Vector2(-8 * scale, -3 * scale);
+            var bgMax = startPos + new Vector2(ImGui.GetContentRegionAvail().X + 8 * scale, 22 * scale);
+            drawList.AddRectFilled(bgMin, bgMax, ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.15f, 0.6f)), 4f * scale);
+
+            // Left accent line
+            drawList.AddRectFilled(bgMin, bgMin + new Vector2(3 * scale, bgMax.Y - bgMin.Y), ImGui.GetColorU32(accentColor), 2f * scale);
+
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5 * scale);
+            ImGui.TextColored(accentColor, title);
+            ImGui.Spacing();
         }
 
         private void DrawImagePreview(float scale)
@@ -1412,6 +1600,29 @@ namespace CharacterSelectPlugin.Windows
                 }
             });
 
+            // NSFW Content Settings
+            DrawSettingsSection("Content Filtering", scale, () => {
+                bool showNSFW = plugin.Configuration.ShowNSFWProfiles;
+                if (ImGui.Checkbox("Show NSFW profiles in gallery", ref showNSFW))
+                {
+                    plugin.Configuration.ShowNSFWProfiles = showNSFW;
+                    plugin.Configuration.Save();
+
+                    // Refresh gallery to apply new NSFW setting**
+                    _ = LoadGalleryData();
+                    Plugin.Log.Info($"[Gallery] NSFW profiles visibility: {(showNSFW ? "enabled" : "disabled")} - gallery refreshed");
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("When disabled, profiles marked as NSFW will be hidden from the gallery.");
+                }
+
+                if (showNSFW)
+                {
+                    ImGui.TextColored(new Vector4(1.0f, 0.6f, 0.2f, 1.0f), "⚠ NSFW content enabled - you must be 18+");
+                }
+            });
+
             // Current CS+ Character Settings
             var activeCharacter = GetActiveCharacter();
             if (activeCharacter != null)
@@ -1954,82 +2165,23 @@ namespace CharacterSelectPlugin.Windows
             // Status/Bio preview
             if (!string.IsNullOrEmpty(profile.GalleryStatus))
             {
-                ImGui.Spacing();
 
                 float statusMaxWidth = cardSize.X - (imageSize.X + (20 * scale)) - (15f * scale);
 
-                float reservedBottomSpace = 45f * scale;
-                float currentY = ImGui.GetCursorPosY();
-                float availableHeight = cardSize.Y - currentY - reservedBottomSpace;
-                float lineHeight = ImGui.GetTextLineHeight();
-                int maxAllowedLines = Math.Max(1, Math.Min(2, (int)(availableHeight / lineHeight)));
-
                 var lines = new List<string>();
-                var statusLines = profile.GalleryStatus.Split('\n');
-
-                for (int i = 0; i < Math.Min(Math.Min(statusLines.Length, 2), maxAllowedLines); i++)
-                {
-                    var line = statusLines[i].Trim();
-                    if (!string.IsNullOrEmpty(line))
-                    {
-                        // Truncate line if too long...how many people are going to have a status longer than 50 characters anyway?
-                        if (ImGui.CalcTextSize($"\"{line}\"").X > statusMaxWidth)
-                        {
-                            while (ImGui.CalcTextSize($"\"{line}...\"").X > statusMaxWidth && line.Length > 10)
-                            {
-                                line = line.Substring(0, line.Length - 1);
-                            }
-                            line += "...";
-                        }
-                        lines.Add(line);
-                    }
-                }
-
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + statusMaxWidth);
-                // Add quotes to status like bio has, cause they're fun and feel fancy
-                for (int i = 0; i < lines.Count; i++)
-                {
-                    var line = lines[i];
-                    if (i == 0) line = $"\"{line}";
-                    if (i == lines.Count - 1) line = $"{line}\"";
-                    ImGui.TextColored(new Vector4(0.9f, 0.85f, 0.9f, 1.0f), line);
-                }
-                ImGui.PopTextWrapPos();
-            }
-            else if (!string.IsNullOrEmpty(profile.Bio))
-            {
-                ImGui.Spacing();
-
-                float bioMaxWidth = cardSize.X - (imageSize.X + (20 * scale)) - (15f * scale);
-
-                float reservedBottomSpace = 45f * scale;
-                float currentY = ImGui.GetCursorPosY();
-                float availableHeight = cardSize.Y - currentY - reservedBottomSpace;
-                float lineHeight = ImGui.GetTextLineHeight();
-                int maxAllowedLines = Math.Max(1, Math.Min(2, (int)(availableHeight / lineHeight)));
-
-                // Replace line breaks with spaces for consistent wrapping
-                var cleanedBio = profile.Bio.Replace("\n", " ").Replace("\r", " ");
-
-                // Remove extra spaces
-                while (cleanedBio.Contains("  "))
-                {
-                    cleanedBio = cleanedBio.Replace("  ", " ");
-                }
-
-                var lines = new List<string>();
-                var words = cleanedBio.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var statusWords = profile.GalleryStatus.Replace('\n', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var currentLine = "";
-                int wordIndex = 0;
+                int totalWordsProcessed = 0;
 
-                foreach (var word in words)
+                foreach (var word in statusWords)
                 {
                     var testLine = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
-                    // Include quotes in width calculations
-                    if (ImGui.CalcTextSize($"\"{testLine}\"").X <= bioMaxWidth)
+                    var testLineSize = ImGui.CalcTextSize(testLine);
+
+                    if (testLineSize.X <= statusMaxWidth)
                     {
                         currentLine = testLine;
-                        wordIndex++;
+                        totalWordsProcessed++;
                     }
                     else
                     {
@@ -2037,26 +2189,110 @@ namespace CharacterSelectPlugin.Windows
                         {
                             lines.Add(currentLine);
                             currentLine = word;
-                            wordIndex++;
+                            totalWordsProcessed++;
                         }
                         else
                         {
-                            currentLine = word.Length > 30 ? word.Substring(0, 27) + "..." : word;
-                            wordIndex++;
+                            var truncatedWord = word;
+                            while (ImGui.CalcTextSize(truncatedWord + "...").X > statusMaxWidth && truncatedWord.Length > 3)
+                            {
+                                truncatedWord = truncatedWord.Substring(0, truncatedWord.Length - 1);
+                            }
+                            lines.Add(truncatedWord + "...");
+                            totalWordsProcessed++;
                         }
-                        if (lines.Count >= Math.Min(2, maxAllowedLines)) break;
+
+                        // Stop if we have 2 lines
+                        if (lines.Count >= 2) break;
                     }
                 }
 
-                if (!string.IsNullOrEmpty(currentLine) && lines.Count < Math.Min(2, maxAllowedLines))
+                if (!string.IsNullOrEmpty(currentLine) && lines.Count < 2)
                 {
                     lines.Add(currentLine);
                 }
 
-                if (wordIndex < words.Length && lines.Count > 0)
+                if (totalWordsProcessed < statusWords.Length && lines.Count > 0)
                 {
                     var lastLineIndex = lines.Count - 1;
                     var lastLine = lines[lastLineIndex];
+
+                    while (ImGui.CalcTextSize(lastLine + "...").X > statusMaxWidth && lastLine.Contains(' '))
+                    {
+                        var lastSpaceIndex = lastLine.LastIndexOf(' ');
+                        if (lastSpaceIndex > 0)
+                        {
+                            lastLine = lastLine.Substring(0, lastSpaceIndex);
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    lines[lastLineIndex] = lastLine + "...";
+                }
+
+                foreach (var line in lines)
+                {
+                    ImGui.TextColored(new Vector4(0.9f, 0.85f, 0.9f, 1.0f), line);
+                }
+            }
+            else if (!string.IsNullOrEmpty(profile.Bio))
+            {
+                // Fallback to bio if no status is set
+
+                float bioMaxWidth = cardSize.X - (imageSize.X + (20 * scale)) - (15f * scale);
+
+                var lines = new List<string>();
+                var bioWords = profile.Bio.Replace('\n', ' ').Replace('\r', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var currentLine = "";
+                int totalWordsProcessed = 0;
+
+                foreach (var word in bioWords)
+                {
+                    var testLine = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
+                    var testLineSize = ImGui.CalcTextSize($"\"{testLine}\""); // Include quotes in measurement
+
+                    if (testLineSize.X <= bioMaxWidth)
+                    {
+                        currentLine = testLine;
+                        totalWordsProcessed++;
+                    }
+                    else
+                    {
+                        if (!string.IsNullOrEmpty(currentLine))
+                        {
+                            lines.Add(currentLine);
+                            currentLine = word;
+                            totalWordsProcessed++;
+                        }
+                        else
+                        {
+                            var truncatedWord = word;
+                            while (ImGui.CalcTextSize($"\"{truncatedWord}...\"").X > bioMaxWidth && truncatedWord.Length > 3)
+                            {
+                                truncatedWord = truncatedWord.Substring(0, truncatedWord.Length - 1);
+                            }
+                            lines.Add(truncatedWord + "...");
+                            totalWordsProcessed++;
+                        }
+
+                        // Stop if we have 2 lines
+                        if (lines.Count >= 2) break;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(currentLine) && lines.Count < 2)
+                {
+                    lines.Add(currentLine);
+                }
+
+                if (totalWordsProcessed < bioWords.Length && lines.Count > 0)
+                {
+                    var lastLineIndex = lines.Count - 1;
+                    var lastLine = lines[lastLineIndex];
+
                     while (ImGui.CalcTextSize($"\"{lastLine}...\"").X > bioMaxWidth && lastLine.Contains(' '))
                     {
                         var lastSpaceIndex = lastLine.LastIndexOf(' ');
@@ -2069,10 +2305,11 @@ namespace CharacterSelectPlugin.Windows
                             break;
                         }
                     }
+
                     lines[lastLineIndex] = lastLine + "...";
                 }
 
-                // Render lines with proper spacing
+                // Draw the bio lines with quotes
                 for (int i = 0; i < lines.Count; i++)
                 {
                     var line = lines[i];
@@ -2086,12 +2323,40 @@ namespace CharacterSelectPlugin.Windows
                     }
 
                     ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.85f, 1.0f), line);
+                }
+            }
 
-                    // Only add spacing between lines, not after the last one
-                    if (i < lines.Count - 1)
+            // Tags section to Gallery cards
+            if (!string.IsNullOrEmpty(profile.Tags))
+            {
+                ImGui.SetCursorPos(new Vector2(12 * scale, imageSize.Y + (18 * scale)));
+                float tagsMaxWidth = cardSize.X - (12 * scale) - (70 * scale);
+
+                var tags = profile.Tags.Split(',').Select(t => t.Trim()).Where(t => !string.IsNullOrEmpty(t)).ToList();
+                var displayTags = new List<string>();
+
+                foreach (var tag in tags)
+                {
+                    var tagText = $"Tags: {string.Join(", ", displayTags.Concat(new[] { tag }))}";
+                    var testWidth = ImGui.CalcTextSize(tagText).X;
+
+                    if (testWidth <= tagsMaxWidth)
                     {
-                        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (lineHeight * 0.1f)); // Small gap between lines
+                        displayTags.Add(tag);
                     }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                if (displayTags.Count > 0)
+                {
+                    var finalTagText = displayTags.Count < tags.Count ?
+                        $"Tags: {string.Join(", ", displayTags)}..." :
+                        $"Tags: {string.Join(", ", displayTags)}";
+
+                    ImGui.TextColored(new Vector4(0.8f, 0.6f, 1.0f, 1.0f), finalTagText);
                 }
             }
 
@@ -3239,53 +3504,93 @@ namespace CharacterSelectPlugin.Windows
             // Status/Bio preview
             if (!string.IsNullOrEmpty(profile.GalleryStatus))
             {
-                ImGui.Spacing();
-
                 float statusMaxWidth = cardSize.X - (imageSize.X + (20 * scale)) - (15f * scale);
 
                 var lines = new List<string>();
-                var statusLines = profile.GalleryStatus.Split('\n');
+                var statusWords = profile.GalleryStatus.Replace('\n', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var currentLine = "";
+                int totalWordsProcessed = 0;
 
-                for (int i = 0; i < Math.Min(statusLines.Length, 2); i++)
+                foreach (var word in statusWords)
                 {
-                    var line = statusLines[i].Trim();
-                    if (!string.IsNullOrEmpty(line))
+                    var testLine = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
+                    var testLineSize = ImGui.CalcTextSize(testLine);
+
+                    if (testLineSize.X <= statusMaxWidth)
                     {
-                        if (ImGui.CalcTextSize(line).X > statusMaxWidth)
+                        currentLine = testLine;
+                        totalWordsProcessed++;
+                    }
+                    else
+                    {
+                        if (!string.IsNullOrEmpty(currentLine))
                         {
-                            while (ImGui.CalcTextSize(line + "...").X > statusMaxWidth && line.Length > 10)
-                            {
-                                line = line.Substring(0, line.Length - 1);
-                            }
-                            line += "...";
+                            lines.Add(currentLine);
+                            currentLine = word;
+                            totalWordsProcessed++;
                         }
-                        lines.Add(line);
+                        else
+                        {
+                            var truncatedWord = word;
+                            while (ImGui.CalcTextSize(truncatedWord + "...").X > statusMaxWidth && truncatedWord.Length > 3)
+                            {
+                                truncatedWord = truncatedWord.Substring(0, truncatedWord.Length - 1);
+                            }
+                            lines.Add(truncatedWord + "...");
+                            totalWordsProcessed++;
+                        }
+
+                        // Stop if we have 2 lines
+                        if (lines.Count >= 2) break;
                     }
                 }
 
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + statusMaxWidth);
+                if (!string.IsNullOrEmpty(currentLine) && lines.Count < 2)
+                {
+                    lines.Add(currentLine);
+                }
+
+                if (totalWordsProcessed < statusWords.Length && lines.Count > 0)
+                {
+                    var lastLineIndex = lines.Count - 1;
+                    var lastLine = lines[lastLineIndex];
+
+                    while (ImGui.CalcTextSize(lastLine + "...").X > statusMaxWidth && lastLine.Contains(' '))
+                    {
+                        var lastSpaceIndex = lastLine.LastIndexOf(' ');
+                        if (lastSpaceIndex > 0)
+                        {
+                            lastLine = lastLine.Substring(0, lastSpaceIndex);
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    lines[lastLineIndex] = lastLine + "...";
+                }
+
                 foreach (var line in lines)
                 {
                     ImGui.TextColored(new Vector4(0.9f, 0.85f, 0.9f, 1.0f), line);
                 }
-                ImGui.PopTextWrapPos();
             }
             else if (!string.IsNullOrEmpty(profile.Bio))
             {
                 // Fallback to bio if no status is set
-                ImGui.Spacing();
 
                 float bioMaxWidth = cardSize.X - (imageSize.X + (20 * scale)) - (15f * scale);
 
                 var lines = new List<string>();
-                var bioWords = profile.Bio.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                var bioWords = profile.Bio.Replace('\n', ' ').Replace('\r', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var currentLine = "";
                 int totalWordsProcessed = 0;
 
                 foreach (var word in bioWords)
                 {
                     var testLine = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
-                    var testLineSize = ImGui.CalcTextSize(testLine);
+                    var testLineSize = ImGui.CalcTextSize($"\"{testLine}\""); // Include quotes in measurement
 
                     if (testLineSize.X <= bioMaxWidth)
                     {
@@ -3303,7 +3608,7 @@ namespace CharacterSelectPlugin.Windows
                         else
                         {
                             var truncatedWord = word;
-                            while (ImGui.CalcTextSize(truncatedWord + "...").X > bioMaxWidth && truncatedWord.Length > 3)
+                            while (ImGui.CalcTextSize($"\"{truncatedWord}...\"").X > bioMaxWidth && truncatedWord.Length > 3)
                             {
                                 truncatedWord = truncatedWord.Substring(0, truncatedWord.Length - 1);
                             }
@@ -3343,7 +3648,6 @@ namespace CharacterSelectPlugin.Windows
                 }
 
                 // Draw the bio lines with quotes
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + bioMaxWidth);
                 for (int i = 0; i < lines.Count; i++)
                 {
                     var line = lines[i];
@@ -3358,11 +3662,9 @@ namespace CharacterSelectPlugin.Windows
 
                     ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.85f, 1.0f), line);
                 }
-                ImGui.PopTextWrapPos();
             }
 
-            ImGui.EndGroup();
-
+            // Tags section to Gallery cards
             if (!string.IsNullOrEmpty(profile.Tags))
             {
                 ImGui.SetCursorPos(new Vector2(12 * scale, imageSize.Y + (18 * scale)));
@@ -3370,7 +3672,6 @@ namespace CharacterSelectPlugin.Windows
 
                 var tags = profile.Tags.Split(',').Select(t => t.Trim()).Where(t => !string.IsNullOrEmpty(t)).ToList();
                 var displayTags = new List<string>();
-                float currentWidth = 0;
 
                 foreach (var tag in tags)
                 {
@@ -3380,7 +3681,6 @@ namespace CharacterSelectPlugin.Windows
                     if (testWidth <= tagsMaxWidth)
                     {
                         displayTags.Add(tag);
-                        currentWidth = testWidth;
                     }
                     else
                     {
@@ -3785,7 +4085,12 @@ namespace CharacterSelectPlugin.Windows
             try
             {
                 using var http = Plugin.CreateAuthenticatedHttpClient();
-                var response = await http.GetAsync("https://character-select-profile-server-production.up.railway.app/gallery");
+
+                // Send NSFW preference to server
+                string nsfwParam = plugin.Configuration.ShowNSFWProfiles ? "?nsfw=true" : "";
+                string url = $"https://character-select-profile-server-production.up.railway.app/gallery{nsfwParam}";
+
+                var response = await http.GetAsync(url);
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
@@ -3797,6 +4102,8 @@ namespace CharacterSelectPlugin.Windows
 
                     Plugin.Log.Debug($"[Gallery] User main character: {userMain ?? "None"}");
                     Plugin.Log.Debug($"[Gallery] User CS+ characters: {string.Join(", ", userCharacterNames)}");
+                    Plugin.Log.Debug($"[Gallery] NSFW enabled: {plugin.Configuration.ShowNSFWProfiles}");
+                    Plugin.Log.Debug($"[Gallery] Loaded {rawProfiles.Count} profiles from server");
 
                     var processedProfiles = new List<GalleryProfile>();
 
@@ -3857,7 +4164,7 @@ namespace CharacterSelectPlugin.Windows
                     allProfiles = processedProfiles;
 
                     ExtractPopularTags();
-                    FilterProfiles();
+                    FilterProfiles(); // Additional client-side filtering
                     ClearImpossibleZeroLikes();
 
                     EnsureLikesFilteredByCSCharacter();
@@ -3904,7 +4211,10 @@ namespace CharacterSelectPlugin.Windows
         {
             if (string.IsNullOrEmpty(searchFilter))
             {
-                filteredProfiles = allProfiles.Where(p => !IsProfileBlocked(p)).ToList();
+                filteredProfiles = allProfiles.Where(p =>
+                    !IsProfileBlocked(p)
+                // Removed NSFW filtering here since server handles it now
+                ).ToList();
             }
             else
             {
@@ -3921,7 +4231,7 @@ namespace CharacterSelectPlugin.Windows
 
             SortProfiles();
         }
-
+        
         private void SortProfiles()
         {
             filteredProfiles = sortType switch
@@ -4729,7 +5039,18 @@ namespace CharacterSelectPlugin.Windows
             LoadBlockedProfiles();
             EnsureLikesFilteredByCSCharacter();
             EnsureFavoritesFilteredByCSCharacter();
-            _ = LoadGalleryData();
+
+            // Check if user needs to accept TOS
+            hasAcceptedCurrentTOS = plugin.Configuration.LastAcceptedGalleryTOSVersion >= CURRENT_TOS_VERSION;
+            if (!hasAcceptedCurrentTOS)
+            {
+                showTOSModal = true;
+            }
+            else
+            {
+                _ = LoadGalleryData();
+            }
+
             _ = LoadAnnouncements();
             if (plugin.Configuration.LastSeenAnnouncements != DateTime.MinValue)
             {

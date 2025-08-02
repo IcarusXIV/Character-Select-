@@ -4,6 +4,7 @@ using System.Numerics;
 using ImGuiNET;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
+using System.Collections.Generic;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
@@ -19,6 +20,9 @@ namespace CharacterSelectPlugin.Windows.Components
         private bool behaviorSettingsOpen = false;
         private bool mainCharacterSettingsOpen = false;
         private bool dialogueSettingsOpen = false;
+        private bool characterAssignmentSettingsOpen = false;
+        private string newRealCharacterBuffer = "";
+        private string newCSCharacterBuffer = "";
 
         public SettingsPanel(Plugin plugin, UIStyles uiStyles, MainWindow mainWindow)
         {
@@ -71,6 +75,11 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (dialogueSettingsOpen)
                 totalContentHeight += 200f * totalScale;
+            else
+                totalContentHeight += sectionHeaderHeight;
+
+            if (characterAssignmentSettingsOpen)
+                totalContentHeight += 250f * totalScale;
             else
                 totalContentHeight += sectionHeaderHeight;
 
@@ -162,6 +171,13 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (behaviorSettingsOpen)
                 {
                     DrawBehaviorSettings();
+                }
+
+                // Character Assignments (Cyan)
+                characterAssignmentSettingsOpen = DrawModernCollapsingHeader("Character Assignments", new Vector4(0.2f, 0.8f, 0.9f, 1.0f), characterAssignmentSettingsOpen);
+                if (characterAssignmentSettingsOpen)
+                {
+                    DrawCharacterAssignmentSettings();
                 }
 
                 // Main Character Section (Blue)
@@ -594,6 +610,202 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopStyleColor();
 
                 ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+        }
+
+        private void DrawCharacterAssignmentSettings()
+        {
+            // Warning if Main Character Only Mode is enabled
+            if (plugin.Configuration.EnableMainCharacterOnly)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.7f, 0.3f, 1f));
+
+                // Warning icon
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.Text("\uf071"); // FontAwesome warning triangle
+                ImGui.PopFont();
+
+                ImGui.SameLine();
+                ImGui.TextWrapped("Main Character Only Mode is enabled - Character Assignments will be ignored.");
+                ImGui.PopStyleColor();
+
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 1f));
+                ImGui.TextWrapped("Disable Main Character Only Mode in the Main Character section to use assignments.");
+                ImGui.PopStyleColor();
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.9f, 1.0f, 1f));
+            ImGui.TextWrapped("Assign specific CS+ Characters to auto-apply when logging into specific in-game characters.");
+            ImGui.PopStyleColor();
+
+            ImGui.Spacing();
+
+            // Display current assignments
+            if (plugin.Configuration.CharacterAssignments.Any())
+            {
+                ImGui.Text("Current Assignments:");
+                ImGui.Spacing();
+
+                var toRemove = new List<string>();
+
+                foreach (var assignment in plugin.Configuration.CharacterAssignments.ToList())
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1f));
+                    ImGui.Text($"{assignment.Key}");
+                    ImGui.PopStyleColor();
+
+                    ImGui.SameLine();
+                    ImGui.Text("→");
+                    ImGui.SameLine();
+
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
+                    ImGui.Text(assignment.Value);
+                    ImGui.PopStyleColor();
+
+                    ImGui.SameLine();
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.2f, 0.2f, 0.7f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.3f, 0.3f, 0.8f));
+                    if (ImGui.SmallButton($"Remove##{assignment.Key}"))
+                    {
+                        toRemove.Add(assignment.Key);
+                    }
+                    ImGui.PopStyleColor(2);
+                }
+
+                foreach (var key in toRemove)
+                {
+                    plugin.Configuration.CharacterAssignments.Remove(key);
+                    plugin.Configuration.Save();
+                }
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
+
+            // Add new assignment section
+            ImGui.Text("Add New Assignment:");
+            ImGui.Spacing();
+
+            // Get list of known real characters from existing tracking
+            var knownRealCharacters = plugin.Configuration.LastUsedCharacterByPlayer.Keys.ToList();
+
+            // Add current character if logged in and not already in list
+            if (Plugin.ClientState.IsLoggedIn && Plugin.ClientState.LocalPlayer != null)
+            {
+                var player = Plugin.ClientState.LocalPlayer;
+                if (player.HomeWorld.IsValid)
+                {
+                    string currentFormat = $"{player.Name.TextValue}@{player.HomeWorld.Value.Name}";
+                    if (!knownRealCharacters.Contains(currentFormat))
+                    {
+                        knownRealCharacters.Insert(0, currentFormat);
+                    }
+                }
+            }
+
+            string newRealCharacter = newRealCharacterBuffer;
+            string newCSCharacter = newCSCharacterBuffer;
+
+            ImGui.Text("In-Game Character:");
+            ImGui.SetNextItemWidth(300f);
+
+            if (knownRealCharacters.Any())
+            {
+                // Dropdown of known characters
+                if (ImGui.BeginCombo("##RealCharSelect", string.IsNullOrEmpty(newRealCharacter) ? "Select In-Game Character" : newRealCharacter))
+                {
+                    foreach (var realChar in knownRealCharacters.OrderBy(x => x))
+                    {
+                        bool isSelected = realChar == newRealCharacter;
+                        if (ImGui.Selectable(realChar, isSelected))
+                        {
+                            newRealCharacterBuffer = realChar;
+                        }
+                        if (isSelected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+                DrawTooltip("Select from characters the plugin has seen before, or type manually below.");
+
+                // Manual input as backup
+                ImGui.Text("Or enter manually:");
+                ImGui.SetNextItemWidth(300f);
+                if (ImGui.InputTextWithHint("##RealCharManual", "First Last@WorldName", ref newRealCharacter, 100))
+                {
+                    newRealCharacterBuffer = newRealCharacter;
+                }
+            }
+            else
+            {
+                // Fallback to manual input if no known characters
+                if (ImGui.InputTextWithHint("##RealChar", "First Last@WorldName", ref newRealCharacter, 100))
+                {
+                    newRealCharacterBuffer = newRealCharacter;
+                }
+                DrawTooltip("Enter the exact character name and world as it appears in-game.\nExample: James Stone@Hyperion");
+            }
+
+            ImGui.Spacing();
+
+            ImGui.Text("CS+ Character:");
+            ImGui.SetNextItemWidth(300f);
+            if (ImGui.BeginCombo("##CSChar", string.IsNullOrEmpty(newCSCharacter) ? "Select CS+ Character" : newCSCharacter))
+            {
+                foreach (var character in plugin.Characters)
+                {
+                    if (ImGui.Selectable(character.Name, character.Name == newCSCharacter))
+                    {
+                        newCSCharacterBuffer = character.Name;
+                    }
+                }
+                ImGui.EndCombo();
+            }
+            DrawTooltip("Choose which CS+ character should auto-apply for this in-game character.");
+
+            ImGui.Spacing();
+
+            bool canAdd = !string.IsNullOrWhiteSpace(newRealCharacterBuffer) &&
+                          !string.IsNullOrWhiteSpace(newCSCharacterBuffer) &&
+                          !plugin.Configuration.CharacterAssignments.ContainsKey(newRealCharacterBuffer);
+
+            if (!canAdd)
+                ImGui.BeginDisabled();
+
+            if (ImGui.Button("Add Assignment"))
+            {
+                plugin.Configuration.CharacterAssignments[newRealCharacterBuffer] = newCSCharacterBuffer;
+                plugin.Configuration.Save();
+                Plugin.Log.Debug($"[CharacterAssignment] Added: {newRealCharacterBuffer} → {newCSCharacterBuffer}");
+                newRealCharacterBuffer = "";
+                newCSCharacterBuffer = "";
+            }
+
+            if (!canAdd)
+                ImGui.EndDisabled();
+
+            if (!canAdd && !string.IsNullOrWhiteSpace(newRealCharacterBuffer) && plugin.Configuration.CharacterAssignments.ContainsKey(newRealCharacterBuffer))
+            {
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.6f, 0.6f, 1f));
+                ImGui.Text("Assignment already exists");
+                ImGui.PopStyleColor();
+            }
+
+            // Show helpful info if no known characters
+            if (!knownRealCharacters.Any())
+            {
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.6f, 1f));
+                ImGui.TextWrapped("Tip: The plugin will remember character names after you log into them and use a CS+ character at least once.");
+                ImGui.PopStyleColor();
             }
 
             ImGui.Spacing();

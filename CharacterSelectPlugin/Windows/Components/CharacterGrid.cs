@@ -1015,39 +1015,164 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var filteredCharacters = GetFilteredCharacters();
 
-            if (filteredCharacters.Count <= 40)
+            if (filteredCharacters.Count <= charactersPerPage)
             {
                 currentPage = 0;
                 return;
             }
 
             int totalPages = (int)Math.Ceiling((double)filteredCharacters.Count / charactersPerPage);
-
             if (totalPages <= 1) return;
 
-            ImGui.Spacing();
+            var pagedCharacters = GetPagedCharacters(filteredCharacters);
 
-            float windowWidth = ImGui.GetWindowWidth();
-            float paginationWidth = totalPages * (20.0f * scale);
-            float startX = (windowWidth - paginationWidth) / 2;
+            // For sparse pages, add extra spacing to push pagination down
+            if (pagedCharacters.Count <= 4)
+            {
+                float availableHeight = ImGui.GetContentRegionAvail().Y;
+                float minSpacingForPagination = availableHeight * 0.4f; // Push to bottom 40% of remaining space
+
+                ImGui.Dummy(new Vector2(0, Math.Max(50f * scale, minSpacingForPagination)));
+            }
+            else
+            {
+                // Normal spacing for full pages
+                ImGui.Spacing();
+                ImGui.Spacing();
+                ImGui.Spacing();
+            }
+
+            // Rest of pagination code stays the same...
+            float windowWidth = ImGui.GetContentRegionAvail().X;
+            float buttonWidth = 30f * scale;
+            float buttonHeight = 25f * scale;
+            float buttonSpacing = 8f * scale;
+            float arrowButtonWidth = 25f * scale;
+
+            int maxPageButtons = 10;
+            int startPage = Math.Max(0, currentPage - maxPageButtons / 2);
+            int endPage = Math.Min(totalPages - 1, startPage + maxPageButtons - 1);
+            if (endPage - startPage + 1 < maxPageButtons)
+            {
+                startPage = Math.Max(0, endPage - maxPageButtons + 1);
+            }
+
+            int visiblePageCount = endPage - startPage + 1;
+            float totalWidth = arrowButtonWidth + buttonSpacing + (visiblePageCount * (buttonWidth + buttonSpacing)) + arrowButtonWidth;
+            float startX = Math.Max(10f * scale, (windowWidth - totalWidth) / 2);
 
             ImGui.SetCursorPosX(startX);
 
-            Vector2 dotPosition = ImGui.GetCursorScreenPos();
-            uiStyles.DrawPaginationDots(currentPage, totalPages, dotPosition, scale);
+            // Previous button
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
 
-            for (int i = 0; i < totalPages; i++)
+            bool canGoPrev = currentPage > 0;
+            if (!canGoPrev)
             {
-                Vector2 dotPos = dotPosition + new Vector2(i * (20.0f * scale), 0);
-                Vector2 dotMin = dotPos - new Vector2(8 * scale, 8 * scale);
-                Vector2 dotMax = dotPos + new Vector2(8 * scale, 8 * scale);
+                ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f);
+            }
 
-                if (ImGui.IsMouseHoveringRect(dotMin, dotMax) && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button("\uf053", new Vector2(arrowButtonWidth, buttonHeight)) && canGoPrev)
+            {
+                currentPage--;
+                InvalidateCache();
+            }
+            ImGui.PopFont();
+
+            if (!canGoPrev)
+            {
+                ImGui.PopStyleVar();
+            }
+
+            if (ImGui.IsItemHovered() && canGoPrev)
+            {
+                ImGui.SetTooltip("Previous page");
+            }
+
+            ImGui.SameLine(0, buttonSpacing);
+
+            // Page number buttons
+            for (int i = startPage; i <= endPage; i++)
+            {
+                bool isCurrentPage = i == currentPage;
+
+                if (isCurrentPage)
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.4f, 0.6f, 1.0f, 0.8f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.7f, 1.0f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.3f, 0.5f, 0.9f, 1.0f));
+                }
+                else
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.8f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                }
+
+                string pageLabel = (i + 1).ToString();
+                if (ImGui.Button(pageLabel, new Vector2(buttonWidth, buttonHeight)))
                 {
                     currentPage = i;
                     InvalidateCache();
                 }
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip($"Go to page {i + 1}");
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                }
+
+                ImGui.PopStyleColor(3);
+
+                if (i < endPage)
+                {
+                    ImGui.SameLine(0, buttonSpacing);
+                }
             }
+
+            ImGui.SameLine(0, buttonSpacing);
+
+            // Next button
+            bool canGoNext = currentPage < totalPages - 1;
+            if (!canGoNext)
+            {
+                ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f);
+            }
+
+            ImGui.PushFont(UiBuilder.IconFont);
+            if (ImGui.Button("\uf054", new Vector2(arrowButtonWidth, buttonHeight)) && canGoNext)
+            {
+                currentPage++;
+                InvalidateCache();
+            }
+            ImGui.PopFont();
+
+            if (!canGoNext)
+            {
+                ImGui.PopStyleVar();
+            }
+
+            if (ImGui.IsItemHovered() && canGoNext)
+            {
+                ImGui.SetTooltip("Next page");
+            }
+
+            ImGui.PopStyleColor(3);
+
+            // Page info text
+            ImGui.Spacing();
+            string pageInfo = $"Page {currentPage + 1} of {totalPages} ({filteredCharacters.Count} characters)";
+            var textSize = ImGui.CalcTextSize(pageInfo);
+            ImGui.SetCursorPosX(Math.Max(10f * scale, (windowWidth - textSize.X) / 2));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui.Text(pageInfo);
+            ImGui.PopStyleColor();
+
+            ImGui.Spacing();
+            ImGui.Spacing();
         }
 
         private void ReorderCharacters(int fromIndex, int toIndex)

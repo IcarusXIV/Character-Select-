@@ -44,7 +44,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.0.3"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.0.4"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -2116,29 +2116,27 @@ namespace CharacterSelectPlugin
                 if (Configuration.EnableLastUsedCharacterAutoload &&
                     lastAppliedCharacter != fullKey &&
                     ClientState.TerritoryType != 0 &&
-                    (Configuration.EnableLoginDelay ? DateTime.Now - loginTime > TimeSpan.FromSeconds(3) : true)) // give a short delay to load
+                    (Configuration.EnableLoginDelay ? DateTime.Now - loginTime > TimeSpan.FromSeconds(3) : true))
                 {
-                    // Main Character Only Logic
+                    // Main Character Only Logic takes priority over everything
                     if (Configuration.EnableMainCharacterOnly && !string.IsNullOrEmpty(Configuration.MainCharacterName))
                     {
-                        // Only apply the designated main character
                         var mainCharacter = Characters.FirstOrDefault(c => c.Name == Configuration.MainCharacterName);
                         if (mainCharacter != null)
                         {
-                            Plugin.Log.Debug($"[AutoLoad-Main] ✅ Applying main character {mainCharacter.Name} for {fullKey}");
+                            Plugin.Log.Debug($"[AutoLoad-Main] ✅ Applying main character {mainCharacter.Name} for {fullKey} (overriding any assignments)");
                             ApplyProfile(mainCharacter, -1);
                             lastAppliedCharacter = fullKey;
                         }
                         else
                         {
-                            Plugin.Log.Debug($"[AutoLoad-Main] ❌ Main character '{Configuration.MainCharacterName}' not found, falling back to normal behavior");
-                            // Fall back to normal behavior if main character doesn't exist
+                            Plugin.Log.Debug($"[AutoLoad-Main] ❌ Main character '{Configuration.MainCharacterName}' not found, falling back to assignments/last used");
                             ApplyLastUsedCharacter(fullKey);
                         }
                     }
                     else
                     {
-                        // Normal behavior: apply last used character
+                        // Check assignments, then last used
                         ApplyLastUsedCharacter(fullKey);
                     }
                 }
@@ -2151,17 +2149,31 @@ namespace CharacterSelectPlugin
                 ClientState.TerritoryType != 0 &&
                 (Configuration.EnableLoginDelay ? DateTime.Now - loginTime > TimeSpan.FromSeconds(3) : true))
             {
-                var character = Characters.FirstOrDefault(c =>
-                    c.Name.Equals(_pendingSessionCharacterName, StringComparison.OrdinalIgnoreCase));
+                // Check if current character has a specific assignment - if so, skip deferred startup
+                string localName = ClientState.LocalPlayer.Name.TextValue;
+                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
 
-                if (character != null)
+                bool hasAssignment = Configuration.CharacterAssignments.ContainsKey(fullKey);
+
+                if (hasAssignment)
                 {
-                    Plugin.Log.Debug($"[DeferredStartup] Applying session profile: {_pendingSessionCharacterName}");
-                    ApplyProfile(character, -1);
+                    Plugin.Log.Debug($"[DeferredStartup] Skipping session profile '{_pendingSessionCharacterName}' - {fullKey} has specific assignment");
                 }
                 else
                 {
-                    Plugin.Log.Warning($"[DeferredStartup] Could not find matching character for {_pendingSessionCharacterName}");
+                    var character = Characters.FirstOrDefault(c =>
+                        c.Name.Equals(_pendingSessionCharacterName, StringComparison.OrdinalIgnoreCase));
+
+                    if (character != null)
+                    {
+                        Plugin.Log.Debug($"[DeferredStartup] Applying session profile: {_pendingSessionCharacterName}");
+                        ApplyProfile(character, -1);
+                    }
+                    else
+                    {
+                        Plugin.Log.Warning($"[DeferredStartup] Could not find matching character for {_pendingSessionCharacterName}");
+                    }
                 }
 
                 _pendingSessionCharacterName = null; // Run only once
@@ -2189,6 +2201,27 @@ namespace CharacterSelectPlugin
         }
         private void ApplyLastUsedCharacter(string fullKey)
         {
+            // First check for specific character assignment
+            if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName))
+            {
+                var assignedCharacter = Characters.FirstOrDefault(c => c.Name == assignedCharacterName);
+                if (assignedCharacter != null)
+                {
+                    Plugin.Log.Debug($"[AutoLoad-Assignment] ✅ Applying assigned character {assignedCharacter.Name} for {fullKey}");
+                    ApplyProfile(assignedCharacter, -1);
+                    lastAppliedCharacter = fullKey;
+                    return;
+                }
+                else
+                {
+                    Plugin.Log.Debug($"[AutoLoad-Assignment] ❌ Assigned character '{assignedCharacterName}' not found for {fullKey}");
+                    // Remove invalid assignment
+                    Configuration.CharacterAssignments.Remove(fullKey);
+                    Configuration.Save();
+                }
+            }
+
+            // Fall back to existing "last used" logic
             if (Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))
             {
                 var character = Characters.FirstOrDefault(c =>
@@ -2196,19 +2229,19 @@ namespace CharacterSelectPlugin
 
                 if (character != null)
                 {
-                    Plugin.Log.Debug($"[AutoLoad] ✅ Applying {character.Name} for {fullKey}");
+                    Plugin.Log.Debug($"[AutoLoad-LastUsed] ✅ Applying {character.Name} for {fullKey}");
                     ApplyProfile(character, -1);
-                    lastAppliedCharacter = fullKey; // mark it
+                    lastAppliedCharacter = fullKey;
                 }
                 else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
                 {
-                    Plugin.Log.Debug($"[AutoLoad] ❌ No match found for {lastUsedKey}");
-                    lastAppliedCharacter = $"!notfound:{lastUsedKey}"; // mark it so it doesn't log again
+                    Plugin.Log.Debug($"[AutoLoad-LastUsed] ❌ No match found for {lastUsedKey}");
+                    lastAppliedCharacter = $"!notfound:{lastUsedKey}";
                 }
             }
             else
             {
-                Plugin.Log.Debug($"[AutoLoad] ❌ No previous character stored for {fullKey}");
+                Plugin.Log.Debug($"[AutoLoad] ❌ No assignment or previous character stored for {fullKey}");
             }
         }
         public string FilterJobChangeCommands(string macro)
@@ -2479,6 +2512,22 @@ namespace CharacterSelectPlugin
 
             Plugin.Log.Debug("[SafeRestore] Applying poses after 5s login delay.");
             PoseRestorer.RestorePosesFor(activeCharacter);
+        }
+        public void AddCharacterAssignment(string realCharacter, string csCharacter)
+        {
+            Configuration.CharacterAssignments[realCharacter] = csCharacter;
+            Configuration.Save();
+        }
+
+        public void RemoveCharacterAssignment(string realCharacter)
+        {
+            Configuration.CharacterAssignments.Remove(realCharacter);
+            Configuration.Save();
+        }
+
+        public string? GetAssignedCharacter(string realCharacter)
+        {
+            return Configuration.CharacterAssignments.TryGetValue(realCharacter, out var assigned) ? assigned : null;
         }
 
     }

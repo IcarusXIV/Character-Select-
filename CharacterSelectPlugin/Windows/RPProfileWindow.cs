@@ -49,6 +49,8 @@ namespace CharacterSelectPlugin.Windows
         private List<string> availableBackgrounds = new();
         private string[] backgroundDisplayNames = Array.Empty<string>();
         private int selectedBackgroundIndex = 0;
+        private bool isNSFW = false;
+        private bool originalIsNSFW = false;
 
         public RPProfileWindow(Plugin plugin) : base("Roleplay Profile", ImGuiWindowFlags.None)
         {
@@ -214,6 +216,7 @@ namespace CharacterSelectPlugin.Windows
             tags = rp.Tags ?? "";
             bio = rp.Bio ?? "";
             links = rp.Links ?? "";
+            isNSFW = rp.IsNSFW;
 
             // Store original values for cancel functionality
             originalPronouns = pronouns;
@@ -244,7 +247,7 @@ namespace CharacterSelectPlugin.Windows
             originalImageOffset = rp.ImageOffset;
             originalCustomImagePath = rp.CustomImagePath;
             originalLinks = links;
-
+            originalIsNSFW = isNSFW;
             originalProfileColor = rp.ProfileColor;
 
             if (rp.ProfileColor == null)
@@ -753,6 +756,27 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.PopStyleColor(3);
 
+                // NSFW Checkbox
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.28f, 0.28f, 0.28f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.CheckMark, new Vector4(1.0f, 0.6f, 0.2f, 1.0f));
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * totalScale);
+
+                if (ImGui.Checkbox("NSFW", ref isNSFW))
+                {
+                    // Checkbox changed
+                }
+
+                ImGui.PopStyleVar(1);
+                ImGui.PopStyleColor(4);
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Mark this profile as NSFW (18+ content)");
+                }
+
                 ImGui.SameLine();
 
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
@@ -784,7 +808,7 @@ namespace CharacterSelectPlugin.Windows
                     profile.Tags = tags;
                     profile.Bio = bio;
                     profile.Links = links;
-
+                    profile.IsNSFW = isNSFW;
                     profile.BackgroundImage = rp.BackgroundImage;
                     profile.Effects = rp.Effects;
                     profile.ImageZoom = rp.ImageZoom;
@@ -871,7 +895,7 @@ namespace CharacterSelectPlugin.Windows
                     rp.ImageOffset = originalImageOffset;
                     rp.CustomImagePath = originalCustomImagePath;
                     rp.Links = originalLinks;
-
+                    rp.IsNSFW = originalIsNSFW;
                     rp.ProfileColor = originalProfileColor;
 
                     IsOpen = false;

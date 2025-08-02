@@ -282,6 +282,13 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("Click any profile to view their full RP Profile with backgrounds & effects");
             ImGui.Spacing();
 
+            // NSFW Content Management (NEW!)
+            DrawFeatureSection("\uf06e", "NSFW Content Management (NEW!)", new Vector4(1.0f, 0.7f, 0.4f, 1.0f));
+            ImGui.BulletText("RP Profile Editor now prompts you to mark profiles as NSFW if appropriate");
+            ImGui.BulletText("Gallery setting to opt-in to viewing NSFW profiles (disabled by default)");
+            ImGui.BulletText("Users must acknowledge they are 18+ to view NSFW content in the gallery");
+            ImGui.Spacing();
+
             // Revamped RP Profiles
             DrawFeatureSection("\uf2c2", "Revamped RP Profiles", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
             ImGui.BulletText("Complete visual redesign with new layout and styling");
@@ -347,6 +354,16 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("Designate your main CS+ Character with a crown indicator");
             ImGui.BulletText("Crown display is optional - toggle in settings");
             ImGui.BulletText("'Reapply on Login' can be set to only apply your Main Character");
+            ImGui.Spacing();
+
+            // Character Assignments (NEW!)
+            DrawFeatureSection("\uf0c1", "Character Assignments (NEW!)", new Vector4(0.6f, 1.0f, 0.8f, 1.0f));
+            ImGui.BulletText("Assign specific CS+ Characters to specific in-game characters");
+            ImGui.BulletText("Auto-apply designated CS+ characters when logging into assigned real characters");
+            ImGui.BulletText("Dropdown selection from characters the plugin has seen before");
+            ImGui.BulletText("Multiple real characters can share the same CS+ character");
+            ImGui.BulletText("Takes priority over 'last used' system but respects Main Character Only Mode");
+            ImGui.BulletText("Perfect for players with multiple alts who want consistent character setups");
             ImGui.Spacing();
 
             // Quick Character Switch Improvements

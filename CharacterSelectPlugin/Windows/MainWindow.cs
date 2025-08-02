@@ -84,11 +84,18 @@ namespace CharacterSelectPlugin.Windows
             diceEffect.Draw();
         }
 
-        // Modify your DrawHeader() to fix the button text alignment:
         private void DrawHeader()
         {
-            // Draw "Choose your character" text
-            ImGui.Text("Choose your character");
+            // Draw "Choose your character" text with character count
+            int totalCharacters = plugin.Characters.Count;
+            string headerText = $"Choose your character";
+            ImGui.Text(headerText);
+
+            // Add character count in subtle gray
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui.Text($"({totalCharacters} total)");
+            ImGui.PopStyleColor();
 
             // Move to the same line and position Discord button at far right
             ImGui.SameLine();
@@ -98,7 +105,7 @@ namespace CharacterSelectPlugin.Windows
             var totalScale = dpiScale * uiScale;
 
             float buttonWidth = 70 * totalScale;
-            float buttonHeight = ImGui.GetTextLineHeight() + ImGui.GetStyle().FramePadding.Y * 2; // Match text height
+            float buttonHeight = ImGui.GetTextLineHeight() + ImGui.GetStyle().FramePadding.Y * 2;
             float availableWidth = ImGui.GetContentRegionAvail().X;
 
             // Position button at far right of the same line
@@ -123,6 +130,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Separator();
         }
+
 
         public void UpdateSortType()
         {

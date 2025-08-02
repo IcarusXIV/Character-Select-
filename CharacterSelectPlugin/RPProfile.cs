@@ -31,6 +31,7 @@ namespace CharacterSelectPlugin
         public Vector3Serializable? ProfileColor { get; set; } = null;
         public string? GalleryStatus { get; set; }
         public string? Links { get; set; }
+        public bool IsNSFW { get; set; } = false;
 
         [JsonIgnore]
         public ProfileAnimationTheme? AnimationTheme { get; set; } = null;

@@ -37,6 +37,7 @@ namespace CharacterSelectPlugin
         public byte LastGroundSitPoseAppliedByPlugin { get; set; } = 255;
         public byte LastDozePoseAppliedByPlugin { get; set; } = 255;
         public Dictionary<string, string> LastUsedCharacterByPlayer { get; set; } = new();
+        public Dictionary<string, string> CharacterAssignments { get; set; } = new();
         public bool EnableLastUsedCharacterAutoload { get; set; } = false;
         public string? LastSessionId { get; set; } = null;
         public string? PreviousSessionId { get; set; }
@@ -108,7 +109,8 @@ namespace CharacterSelectPlugin
         public string CustomGenderNeutralTitle { get; set; } = "friend";
         public bool EnableRaceReplacement { get; set; } = false;
         public DateTime LastSeenAnnouncements { get; set; } = DateTime.MinValue;
-
+        public bool ShowNSFWProfiles { get; set; } = false;
+        public int LastAcceptedGalleryTOSVersion { get; set; } = 0;
 
         public Configuration(IDalamudPluginInterface pluginInterface)
         {
