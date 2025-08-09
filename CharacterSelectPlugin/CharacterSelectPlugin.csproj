@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="Dalamud.NET.Sdk/12.0.2">
+<Project Sdk="Dalamud.NET.Sdk/13.0.0">
     <PropertyGroup>
         <TargetFramework>net9.0-windows</TargetFramework>
         <!-- Windows-specific target framework -->
-        <Version>2.0.0.4</Version>
+        <Version>2.0.0.5</Version>
         <Description>Character Select+.</Description>
         <PackageProjectUrl>https://github.com/USBTURTLECUP/Character-Select-</PackageProjectUrl>
         <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
         <IsPackable>false</IsPackable>
         <UseWindowsForms>true</UseWindowsForms>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
 
     <ItemGroup>

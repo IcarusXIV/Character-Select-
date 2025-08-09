@@ -1,7 +1,7 @@
 using System;
 using System.Numerics;
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using CharacterSelectPlugin.Windows.Components;
 using CharacterSelectPlugin.Windows.Styles;
 using Dalamud.Interface;

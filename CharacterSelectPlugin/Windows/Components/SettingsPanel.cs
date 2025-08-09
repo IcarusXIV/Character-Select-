@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
 using System.Collections.Generic;
@@ -664,18 +664,18 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.Text("→");
                     ImGui.SameLine();
 
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
-                    ImGui.Text(assignment.Value);
-                    ImGui.PopStyleColor();
-
-                    ImGui.SameLine();
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.2f, 0.2f, 0.7f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.3f, 0.3f, 0.8f));
-                    if (ImGui.SmallButton($"Remove##{assignment.Key}"))
+                    // Different color for "None" assignments
+                    if (assignment.Value == "None")
                     {
-                        toRemove.Add(assignment.Key);
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.6f, 0.6f, 1f)); // Reddish for None
+                        ImGui.Text("None (No Auto-Apply)");
                     }
-                    ImGui.PopStyleColor(2);
+                    else
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
+                        ImGui.Text(assignment.Value);
+                    }
+                    ImGui.PopStyleColor();
                 }
 
                 foreach (var key in toRemove)
@@ -759,6 +759,16 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.SetNextItemWidth(300f);
             if (ImGui.BeginCombo("##CSChar", string.IsNullOrEmpty(newCSCharacter) ? "Select CS+ Character" : newCSCharacter))
             {
+                // Add "None" option first
+                if (ImGui.Selectable("None", newCSCharacter == "None"))
+                {
+                    newCSCharacterBuffer = "None";
+                }
+
+                // Add separator
+                ImGui.Separator();
+
+                // Add all CS+ characters
                 foreach (var character in plugin.Characters)
                 {
                     if (ImGui.Selectable(character.Name, character.Name == newCSCharacter))
@@ -768,7 +778,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 ImGui.EndCombo();
             }
-            DrawTooltip("Choose which CS+ character should auto-apply for this in-game character.");
+            DrawTooltip("Choose which CS+ character should auto-apply for this in-game character.\nSelect 'None' to prevent any auto-application for this character.");
 
             ImGui.Spacing();
 

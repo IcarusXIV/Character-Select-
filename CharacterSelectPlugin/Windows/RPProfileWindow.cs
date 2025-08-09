@@ -1,5 +1,5 @@
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System.IO;
 using System;
 using System.Numerics;
@@ -397,7 +397,7 @@ namespace CharacterSelectPlugin.Windows
                         // Crop region
                         ImGui.BeginChild("ImageCropFrame", new Vector2(frameSize), false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
                         ImGui.SetCursorScreenPos(drawPos);
-                        ImGui.Image(texture.ImGuiHandle, drawSize);
+                        ImGui.Image((ImTextureID)texture.Handle, drawSize);
                         ImGui.EndChild();
                     }
                     else

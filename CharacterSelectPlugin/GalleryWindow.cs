@@ -1,5 +1,5 @@
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -732,8 +732,8 @@ namespace CharacterSelectPlugin.Windows
                 return;
 
             var viewport = ImGui.GetMainViewport();
-            ImGui.SetNextWindowPos(viewport.Pos);
-            ImGui.SetNextWindowSize(viewport.Size);
+            ImGui.SetNextWindowPos(viewport.Pos, ImGuiCond.Always);
+            ImGui.SetNextWindowSize(viewport.Size, ImGuiCond.Always);
 
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0, 0, 0, 0.9f));
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
@@ -761,7 +761,7 @@ namespace CharacterSelectPlugin.Windows
                     var startPos = (windowSize - displaySize) * 0.5f;
 
                     ImGui.SetCursorPos(startPos);
-                    ImGui.Image(texture.ImGuiHandle, displaySize);
+                    ImGui.Image(texture.Handle, displaySize);
                 }
 
                 if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
@@ -1251,7 +1251,7 @@ namespace CharacterSelectPlugin.Windows
                     ? imageSize.Y * zoom
                     : imageSize.X / aspect * zoom;
 
-                ImGui.Image(tex.ImGuiHandle, new Vector2(drawW, drawH));
+                ImGui.Image(tex.Handle, new Vector2(drawW, drawH));
 
                 if (ImGui.IsItemClicked(ImGuiMouseButton.Left) || ImGui.IsItemClicked(ImGuiMouseButton.Right))
                 {
@@ -1384,7 +1384,7 @@ namespace CharacterSelectPlugin.Windows
                     ? imageSize.Y * zoom
                     : imageSize.X / aspect * zoom;
 
-                ImGui.Image(tex.ImGuiHandle, new Vector2(drawW, drawH));
+                ImGui.Image(tex.Handle, new Vector2(drawW, drawH));
 
                 if (ImGui.IsItemClicked(ImGuiMouseButton.Left) || ImGui.IsItemClicked(ImGuiMouseButton.Right))
                 {
@@ -2730,7 +2730,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
             ImGui.SetCursorScreenPos(cursor + offset);
-            ImGui.Image(texture.ImGuiHandle, drawSize);
+            ImGui.Image(texture.Handle, drawSize);
             ImGui.EndChild();
         }
 

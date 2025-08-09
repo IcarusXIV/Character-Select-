@@ -5,7 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Windows.Forms;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
 
@@ -669,7 +669,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         scale
                     );
 
-                    ImGui.Image(texture.ImGuiHandle, new Vector2(displayWidth, displayHeight));
+                    ImGui.Image((ImTextureID)texture.Handle, new Vector2(displayWidth, displayHeight));
                 }
                 else
                 {

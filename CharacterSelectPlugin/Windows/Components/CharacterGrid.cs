@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
 using CharacterSelectPlugin.Effects;
@@ -461,7 +461,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     var imagePosMax = imagePos + new Vector2(finalWidth, finalHeight);
 
                     drawList.AddImageRounded(
-                        texture.ImGuiHandle,
+                        (ImTextureID)texture.Handle,
                         imagePos,
                         imagePosMax,
                         new Vector2(0, 0),
@@ -904,7 +904,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     // Draw image with transparency
                     uint imageColor = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, ghostImageAlpha));
                     drawList.AddImageRounded(
-                        texture.ImGuiHandle,
+                        (ImTextureID)texture.Handle,
                         imagePos,
                         imagePos + imageSize,
                         new Vector2(0, 0),

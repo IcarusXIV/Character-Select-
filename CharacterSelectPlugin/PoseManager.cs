@@ -16,6 +16,7 @@ public unsafe class ImprovedPoseManager
     private readonly PoseState currentState = new();
     private DateTime lastPoseChange = DateTime.MinValue;
     private const float POSE_CHANGE_COOLDOWN = 0.5f; // Prevent rapid changes
+    private DateTime loginGraceStart = DateTime.MinValue;
 
     public ImprovedPoseManager(IClientState clientState, IFramework framework, Plugin plugin)
     {
@@ -24,6 +25,7 @@ public unsafe class ImprovedPoseManager
         this.plugin = plugin;
 
         framework.Update += OnFrameworkUpdate;
+        clientState.Login += OnLogin;
     }
 
     public bool ApplyPose(EmoteController.PoseType type, byte index)
@@ -127,6 +129,14 @@ public unsafe class ImprovedPoseManager
                 !currentState.IsPluginControlled(type) &&
                 currentPose < 7)
             {
+                // Skip saving pose resets to 0 within 5 seconds of login
+                var secondsSinceLogin = (DateTime.Now - loginGraceStart).TotalSeconds;
+                if (currentPose == 0 && secondsSinceLogin < 5)
+                {
+                    currentState.SetUserControlled(type, lastKnown); // Keep original pose in tracking
+                    continue;
+                }
+
                 Plugin.Log.Debug($"[PoseManager] User changed {type} pose to {currentPose}");
                 SavePoseToConfig(type, currentPose);
                 currentState.SetUserControlled(type, currentPose);
@@ -167,9 +177,15 @@ public unsafe class ImprovedPoseManager
         };
     }
 
+    private void OnLogin()
+    {
+        loginGraceStart = DateTime.Now;
+    }
+
     public void Dispose()
     {
         framework.Update -= OnFrameworkUpdate;
+        clientState.Login -= OnLogin;
     }
 }
 

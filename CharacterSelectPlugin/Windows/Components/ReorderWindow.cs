@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
 
@@ -17,6 +17,13 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public bool IsOpen { get; private set; } = false;
         private List<Character> reorderBuffer = new();
+        
+        // Custom drag system (copied from CharacterGrid)
+        private int? draggedCharacterIndex = null;
+        private bool isDragging = false;
+        private Vector2 dragStartPos = Vector2.Zero;
+        private const float DragThreshold = 5f;
+        private int? currentDropTargetIndex = null;
 
         public ReorderWindow(Plugin plugin, UIStyles uiStyles)
         {
@@ -168,11 +175,129 @@ namespace CharacterSelectPlugin.Windows.Components
             var rowMin = cursorStart;
             var rowMax = cursorStart + new Vector2(ImGui.GetContentRegionAvail().X, rowHeight);
 
-            // Invisible button
+            // Make the entire row a selectable item that can be dragged
             ImGui.SetCursorScreenPos(rowMin);
-            ImGui.InvisibleButton($"##CharRow{index}", new Vector2(ImGui.GetContentRegionAvail().X, rowHeight));
+            bool isSelected = false; // You could track selected state if needed
+            bool clicked = ImGui.Selectable($"##CharRow{index}", isSelected, ImGuiSelectableFlags.SpanAllColumns, new Vector2(ImGui.GetContentRegionAvail().X, rowHeight));
             bool isHovered = ImGui.IsItemHovered();
-            HandleDragAndDrop(index, scale);
+
+            // Custom drag system - no ImGui drag-drop API
+            // Start dragging
+            if (ImGui.IsItemActive() && draggedCharacterIndex == null)
+            {
+                dragStartPos = ImGui.GetMousePos();
+                draggedCharacterIndex = index;
+                isDragging = false;
+            }
+
+            // Check if we've moved far enough to start dragging
+            if (draggedCharacterIndex == index && ImGui.IsMouseDown(ImGuiMouseButton.Left))
+            {
+                Vector2 currentPos = ImGui.GetMousePos();
+                float distance = Vector2.Distance(dragStartPos, currentPos);
+
+                if (distance > DragThreshold * scale)
+                {
+                    isDragging = true;
+                }
+            }
+
+            // Find drop target during dragging
+            if (isDragging && draggedCharacterIndex != null)
+            {
+                bool hoveringArea = ImGui.IsMouseHoveringRect(rowMin, rowMax);
+                if (hoveringArea && index != draggedCharacterIndex)
+                {
+                    currentDropTargetIndex = index;
+                    
+                    // Draw drop zone visual feedback
+                    var drawList = ImGui.GetWindowDrawList();
+                    uint dropZoneColor = ImGui.GetColorU32(new Vector4(0.3f, 0.7f, 1f, 0.8f));
+                    drawList.AddRect(rowMin - new Vector2(2 * scale, 2 * scale), 
+                                   rowMax + new Vector2(2 * scale, 2 * scale), 
+                                   dropZoneColor, 6f * scale, ImDrawFlags.None, 3f * scale);
+                }
+            }
+
+            // End dragging and perform reorder
+            if (draggedCharacterIndex == index && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+            {
+                if (isDragging && currentDropTargetIndex.HasValue)
+                {
+                    int sourceIndex = draggedCharacterIndex.Value;
+                    int targetIndex = currentDropTargetIndex.Value;
+                    
+                    if (sourceIndex != targetIndex && sourceIndex >= 0 && sourceIndex < reorderBuffer.Count)
+                    {
+                        // Move character from source to target position
+                        var draggedChar = reorderBuffer[sourceIndex];
+                        reorderBuffer.RemoveAt(sourceIndex);
+                        
+                        // Adjust target index if we removed an item before it
+                        if (sourceIndex < targetIndex)
+                            targetIndex--;
+                            
+                        reorderBuffer.Insert(targetIndex, draggedChar);
+                    }
+                }
+                
+                // Reset drag state
+                draggedCharacterIndex = null;
+                isDragging = false;
+                currentDropTargetIndex = null;
+            }
+
+            // Draw drag cursor and visual feedback
+            if (isDragging && draggedCharacterIndex == index)
+            {
+                // Keep normal hand cursor while dragging
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                
+                // Draw ghost image of the character being dragged
+                var mousePos = ImGui.GetMousePos();
+                var ghostAlpha = 0.7f;
+                
+                // Draw ghost character row following mouse
+                var ghostMin = mousePos + new Vector2(5, 5);
+                var ghostMax = ghostMin + new Vector2(300 * scale, rowHeight);
+                
+                // Semi-transparent background for ghost
+                var ghostBgColor = ImGui.GetColorU32(new Vector4(0.1f, 0.1f, 0.1f, ghostAlpha));
+                ImGui.GetForegroundDrawList().AddRectFilled(ghostMin, ghostMax, ghostBgColor, 6f * scale);
+                
+                // Ghost border
+                var ghostBorderColor = ImGui.GetColorU32(new Vector4(character.NameplateColor, ghostAlpha));
+                ImGui.GetForegroundDrawList().AddRect(ghostMin, ghostMax, ghostBorderColor, 6f * scale, ImDrawFlags.None, 2f);
+                
+                // Ghost character image
+                if (!string.IsNullOrEmpty(character.ImagePath) && File.Exists(character.ImagePath))
+                {
+                    var texture = Plugin.TextureProvider.GetFromFile(character.ImagePath).GetWrapOrDefault();
+                    if (texture != null)
+                    {
+                        var ghostImageSize = iconSize * 0.8f; // Slightly smaller
+                        var ghostImagePos = ghostMin + new Vector2(8 * scale, 8 * scale);
+                        
+                        // Draw ghost image with transparency
+                        ImGui.GetForegroundDrawList().AddImage(
+                            (ImTextureID)texture.Handle,
+                            ghostImagePos,
+                            ghostImagePos + new Vector2(ghostImageSize, ghostImageSize),
+                            Vector2.Zero,
+                            Vector2.One,
+                            ImGui.GetColorU32(new Vector4(1f, 1f, 1f, ghostAlpha))
+                        );
+                    }
+                }
+                
+                // Ghost text
+                var ghostTextPos = ghostMin + new Vector2(iconSize + 16 * scale, 12 * scale);
+                ImGui.GetForegroundDrawList().AddText(
+                    ghostTextPos,
+                    ImGui.GetColorU32(new Vector4(character.NameplateColor, ghostAlpha)),
+                    character.Name
+                );
+            }
 
             // Background based on hover
             if (isHovered)
@@ -214,7 +339,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     float offsetY = (iconSize - displayHeight) / 2;
 
                     ImGui.SetCursorScreenPos(cursorStart + new Vector2(imageMargin + offsetX, imageMargin + offsetY));
-                    ImGui.Image(texture.ImGuiHandle, new Vector2(displayWidth, displayHeight));
+                    ImGui.Image((ImTextureID)texture.Handle, new Vector2(displayWidth, displayHeight));
 
                     // Add glowing border around image based on character colour
                     var imageMin = cursorStart + new Vector2(imageMargin, imageMargin);
@@ -265,73 +390,6 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.SetCursorScreenPos(new Vector2(rowMin.X, rowMax.Y + (4 * scale)));
         }
 
-        private unsafe void HandleDragAndDrop(int index, float scale)
-        {
-            // Drag source
-            if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
-            {
-                int dragIndex = index;
-                ImGui.SetDragDropPayload("CHARACTER_REORDER", new nint(Unsafe.AsPointer(ref dragIndex)), (uint)sizeof(int));
-
-                // Ghost image for drag...race?
-                var character = reorderBuffer[index];
-
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 1f, 1f, 0.9f));
-                ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.1f, 0.1f, 0.1f, 0.95f));
-                ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(8 * scale, 6 * scale));
-                ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 6f * scale);
-
-                ImGui.BeginGroup();
-
-                // Mini character preview
-                if (!string.IsNullOrEmpty(character.ImagePath) && File.Exists(character.ImagePath))
-                {
-                    var texture = Plugin.TextureProvider.GetFromFile(character.ImagePath).GetWrapOrDefault();
-                    if (texture != null)
-                    {
-                        float previewSize = 32 * scale;
-                        ImGui.Image(texture.ImGuiHandle, new Vector2(previewSize, previewSize));
-                        ImGui.SameLine();
-                    }
-                }
-
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(character.NameplateColor, 1f));
-                ImGui.Text(character.Name);
-                ImGui.PopStyleColor();
-
-                ImGui.EndGroup();
-
-                ImGui.PopStyleVar(2);
-                ImGui.PopStyleColor(2);
-                ImGui.EndDragDropSource();
-            }
-
-            // Drop target
-            if (ImGui.BeginDragDropTarget())
-            {
-                var payload = ImGui.AcceptDragDropPayload("CHARACTER_REORDER");
-                if (payload.NativePtr != null)
-                {
-                    int dragIndex = *(int*)payload.Data;
-                    if (dragIndex >= 0 && dragIndex < reorderBuffer.Count && dragIndex != index)
-                    {
-                        var item = reorderBuffer[dragIndex];
-                        reorderBuffer.RemoveAt(dragIndex);
-                        reorderBuffer.Insert(index, item);
-                    }
-                }
-                ImGui.EndDragDropTarget();
-            }
-
-            // Visual feedback during drag
-            if (ImGui.IsItemHovered() && ImGui.GetDragDropPayload().NativePtr != null)
-            {
-                var itemMin = ImGui.GetItemRectMin();
-                var itemMax = ImGui.GetItemRectMax();
-                var color = ImGui.GetColorU32(new Vector4(0.3f, 0.7f, 1f, 0.8f));
-                ImGui.GetWindowDrawList().AddRect(itemMin, itemMax, color, 6f * scale, ImDrawFlags.None, 2f);
-            }
-        }
 
         private void DrawActionButtons(float scale)
         {

@@ -1,6 +1,6 @@
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures.TextureWraps;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using System.IO;
 using System.Linq;
@@ -265,7 +265,7 @@ namespace CharacterSelectPlugin.Windows
                     var startPos = (windowSize - displaySize) * 0.5f;
 
                     ImGui.SetCursorPos(startPos);
-                    ImGui.Image(texture.ImGuiHandle, displaySize);
+                    ImGui.Image((ImTextureID)texture.Handle, displaySize);
                 }
                 else
                 {
@@ -517,7 +517,7 @@ namespace CharacterSelectPlugin.Windows
             // Change cursor when hovering
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeNWSE);
+                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeNwse);
             }
 
             // Handle dragging
@@ -601,7 +601,7 @@ namespace CharacterSelectPlugin.Windows
                     Vector2 offset = (wndSize - scaledSize) * 0.5f;
 
                     dl.PushClipRect(wndPos, wndPos + wndSize, true);
-                    dl.AddImage(texture.ImGuiHandle,
+                    dl.AddImage((ImTextureID)texture.Handle,
                         wndPos + offset,
                         wndPos + offset + scaledSize,
                         Vector2.Zero,
@@ -924,7 +924,7 @@ namespace CharacterSelectPlugin.Windows
                     Vector2 offset = (wndSize - scaledSize) * 0.5f;
                     float backgroundAlpha = 1.0f;
                     dl.AddImage(
-                        texture.ImGuiHandle,
+                        (ImTextureID)texture.Handle,
                         wndPos + offset,
                         wndPos + offset + scaledSize,
                         Vector2.Zero,
@@ -979,7 +979,7 @@ namespace CharacterSelectPlugin.Windows
                     Vector2 offset = new Vector2((wndSize.X - scaledSize.X) * 0.5f, (wndSize.Y - scaledSize.Y) * 0.2f);
 
                     dl.AddImage(
-                        texture.ImGuiHandle,
+                        (ImTextureID)texture.Handle,
                         wndPos + offset,
                         wndPos + offset + scaledSize,
                         Vector2.Zero,
@@ -1037,7 +1037,7 @@ namespace CharacterSelectPlugin.Windows
                     dl.PushClipRect(wndPos, wndPos + wndSize, true);
 
                     dl.AddImage(
-                        texture.ImGuiHandle,
+                        (ImTextureID)texture.Handle,
                         wndPos + offset,
                         wndPos + offset + scaledSize,
                         Vector2.Zero,
@@ -1306,7 +1306,7 @@ namespace CharacterSelectPlugin.Windows
 
                         // Tiny leaf
                         dl.AddImage(
-                            selectedTexture.ImGuiHandle,
+                            (ImTextureID)selectedTexture.Handle,
                             leafPos,
                             leafPos + leafSize,
                             Vector2.Zero,
@@ -1316,7 +1316,7 @@ namespace CharacterSelectPlugin.Windows
 
                         // Very subtle shadow, don't look it's shy!
                         dl.AddImage(
-                            selectedTexture.ImGuiHandle,
+                            (ImTextureID)selectedTexture.Handle,
                             leafPos + shadowOffset,
                             leafPos + leafSize + shadowOffset,
                             Vector2.Zero,
@@ -1382,7 +1382,7 @@ namespace CharacterSelectPlugin.Windows
                         Vector2 shadowOffset = new Vector2(1f * scale, 1f * scale);
                         Vector4 shadowColor = new Vector4(0f, 0f, 0f, 0.3f);
                         dl.AddImage(
-                            currentTexture.ImGuiHandle,
+                            (ImTextureID)currentTexture.Handle,
                             batPos + shadowOffset,
                             batPos + batSize + shadowOffset,
                             Vector2.Zero,
@@ -1391,7 +1391,7 @@ namespace CharacterSelectPlugin.Windows
                         );
 
                         dl.AddImage(
-                            currentTexture.ImGuiHandle,
+                            (ImTextureID)currentTexture.Handle,
                             batPos,
                             batPos + batSize,
                             Vector2.Zero,
@@ -1553,7 +1553,7 @@ namespace CharacterSelectPlugin.Windows
                 fireColor.W = 1f;
 
                 dl.AddImage(
-                    fireTexture.ImGuiHandle,
+                    (ImTextureID)fireTexture.Handle,
                     finalPosition,
                     finalPosition + spriteSize,
                     Vector2.Zero,
@@ -1882,7 +1882,7 @@ namespace CharacterSelectPlugin.Windows
                         Vector2 shadowOffset = new Vector2(2f * scale, 2f * scale);
                         Vector4 shadowColor = new Vector4(0f, 0f, 0f, 0.2f);
                         dl.AddImage(
-                            butterflyTexture.ImGuiHandle,
+                            (ImTextureID)butterflyTexture.Handle,
                             finalPos + shadowOffset,
                             finalPos + butterflySize + shadowOffset,
                             uvStart,
@@ -1891,7 +1891,7 @@ namespace CharacterSelectPlugin.Windows
                         );
 
                         dl.AddImage(
-                            butterflyTexture.ImGuiHandle,
+                            (ImTextureID)butterflyTexture.Handle,
                             finalPos,
                             finalPos + butterflySize,
                             uvStart,
@@ -2429,7 +2429,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
             ImGui.SetCursorScreenPos(cursor + offset);
-            ImGui.Image(texture.ImGuiHandle, drawSize);
+            ImGui.Image((ImTextureID)texture.Handle, drawSize);
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left) || ImGui.IsItemClicked(ImGuiMouseButton.Right))
             {
                 string? imagePath = GetCurrentImagePath();
@@ -2484,7 +2484,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor();
 
             var bioText = rp.Bio ?? "No biography available.";
-            var textSize = ImGui.CalcTextSize(bioText, ImGui.GetContentRegionAvail().X - (20f * scale));
+            var textSize = ImGui.CalcTextSize(bioText, false, ImGui.GetContentRegionAvail().X - (20f * scale));
             var bioHeight = Math.Min(Math.Max(textSize.Y + (20f * scale), 80f * scale), 150f * scale);
 
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.05f, 0.05f, 0.1f, 0.6f));

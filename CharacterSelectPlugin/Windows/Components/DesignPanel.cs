@@ -5,7 +5,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Windows.Forms;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -123,7 +123,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Capture mouse input when over resize handle to prevent window dragging
             if (hovered || isResizing)
             {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
+                ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEw);
 
                 if (hovered && (ImGui.IsMouseClicked(ImGuiMouseButton.Left) || ImGui.IsMouseDown(ImGuiMouseButton.Left)))
                 {
@@ -682,7 +682,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (texture != null)
                 {
                     float previewSize = 100f * scale;
-                    ImGui.Image(texture.ImGuiHandle, new Vector2(previewSize, previewSize));
+                    ImGui.Image((ImTextureID)texture.Handle, new Vector2(previewSize, previewSize));
                 }
             }
             else if (!string.IsNullOrEmpty(editedDesignPreviewPath))
@@ -884,10 +884,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopStyleColor(3);
 
                 // Drag source
-                if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
+                if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullId))
                 {
                     draggedFolder = folder;
-                    ImGui.SetDragDropPayload("FOLDER_MOVE", IntPtr.Zero, 0);
+                    ImGui.SetDragDropPayload("FOLDER_MOVE", ReadOnlySpan<byte>.Empty, ImGuiCond.None);
                     ImGui.TextUnformatted($"Moving Folder: {folder.Name}");
                     ImGui.EndDragDropSource();
                 }
@@ -1114,11 +1114,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopStyleColor(3);
 
                 // Enable drag and drop
-                if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left, 4f * scale) &&
-                    ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullID))
+                if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left) &&
+                    ImGui.BeginDragDropSource(ImGuiDragDropFlags.SourceAllowNullId))
                 {
                     draggedDesign = design;
-                    ImGui.SetDragDropPayload("DESIGN_MOVE", IntPtr.Zero, 0);
+                    ImGui.SetDragDropPayload("DESIGN_MOVE", ReadOnlySpan<byte>.Empty, ImGuiCond.None);
 
                     // Ghost image
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 1f, 1f, 0.8f));
@@ -1222,7 +1222,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     {
                         float maxSize = 300f * scale;
                         var (displayWidth, displayHeight) = CalculateImageDimensions(texture, maxSize);
-                        ImGui.Image(texture.ImGuiHandle, new Vector2(displayWidth, displayHeight));
+                        ImGui.Image((ImTextureID)texture.Handle, new Vector2(displayWidth, displayHeight));
                     }
                 }
                 ImGui.EndTooltip();

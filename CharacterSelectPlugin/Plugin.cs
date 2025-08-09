@@ -44,7 +44,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.0.4"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.0.5"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -2204,6 +2204,14 @@ namespace CharacterSelectPlugin
             // First check for specific character assignment
             if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName))
             {
+                // Check if assignment is "None" - skip all auto-application
+                if (assignedCharacterName == "None")
+                {
+                    Plugin.Log.Debug($"[AutoLoad-Assignment] ⚠ Assignment set to 'None' for {fullKey} - skipping all auto-application");
+                    lastAppliedCharacter = fullKey;
+                    return;
+                }
+
                 var assignedCharacter = Characters.FirstOrDefault(c => c.Name == assignedCharacterName);
                 if (assignedCharacter != null)
                 {
@@ -2215,9 +2223,12 @@ namespace CharacterSelectPlugin
                 else
                 {
                     Plugin.Log.Debug($"[AutoLoad-Assignment] ❌ Assigned character '{assignedCharacterName}' not found for {fullKey}");
-                    // Remove invalid assignment
-                    Configuration.CharacterAssignments.Remove(fullKey);
-                    Configuration.Save();
+                    // Remove invalid assignment (but keep "None" assignments)
+                    if (assignedCharacterName != "None")
+                    {
+                        Configuration.CharacterAssignments.Remove(fullKey);
+                        Configuration.Save();
+                    }
                 }
             }
 

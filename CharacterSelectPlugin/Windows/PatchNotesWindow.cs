@@ -1,7 +1,7 @@
 using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures.TextureWraps;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using System.IO;
 using System.Numerics;
@@ -113,7 +113,7 @@ namespace CharacterSelectPlugin.Windows
 
                         // Draw the banner image starting from the header position
                         var imagePos = headerStart;
-                        drawList.AddImage(texture.ImGuiHandle, imagePos, imagePos + new Vector2(scaledWidth, scaledHeight));
+                        drawList.AddImage((ImTextureID)texture.Handle, imagePos, imagePos + new Vector2(scaledWidth, scaledHeight));
 
                         // Draw particles
                         DrawParticleEffects(drawList, headerStart, new Vector2(scaledWidth, scaledHeight));

@@ -1,6 +1,6 @@
 using System;
 using System.Numerics;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 
 namespace CharacterSelectPlugin.Windows.Utils
 {
