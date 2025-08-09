@@ -35,6 +35,8 @@ jobs:
         run: |
           $ver = '${{ github.ref_name }}'
           dotnet build --no-restore --configuration Release -p:Version=$ver -p:AssemblyVersion=$ver -p:FileVersion=$ver
+        env:
+          DalamudLibPath: ${{ env.AppData }}\XIVLauncher\addon\Hooks\dev\
 
       - name: Update version in repo.json
         run: |
