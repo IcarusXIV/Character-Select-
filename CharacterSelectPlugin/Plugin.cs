@@ -44,7 +44,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.0.5"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.0.6"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
