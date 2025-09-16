@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 
 namespace CharacterSelectPlugin.Windows
@@ -71,6 +72,9 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetNextItemWidth(dropdownWidth);
             int tempCharacterIndex = selectedCharacterIndex;
 
+            var characterComboColor = ImRaii.PushColor(ImGuiCol.Text, selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count
+                ? GetNameplateColor(plugin.Characters[selectedCharacterIndex])
+                : new Vector4(1, 1, 1, 1));
             if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightRegular))
             {
                 for (int i = 0; i < plugin.Characters.Count; i++)
@@ -78,6 +82,7 @@ namespace CharacterSelectPlugin.Windows
                     var character = plugin.Characters[i];
                     bool isSelected = (tempCharacterIndex == i);
 
+                    using var color = ImRaii.PushColor(ImGuiCol.Text, GetNameplateColor(character));
                     if (ImGui.Selectable(character.Name, isSelected))
                     {
                         tempCharacterIndex = i;
@@ -103,6 +108,8 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.EndCombo();
             }
 
+            characterComboColor.Dispose();
+
             selectedCharacterIndex = tempCharacterIndex;
 
             ImGui.SameLine(0, spacing);
@@ -112,8 +119,12 @@ namespace CharacterSelectPlugin.Windows
             {
                 var selectedCharacter = plugin.Characters[selectedCharacterIndex];
                 int tempDesignIndex = selectedDesignIndex;
+                var selectedDesign = GetSelectedDesign(selectedCharacter);
 
                 ImGui.SetNextItemWidth(dropdownWidth);
+                var designComboColor = ImRaii.PushColor(ImGuiCol.Text, selectedDesignIndex >= 0 && selectedDesignIndex < selectedCharacter.Designs.Count && selectedDesign != null
+                    ? GetDesignColor(selectedDesign)
+                    : new Vector4(1, 1, 1, 1));
                 if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightRegular))
                 {
                     var orderedDesigns = selectedCharacter.Designs
@@ -125,7 +136,9 @@ namespace CharacterSelectPlugin.Windows
                     {
                         var entry = orderedDesigns[j];
                         bool isSelected = (tempDesignIndex == entry.OriginalIndex);
+                        var designColor = GetDesignColor(entry.Design);
 
+                        using var color = ImRaii.PushColor(ImGuiCol.Text, designColor);
                         if (ImGui.Selectable(entry.Design.Name, isSelected))
                         {
                             tempDesignIndex = entry.OriginalIndex; // store original index to stay consistent
@@ -137,6 +150,8 @@ namespace CharacterSelectPlugin.Windows
 
                     ImGui.EndCombo();
                 }
+
+                designComboColor.Dispose();
 
                 selectedDesignIndex = tempDesignIndex;
             }
@@ -314,6 +329,11 @@ namespace CharacterSelectPlugin.Windows
             return new Vector4(character.NameplateColor.X, character.NameplateColor.Y, character.NameplateColor.Z, 1.0f);
         }
 
+        private Vector4 GetDesignColor(CharacterDesign design)
+        {
+            return new Vector4(design.Color.X, design.Color.Y, design.Color.Z, 1.0f);
+        }
+
         private string GetSelectedCharacterName()
         {
             return (selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
@@ -321,11 +341,16 @@ namespace CharacterSelectPlugin.Windows
                 : "Select Character";
         }
 
-        private string GetSelectedDesignName(Character character)
+        private CharacterDesign? GetSelectedDesign(Character character)
         {
             return (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
-                ? character.Designs[selectedDesignIndex].Name
-                : "Select Design";
+                ? character.Designs[selectedDesignIndex]
+                : null;
+        }
+
+        private string GetSelectedDesignName(Character character)
+        {
+            return GetSelectedDesign(character)?.Name ?? "Select Design";
         }
 
         private Vector4 GetContrastingTextColor(Vector4 bgColor)

@@ -38,6 +38,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         // Edit fields
         private string editedDesignName = "";
+        private Vector3 editedDesignColor = new Vector3(1.0f, 1.0f, 1.0f);
         private string editedDesignMacro = "";
         private string editedGlamourerDesign = "";
         private string editedAutomation = "";
@@ -517,6 +518,11 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             plugin.DesignNameFieldPos = ImGui.GetItemRectMin();
             plugin.DesignNameFieldSize = ImGui.GetItemRectSize();
+
+            // Design Color
+            ImGui.Text("Design Color");
+            ImGui.SetCursorPosX(10 * scale);
+            ImGui.ColorEdit3("##DesignColor", ref editedDesignColor);
 
             ImGui.Separator();
 
@@ -1177,7 +1183,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 name = TruncateWithEllipsis(name, availW);
 
             // Design name
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(design.Color.X, design.Color.Y, design.Color.Z, 1f));
             ImGui.TextUnformatted(name);
             ImGui.PopStyleColor();
 
@@ -1345,6 +1351,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             {
                                 var clone = new CharacterDesign(
                                     name: $"{design.Name} (Copy)",
+                                    color: design.Color,
                                     macro: design.Macro,
                                     isAdvancedMode: design.IsAdvancedMode,
                                     advancedMacro: design.AdvancedMacro,
@@ -1477,6 +1484,7 @@ namespace CharacterSelectPlugin.Windows.Components
             isEditDesignWindowOpen = true;
             plugin.IsEditDesignWindowOpen = true;
             editedDesignName = "";
+            editedDesignColor = new Vector3(1.0f, 1.0f, 1.0f);
             editedGlamourerDesign = "";
             editedDesignMacro = "";
             isAdvancedModeDesign = false;
@@ -1494,6 +1502,7 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.IsEditDesignWindowOpen = true;
             originalDesignName = design.Name;
             editedDesignName = design.Name;
+            editedDesignColor = design.Color;
             editedDesignMacro = design.IsAdvancedMode ? design.AdvancedMacro ?? "" : design.Macro ?? "";
             editedGlamourerDesign = !string.IsNullOrWhiteSpace(design.GlamourerDesign)
                 ? design.GlamourerDesign
@@ -1520,6 +1529,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private void ResetEditFields()
         {
             editedDesignName = "";
+            editedDesignColor = new Vector3(1.0f, 1.0f, 1.0f);
             editedDesignMacro = "";
             editedGlamourerDesign = "";
             editedAutomation = "";
@@ -1542,6 +1552,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // Update existing design
                 existingDesign.Name = editedDesignName;
+                existingDesign.Color = editedDesignColor;
                 bool wasPreviouslyAdvanced = existingDesign.IsAdvancedMode;
                 bool keepAdvanced = wasPreviouslyAdvanced && !isAdvancedModeDesign;
 
@@ -1564,6 +1575,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 // Add new design
                 character.Designs.Add(new CharacterDesign(
                     editedDesignName,
+                    editedDesignColor,
                     isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro(character),
                     isAdvancedModeDesign,
                     isAdvancedModeDesign ? advancedDesignMacroText : "",
