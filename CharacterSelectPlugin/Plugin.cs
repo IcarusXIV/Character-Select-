@@ -923,6 +923,7 @@ namespace CharacterSelectPlugin
                     string defaultDesignName = $"{NewCharacterName} {NewGlamourerDesign}";
                     var defaultDesign = new CharacterDesign(
                     defaultDesignName,
+                    new Vector3(1.0f, 1.0f, 1.0f), // Default to white
                     "",  // macro will be filled below
                     false,
                     ""
