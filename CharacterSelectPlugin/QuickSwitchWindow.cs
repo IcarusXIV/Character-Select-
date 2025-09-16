@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 
 namespace CharacterSelectPlugin.Windows
@@ -71,6 +72,9 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetNextItemWidth(dropdownWidth);
             int tempCharacterIndex = selectedCharacterIndex;
 
+            var characterComboColor = ImRaii.PushColor(ImGuiCol.Text, selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count
+                ? GetNameplateColor(plugin.Characters[selectedCharacterIndex])
+                : new Vector4(1, 1, 1, 1));
             if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightRegular))
             {
                 for (int i = 0; i < plugin.Characters.Count; i++)
@@ -78,6 +82,7 @@ namespace CharacterSelectPlugin.Windows
                     var character = plugin.Characters[i];
                     bool isSelected = (tempCharacterIndex == i);
 
+                    using var color = ImRaii.PushColor(ImGuiCol.Text, GetNameplateColor(character));
                     if (ImGui.Selectable(character.Name, isSelected))
                     {
                         tempCharacterIndex = i;
@@ -102,6 +107,8 @@ namespace CharacterSelectPlugin.Windows
                 }
                 ImGui.EndCombo();
             }
+
+            characterComboColor.Dispose();
 
             selectedCharacterIndex = tempCharacterIndex;
 
