@@ -48,6 +48,12 @@ namespace CharacterSelectPlugin
         public uint LastKnownJobId { get; set; } = 0;
         public Dictionary<string, string> LastUsedDesignByCharacter { get; set; } = new();
         public bool ReapplyDesignOnJobChange { get; set; } = false;
+        
+        // Pose Settings
+        public bool? UseCommandBasedPoses { get; set; } = true; // null = not set yet, will default to true
+        
+        // Design Sorting
+        public int CurrentDesignSortIndex { get; set; } = 1; // Default to Alphabetical (matches DesignSortType.Alphabetical)
         public string? LastUsedDesignCharacterKey { get; set; } = null;
         public string? LastUsedCharacterKey { get; set; } = null;
         [DefaultValue(false)]
@@ -77,6 +83,10 @@ namespace CharacterSelectPlugin
         public bool ShowMainCharacterCrown { get; set; } = true;
         public HashSet<string> BlockedGalleryProfiles { get; set; } = new();
         public float DesignPanelWidth { get; set; } = 300f;
+        
+        // Conflict Resolution settings (formerly Secret Mode)
+        public bool EnableConflictResolution { get; set; } = false;
+        public HashSet<string> SecretModeBlacklistedMods { get; set; } = new(); // Keep for backwards compatibility
         public HashSet<string> FollowedPlayers { get; set; } = new();
         [JsonPropertyName("enableDialogueIntegration")]
         public bool EnableDialogueIntegration { get; set; } = false;

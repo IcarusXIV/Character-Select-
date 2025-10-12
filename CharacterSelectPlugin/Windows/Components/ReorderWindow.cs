@@ -456,6 +456,9 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.Configuration.CurrentSortIndex = (int)Plugin.SortType.Manual;
             plugin.SaveConfiguration();
 
+            // Update CharacterGrid to use the new sort type
+            plugin.MainWindow.UpdateSortType();
+
             reorderBuffer.Clear();
         }
         private float GetSafeScale(float baseScale)

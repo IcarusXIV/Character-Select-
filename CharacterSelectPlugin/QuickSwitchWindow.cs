@@ -1,8 +1,10 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using System.Collections.Generic;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -84,12 +86,11 @@ namespace CharacterSelectPlugin.Windows
 
                         if (character.Designs.Count > 0)
                         {
-                            var ordered = character.Designs
-                                .Select((d, index) => new { Design = d, Index = index })
-                                .OrderBy(x => x.Design.Name, StringComparer.OrdinalIgnoreCase)
-                                .ToList();
-
-                            selectedDesignIndex = ordered[0].Index;
+                            var sortedDesigns = GetSortedDesigns(character);
+                            if (sortedDesigns.Count > 0)
+                            {
+                                selectedDesignIndex = GetOriginalIndex(character, sortedDesigns[0]);
+                            }
                         }
                         else
                         {
@@ -116,9 +117,8 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SetNextItemWidth(dropdownWidth);
                 if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightRegular))
                 {
-                    var orderedDesigns = selectedCharacter.Designs
-                        .Select((d, index) => new { Design = d, OriginalIndex = index })
-                        .OrderBy(x => x.Design.Name, StringComparer.OrdinalIgnoreCase)
+                    var orderedDesigns = GetSortedDesigns(selectedCharacter)
+                        .Select((d, index) => new { Design = d, OriginalIndex = GetOriginalIndex(selectedCharacter, d) })
                         .ToList();
 
                     for (int j = 0; j < orderedDesigns.Count; j++)
@@ -309,6 +309,45 @@ namespace CharacterSelectPlugin.Windows
             }
         }
 
+        private List<CharacterDesign> GetSortedDesigns(Character character)
+        {
+            var sortIndex = plugin.Configuration.CurrentDesignSortIndex;
+            var designs = character.Designs.ToList();
+            
+            // 0=Favorites, 1=Alphabetical, 2=Recent, 3=Oldest, 4=Manual
+            if (sortIndex == 4) // Manual
+                return designs;
+
+            if (sortIndex == 0) // Favorites
+            {
+                designs.Sort((a, b) =>
+                {
+                    int favCompare = b.IsFavorite.CompareTo(a.IsFavorite);
+                    if (favCompare != 0) return favCompare;
+                    return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                });
+            }
+            else if (sortIndex == 1) // Alphabetical
+            {
+                designs.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            }
+            else if (sortIndex == 2) // Recent
+            {
+                designs.Sort((a, b) => b.DateAdded.CompareTo(a.DateAdded));
+            }
+            else if (sortIndex == 3) // Oldest
+            {
+                designs.Sort((a, b) => a.DateAdded.CompareTo(b.DateAdded));
+            }
+            
+            return designs;
+        }
+        
+        private int GetOriginalIndex(Character character, CharacterDesign design)
+        {
+            return character.Designs.FindIndex(d => d.Id == design.Id);
+        }
+
         private Vector4 GetNameplateColor(Character character)
         {
             return new Vector4(character.NameplateColor.X, character.NameplateColor.Y, character.NameplateColor.Z, 1.0f);
@@ -341,8 +380,28 @@ namespace CharacterSelectPlugin.Windows
 
             var character = plugin.Characters[selectedCharacterIndex];
 
+            // Apply Secret Mode mod states if configured
+            if (character.SecretModState != null && character.SecretModState.Any())
+            {
+                _ = plugin.ApplySecretModState(character);
+            }
+
             plugin.ExecuteMacro(character.Macros, character, null);
             plugin.SetActiveCharacter(character);
+
+            // Switch Penumbra UI collection to match the character's collection
+            if (!string.IsNullOrEmpty(character.PenumbraCollection))
+            {
+                var success = plugin.PenumbraIntegration.SwitchCollection(character.PenumbraCollection);
+                if (success)
+                {
+                    Plugin.Log.Information($"Successfully switched Penumbra UI collection to: {character.PenumbraCollection}");
+                }
+                else
+                {
+                    Plugin.Log.Warning($"Failed to switch Penumbra UI collection to: {character.PenumbraCollection}");
+                }
+            }
 
             if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
@@ -394,16 +453,51 @@ namespace CharacterSelectPlugin.Windows
             // Always apply the design if selected
             if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
             {
-                plugin.ExecuteMacro(character.Designs[selectedDesignIndex].Macro);
-                plugin.Configuration.LastUsedDesignByCharacter[character.Name] = character.Designs[selectedDesignIndex].Name;
+                var design = character.Designs[selectedDesignIndex];
+                
+                // Check if this is a Conflict Resolution design
+                if (design.SecretModState != null && design.SecretModState.Any())
+                {
+                    // Apply mod state asynchronously first, then execute macro with proper threading
+                    _ = Task.Run(async () =>
+                    {
+                        await plugin.ApplyDesignModState(character, design);
+                        Plugin.Framework.RunOnFrameworkThread(() => plugin.ExecuteMacro(design.Macro, character, design.Name));
+                    });
+                }
+                else
+                {
+                    // Regular design - just execute the macro
+                    plugin.ExecuteMacro(design.Macro, character, design.Name);
+                }
+                
+                plugin.Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
                 plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
                 plugin.Configuration.Save();
             }
 
-            // Always apply idle pose if a valid one is set
-            if (character.IdlePoseIndex < 7)
+            // Apply idle pose if a valid one is set, unless design has its own idle
+            bool shouldRestoreCharacterIdle = character.IdlePoseIndex < 7;
+            
+            // If applying a design, check if it contains /sidle commands
+            if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
+            {
+                var design = character.Designs[selectedDesignIndex];
+                var macro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                
+                bool designHasSidle = !string.IsNullOrEmpty(macro) && 
+                                     macro.Split('\n').Any(line => line.Trim().StartsWith("/sidle", StringComparison.OrdinalIgnoreCase));
+                
+                if (designHasSidle)
+                {
+                    shouldRestoreCharacterIdle = false; // Design has idle - don't apply character idle
+                    Plugin.Log.Debug("[QuickSwitch] Skipping character idle restoration - design contains /sidle command");
+                }
+            }
+            
+            if (shouldRestoreCharacterIdle)
                 plugin.PoseRestorer.RestorePosesFor(character);
-            else
+            else if (character.IdlePoseIndex >= 7)
                 Plugin.Log.Debug("[QuickSwitch] Skipping idle pose restore — IdlePoseIndex is None.");
         }
 

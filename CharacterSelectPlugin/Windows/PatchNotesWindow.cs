@@ -155,7 +155,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Character Gallery, Visual Overhaul & Interactive Tutorial");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Conflict Resolution, IPC, Apply to Target (GPose)");
 
             ImGui.Separator();
             ImGui.Spacing();
@@ -206,10 +206,10 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.PushTextWrapPos();
 
-            // Latest Patch Notes - v2.0.0.0 (always open for 2.0)
-            if (DrawModernCollapsingHeader("v2.0.0.0 – Character Gallery & Visual Overhaul", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
+            // Latest Patch Notes - v2.0.1.0
+            if (DrawModernCollapsingHeader("v2.0.1.0 – Conflict Resolution, IPC, Apply to Target (GPose)", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
             {
-                Draw120Notes();
+                Draw201Notes();
 
                 // Show scroll indicator if haven't scrolled enough
                 if (!hasScrolledToEnd)
@@ -217,10 +217,16 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.Spacing();
                     ImGui.Spacing();
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 0.8f));
-                    ImGui.Text("↓ Scroll down to see all new features before continuing ↓");
+                    ImGui.Text("↓ Scroll down to see all features before continuing ↓");
                     ImGui.PopStyleColor();
                     ImGui.Spacing();
                 }
+            }
+
+            // Previous Patch Notes - v2.0.0.0
+            if (DrawModernCollapsingHeader("v2.0.0.0 – Character Gallery & Visual Overhaul - July 19 2025", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
+            {
+                Draw120Notes();
             }
 
             // Previous Patch Notes - v1.1
@@ -271,6 +277,73 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Spacing();
         }
 
+        private void Draw201Notes()
+        {
+            // Conflict Resolution System
+            DrawFeatureSection("\uf071", "Mod Conflict Resolution System", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("Eliminates mod conflicts between Character designs automatically when switching between them");
+            ImGui.BulletText("Save complete mod configurations per design including enabled mods, mod settings, and option selections");
+            ImGui.BulletText("Intelligent Mod Manager with 21+ categories (Hair, Gear, Bodies, VFX, Animations, etc.) for easy organization");
+            ImGui.BulletText("Automatically categorizes and tracks mod additions, deletions, and changes -- no manual upkeep required");
+            ImGui.BulletText("Optional opt-in feature available in CS+ settings when you're ready to explore advanced mod management");
+            ImGui.Spacing();
+
+            // Enhanced IPC API
+            DrawFeatureSection("\uf0c1", "API / IPC", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("API endpoints for other plugins to integrate with CS+");
+            ImGui.BulletText("Character switching, design management, and event notifications");
+            ImGui.BulletText("Used internally for Conflict Resolution, improved Apply to Target functionality, and the Snapshot feature");
+            ImGui.BulletText("Real-time character change events for plugin synchronization");
+            ImGui.Spacing();
+
+            // Apply to Target - GPose Support
+            DrawFeatureSection("\uf140", "Apply to Target - GPose Support", new Vector4(0.6f, 1.0f, 0.8f, 1.0f));
+            ImGui.BulletText("Fixed Apply to Target functionality to work properly in GPose");
+            ImGui.BulletText("Converted from previous macro-based to new IPC-based system");
+            ImGui.BulletText("More reliable character application to targeted players");
+            ImGui.Spacing();
+
+            // Snapshot
+            DrawFeatureSection("\uf030", "Snapshot Feature", new Vector4(0.9f, 0.7f, 1.0f, 1.0f));
+            ImGui.BulletText("New Snapshot feature - one-click add Design to Character Select+");
+            ImGui.BulletText("Use after saving a Design in Glamourer and setting up your Customize+ Profile");
+            ImGui.BulletText("Instantly adds your current look as a Design to the active Character in CS+");
+            ImGui.BulletText("Includes your current Customize+ Profile automatically");
+            ImGui.BulletText("CR mode: Auto-configures mods for your current outfit when using Conflict Resolution");
+            ImGui.BulletText("Simple workflow: Click camera button in Design Panel or use chat command");
+            ImGui.BulletText("Chat command: /select save - optionally add CR for Conflict Resolution mode");
+            ImGui.Spacing();
+
+            // Penumbra Collection UI Sync
+            DrawFeatureSection("\uf021", "Penumbra Collection Synchronization", new Vector4(0.8f, 0.9f, 0.6f, 1.0f));
+            ImGui.BulletText("Switching characters now updates Penumbra's UI to show the correct collection");
+            ImGui.BulletText("Seamless integration between CS+ character switching and Penumbra interface");
+            ImGui.BulletText("Eliminates confusion about which collection is currently active");
+            ImGui.Spacing();
+
+            // Character Management Improvements
+            DrawFeatureSection("\uf007", "Character Management Improvements", new Vector4(0.9f, 0.8f, 0.6f, 1.0f));
+            ImGui.BulletText("Fixed Character Assignments -- can now edit and remove character assignments");
+            ImGui.BulletText("Fixed Reorder Characters window -- changes now properly apply on save");
+            ImGui.BulletText("Added duplicate character name prevention for your own characters");
+            ImGui.Spacing();
+
+            // Backup & Restore System
+            DrawFeatureSection("\uf0c7", "Backup & Restore System", new Vector4(0.4f, 0.8f, 1.0f, 1.0f));
+            ImGui.BulletText("Manual backup creation with optional custom naming");
+            ImGui.BulletText("Configuration file import -- appears at top of backup list");
+            ImGui.BulletText("Available Backups list with real-time backup count display");
+            ImGui.BulletText("Individual restore functionality for any backup file");
+            ImGui.BulletText("Automatic emergency backup creation before any restore operation");
+            ImGui.Spacing();
+
+            // Design Panel Enhancements
+            DrawFeatureSection("\uf002", "Design Panel Enhancements", new Vector4(0.7f, 0.6f, 1.0f, 1.0f));
+            ImGui.BulletText("Added search functionality to quickly find specific designs");
+            ImGui.BulletText("New clipboard image pasting for Design Preview images");
+            ImGui.Spacing();
+        }
+
         private void Draw120Notes()
         {
             // Character Gallery (NEW!)
@@ -283,7 +356,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Spacing();
 
             // NSFW Content Management (NEW!)
-            DrawFeatureSection("\uf06e", "NSFW Content Management (NEW!)", new Vector4(1.0f, 0.7f, 0.4f, 1.0f));
+            DrawFeatureSection("\uf06e", "NSFW Content Management", new Vector4(1.0f, 0.7f, 0.4f, 1.0f));
             ImGui.BulletText("RP Profile Editor now prompts you to mark profiles as NSFW if appropriate");
             ImGui.BulletText("Gallery setting to opt-in to viewing NSFW profiles (disabled by default)");
             ImGui.BulletText("Users must acknowledge they are 18+ to view NSFW content in the gallery");
@@ -357,7 +430,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Spacing();
 
             // Character Assignments (NEW!)
-            DrawFeatureSection("\uf0c1", "Character Assignments (NEW!)", new Vector4(0.6f, 1.0f, 0.8f, 1.0f));
+            DrawFeatureSection("\uf0c1", "Character Assignments", new Vector4(0.6f, 1.0f, 0.8f, 1.0f));
             ImGui.BulletText("Assign specific CS+ Characters to specific in-game characters");
             ImGui.BulletText("Auto-apply designated CS+ characters when logging into assigned real characters");
             ImGui.BulletText("Dropdown selection from characters the plugin has seen before");

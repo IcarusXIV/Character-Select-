@@ -5,6 +5,10 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using CharacterSelectPlugin.Windows.Styles;
 using System.Collections.Generic;
+using CharacterSelectPlugin.Managers;
+using System.IO;
+using System.Windows.Forms;
+using System.Threading;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
@@ -21,8 +25,17 @@ namespace CharacterSelectPlugin.Windows.Components
         private bool mainCharacterSettingsOpen = false;
         private bool dialogueSettingsOpen = false;
         private bool characterAssignmentSettingsOpen = false;
+        private bool conflictResolutionSettingsOpen = false;
+        private bool backupSettingsOpen = false;
         private string newRealCharacterBuffer = "";
         private string newCSCharacterBuffer = "";
+        private string editingAssignmentKey = "";
+        private string editingAssignmentValue = "";
+        private string backupNameBuffer = "";
+        private List<BackupFileInfo> availableBackups = new();
+        private string lastBackupStatusMessage = "";
+        private DateTime lastBackupStatusTime = DateTime.MinValue;
+        private string? pendingImportPath = null;
 
         public SettingsPanel(Plugin plugin, UIStyles uiStyles, MainWindow mainWindow)
         {
@@ -80,6 +93,16 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (characterAssignmentSettingsOpen)
                 totalContentHeight += 250f * totalScale;
+            else
+                totalContentHeight += sectionHeaderHeight;
+
+            if (conflictResolutionSettingsOpen)
+                totalContentHeight += 180f * totalScale; // Warnings + checkbox + description
+            else
+                totalContentHeight += sectionHeaderHeight;
+
+            if (backupSettingsOpen)
+                totalContentHeight += 300f * totalScale; // Backup controls + status + file list
             else
                 totalContentHeight += sectionHeaderHeight;
 
@@ -192,6 +215,20 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (dialogueSettingsOpen)
                 {
                     DrawDialogueSettings();
+                }
+
+                // Conflict Resolution (Amber/Gold)
+                conflictResolutionSettingsOpen = DrawModernCollapsingHeader("Conflict Resolution", new Vector4(1.0f, 0.8f, 0.2f, 1.0f), conflictResolutionSettingsOpen);
+                if (conflictResolutionSettingsOpen)
+                {
+                    DrawConflictResolutionSettings();
+                }
+
+                // Backup & Restore (Mint Green)
+                backupSettingsOpen = DrawModernCollapsingHeader("Backup & Restore", new Vector4(0.4f, 1.0f, 0.6f, 1.0f), backupSettingsOpen);
+                if (backupSettingsOpen)
+                {
+                    DrawBackupSettings();
                 }
             }
             ImGui.EndChild();
@@ -617,6 +654,29 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void DrawCharacterAssignmentSettings()
         {
+            // Warning if Auto-Apply Last Used Character is disabled
+            if (!plugin.Configuration.EnableLastUsedCharacterAutoload)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.7f, 0.3f, 1f));
+
+                // Warning icon
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.Text("\uf071"); // FontAwesome warning triangle
+                ImGui.PopFont();
+
+                ImGui.SameLine();
+                ImGui.TextWrapped("Auto-Apply Last Used Character on Login is disabled - Character Assignments require this feature.");
+                ImGui.PopStyleColor();
+
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 1f));
+                ImGui.TextWrapped("Enable Auto-Apply Last Used Character on Login in the Automation Settings section to use assignments.");
+                ImGui.PopStyleColor();
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
+
             // Warning if Main Character Only Mode is enabled
             if (plugin.Configuration.EnableMainCharacterOnly)
             {
@@ -676,6 +736,44 @@ namespace CharacterSelectPlugin.Windows.Components
                         ImGui.Text(assignment.Value);
                     }
                     ImGui.PopStyleColor();
+
+                    // Add edit and remove buttons
+                    ImGui.SameLine();
+                    
+                    // Edit button
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.6f, 0.8f, 0.6f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.7f, 0.9f, 0.8f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.8f, 1.0f, 1.0f));
+                    
+                    if (ImGui.SmallButton($"Edit##{assignment.Key}"))
+                    {
+                        editingAssignmentKey = assignment.Key;
+                        editingAssignmentValue = assignment.Value;
+                    }
+                    ImGui.PopStyleColor(3);
+                    
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip($"Edit assignment for {assignment.Key}");
+                    }
+                    
+                    ImGui.SameLine();
+                    
+                    // Remove button
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.3f, 0.3f, 0.6f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.4f, 0.4f, 0.8f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1.0f, 0.5f, 0.5f, 1.0f));
+                    
+                    if (ImGui.SmallButton($"Remove##{assignment.Key}"))
+                    {
+                        toRemove.Add(assignment.Key);
+                    }
+                    ImGui.PopStyleColor(3);
+                    
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip($"Remove assignment for {assignment.Key}");
+                    }
                 }
 
                 foreach (var key in toRemove)
@@ -683,6 +781,75 @@ namespace CharacterSelectPlugin.Windows.Components
                     plugin.Configuration.CharacterAssignments.Remove(key);
                     plugin.Configuration.Save();
                 }
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+            }
+
+            // Edit assignment section
+            if (!string.IsNullOrEmpty(editingAssignmentKey))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
+                ImGui.Text($"Editing Assignment: {editingAssignmentKey}");
+                ImGui.PopStyleColor();
+                ImGui.Spacing();
+
+                ImGui.Text("New CS+ Character:");
+                ImGui.SetNextItemWidth(300f);
+                if (ImGui.BeginCombo("##EditCSChar", string.IsNullOrEmpty(editingAssignmentValue) ? "Select CS+ Character" : editingAssignmentValue))
+                {
+                    // Add "None" option first
+                    if (ImGui.Selectable("None", editingAssignmentValue == "None"))
+                    {
+                        editingAssignmentValue = "None";
+                    }
+
+                    // Add separator
+                    ImGui.Separator();
+
+                    // Add CS+ characters
+                    foreach (var character in plugin.Configuration.Characters.OrderBy(c => c.Name))
+                    {
+                        bool isSelected = character.Name == editingAssignmentValue;
+                        if (ImGui.Selectable(character.Name, isSelected))
+                        {
+                            editingAssignmentValue = character.Name;
+                        }
+                        if (isSelected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+
+                ImGui.Spacing();
+
+                // Save and Cancel buttons
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.8f, 0.3f, 0.6f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.9f, 0.4f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 1.0f, 0.5f, 1.0f));
+                
+                if (ImGui.Button("Save Changes"))
+                {
+                    plugin.Configuration.CharacterAssignments[editingAssignmentKey] = editingAssignmentValue;
+                    plugin.Configuration.Save();
+                    editingAssignmentKey = "";
+                    editingAssignmentValue = "";
+                }
+                ImGui.PopStyleColor(3);
+
+                ImGui.SameLine();
+
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.6f, 0.6f, 0.6f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.7f, 0.7f, 0.7f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.8f, 0.8f, 0.8f, 1.0f));
+                
+                if (ImGui.Button("Cancel"))
+                {
+                    editingAssignmentKey = "";
+                    editingAssignmentValue = "";
+                }
+                ImGui.PopStyleColor(3);
 
                 ImGui.Spacing();
                 ImGui.Separator();
@@ -934,9 +1101,516 @@ namespace CharacterSelectPlugin.Windows.Components
             if (changed)
                 plugin.SaveConfiguration();
         }
+        private void DrawConflictResolutionSettings()
+        {
+            ImGui.Spacing();
+            
+            // Center the warning box
+            var availableWidth = ImGui.GetContentRegionAvail().X;
+            var warningBoxWidth = availableWidth * 0.9f; // Use 90% of available width
+            var centerOffset = (availableWidth - warningBoxWidth) * 0.5f;
+            
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + centerOffset);
+
+            // Warning box
+            ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(1.0f, 0.6f, 0.0f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.8f, 0.0f, 1.0f));
+            if (ImGui.BeginChild("ConflictWarning", new Vector2(warningBoxWidth, 80), true, ImGuiWindowFlags.NoScrollbar))
+            {
+                // Warning icon + text
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.Text($"{FontAwesomeIcon.ExclamationTriangle.ToIconString()}");
+                ImGui.PopFont();
+                ImGui.SameLine();
+                ImGui.TextWrapped("EXPERIMENTAL FEATURE");
+                ImGui.PopStyleColor(); // Pop warning text color
+                ImGui.TextWrapped("This feature automatically manages mod conflicts by controlling which mods are enabled per character. Use at your own risk.");
+            }
+            ImGui.EndChild();
+            ImGui.PopStyleColor(); // Pop border color
+
+            ImGui.Spacing();
+            ImGui.Indent();
+
+            // Main checkbox
+            var enabled = plugin.Configuration.EnableConflictResolution;
+            if (ImGui.Checkbox("Enable Conflict Resolution", ref enabled))
+            {
+                plugin.Configuration.EnableConflictResolution = enabled;
+                plugin.SaveConfiguration();
+            }
+            
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(300f);
+                ImGui.TextUnformatted("When enabled, allows you to select specific mods per character/design that will automatically enable/disable when switching. This prevents mod conflicts without manual Penumbra management.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+
+            if (enabled)
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Hold Ctrl+Shift while clicking Add Character/Design");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Auto-categorizes mods in CS+ only (no Penumbra changes)");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Right-click to move mods if categorization is wrong");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Auto-manages Gear/Hair mods per character");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Other categories managed manually");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Configure individual mod settings per character");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Pin critical mods to keep always active");
+            }
+
+            ImGui.Unindent();
+            ImGui.Spacing();
+        }
+
         private float GetSafeScale(float baseScale)
         {
             return Math.Clamp(baseScale, 0.3f, 5.0f); // Prevent extreme scaling
+        }
+
+        private void DrawBackupSettings()
+        {
+            // Check for pending import file
+            if (pendingImportPath != null)
+            {
+                string importPath;
+                lock (this)
+                {
+                    importPath = pendingImportPath;
+                    pendingImportPath = null;
+                }
+
+                if (File.Exists(importPath))
+                {
+                    Plugin.Log.Info($"[Settings] Processing import file: {importPath}");
+                    AddImportedFileToBackups(importPath);
+                }
+                else
+                {
+                    lastBackupStatusMessage = "❌ Selected file does not exist";
+                    lastBackupStatusTime = DateTime.Now;
+                }
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.9f, 1.0f, 1f));
+            ImGui.TextWrapped("Create manual backups and restore configurations from backup files.");
+            ImGui.PopStyleColor();
+
+            ImGui.Spacing();
+
+            // Current backup status (refresh each time)
+            var backupInfo = BackupManager.GetBackupInfo();
+            RefreshAvailableBackups(); // Make sure we have current data
+            
+            ImGui.Text("Backup Status:");
+            ImGui.Indent();
+            
+            if (backupInfo.BackupExists)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1f));
+                ImGui.Text($"Last automatic backup: {backupInfo.LastBackupDate?.ToString("yyyy-MM-dd HH:mm")}");
+                ImGui.Text($"Total backups: {availableBackups.Count}"); // Use the current count
+                if (!string.IsNullOrEmpty(backupInfo.LastBackupVersion))
+                    ImGui.Text($"Version: {backupInfo.LastBackupVersion}");
+                ImGui.PopStyleColor();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.8f, 0.6f, 1f));
+                ImGui.Text($"Total backups: {availableBackups.Count}");
+                if (availableBackups.Count == 0)
+                    ImGui.Text("No backups found");
+                ImGui.PopStyleColor();
+            }
+            
+            ImGui.Unindent();
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Manual backup section
+            ImGui.Text("Create Manual Backup:");
+            ImGui.Spacing();
+
+            var contentWidth = ImGui.GetContentRegionAvail().X;
+            var labelWidth = 120f;
+            var inputWidth = contentWidth - labelWidth - 20f;
+
+            DrawFixedSetting("Backup Name:", labelWidth, inputWidth * 0.7f, () =>
+            {
+                if (ImGui.InputTextWithHint("##BackupName", "Optional custom name", ref backupNameBuffer, 50))
+                {
+                    // Sanitize input
+                    backupNameBuffer = string.Join("_", backupNameBuffer.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+                }
+                DrawTooltip("Optional custom name for the backup. If empty, a timestamp will be used.");
+            });
+
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.8f, 0.5f, 0.7f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.9f, 0.6f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 1.0f, 0.7f, 1.0f));
+
+            if (ImGui.Button("Create Manual Backup", new Vector2(200f, 30f)))
+            {
+                CreateManualBackup();
+            }
+            ImGui.PopStyleColor(3);
+
+            DrawTooltip("Creates a backup of your current configuration in the plugin's backup folder that you can restore later.");
+
+            // Show status message if recent
+            if (!string.IsNullOrEmpty(lastBackupStatusMessage) && 
+                DateTime.Now - lastBackupStatusTime < TimeSpan.FromSeconds(5))
+            {
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1f));
+                ImGui.Text(lastBackupStatusMessage);
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Restore section
+            ImGui.Text("Restore Configuration:");
+            ImGui.Spacing();
+
+            if (availableBackups.Any())
+            {
+                ImGui.Text("Available Backups:");
+                ImGui.Spacing();
+
+                // Backup list with restore buttons
+                if (ImGui.BeginChild("BackupList", new Vector2(0, 120f), true))
+                {
+                    foreach (var backup in availableBackups.Take(10)) // Show only first 10
+                    {
+                        // Calculate positions for proper alignment
+                        var availableWidth = ImGui.GetContentRegionAvail().X;
+                        var restoreButtonWidth = 70f;
+                        var deleteButtonWidth = 60f;
+                        var buttonSpacing = 5f;
+                        var totalButtonWidth = restoreButtonWidth + deleteButtonWidth + buttonSpacing;
+                        var textWidth = availableWidth - totalButtonWidth - 10f; // 10f for spacing
+                        
+                        // Display backup name with color coding
+                        var displayColor = backup.IsManual ? new Vector4(0.8f, 0.9f, 1.0f, 1f) : new Vector4(0.7f, 0.7f, 0.8f, 1f);
+                        
+                        ImGui.PushStyleColor(ImGuiCol.Text, displayColor);
+                        
+                        // Truncate text if too long
+                        var displayText = backup.GetDisplayName();
+                        if (displayText.Length > 45) // Adjust for smaller space due to two buttons
+                        {
+                            displayText = displayText.Substring(0, 42) + "...";
+                        }
+                        
+                        ImGui.Text(displayText);
+                        ImGui.PopStyleColor();
+
+                        // Position buttons on the same line
+                        ImGui.SameLine();
+                        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (textWidth - ImGui.CalcTextSize(displayText).X));
+
+                        // Restore button
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.6f, 0.3f, 0.7f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.7f, 0.4f, 0.8f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1.0f, 0.8f, 0.5f, 1.0f));
+
+                        if (ImGui.Button($"Restore##{backup.FileName}", new Vector2(restoreButtonWidth, 0)))
+                        {
+                            RestoreFromBackup(backup.FilePath);
+                        }
+                        ImGui.PopStyleColor(3);
+
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip($"Restore configuration from:\n{backup.FileName}\nCreated: {backup.CreatedDate:yyyy-MM-dd HH:mm:ss}");
+                        }
+
+                        // Delete button
+                        ImGui.SameLine();
+                        
+                        // Check if Ctrl+Shift is held for delete functionality
+                        bool isCtrlShiftHeld = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+                        
+                        // Dim the button if Ctrl+Shift is not held
+                        if (!isCtrlShiftHeld)
+                        {
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.2f, 0.2f, 0.4f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.6f, 0.25f, 0.25f, 0.5f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.7f, 0.3f, 0.3f, 0.6f));
+                        }
+                        else
+                        {
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.3f, 0.3f, 0.7f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.4f, 0.4f, 0.8f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1.0f, 0.5f, 0.5f, 1.0f));
+                        }
+
+                        bool deleteClicked = ImGui.Button($"Delete##{backup.FileName}", new Vector2(deleteButtonWidth, 0));
+                        
+                        if (deleteClicked && isCtrlShiftHeld)
+                        {
+                            DeleteBackup(backup.FilePath, backup.FileName);
+                        }
+                        ImGui.PopStyleColor(3);
+
+                        if (ImGui.IsItemHovered())
+                        {
+                            if (isCtrlShiftHeld)
+                            {
+                                ImGui.SetTooltip($"Delete backup file:\n{backup.FileName}\nThis action cannot be undone!");
+                            }
+                            else
+                            {
+                                ImGui.SetTooltip($"Delete backup file:\n{backup.FileName}\n\nHold Ctrl+Shift and click to delete\n(prevents accidental deletion)");
+                            }
+                        }
+                    }
+                }
+                ImGui.EndChild();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.7f, 1f));
+                ImGui.Text("No backup files found");
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.Spacing();
+
+            // Import config file button
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.9f, 0.7f, 0.4f, 0.7f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1.0f, 0.8f, 0.5f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1.0f, 0.9f, 0.6f, 1.0f));
+
+            if (ImGui.Button("Add Config File...", new Vector2(200f, 30f)))
+            {
+                ImportConfigurationFile();
+            }
+            ImGui.PopStyleColor(3);
+
+            DrawTooltip("Opens a file browser to select and add a CharacterSelectPlus configuration file to your Available Backups list.");
+
+            ImGui.Spacing();
+
+            // Warning about restore
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.8f, 0.6f, 1f));
+            
+            // Warning icon
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.Text($"{FontAwesomeIcon.ExclamationTriangle.ToIconString()}");
+            ImGui.PopFont();
+            
+            ImGui.SameLine();
+            ImGui.TextWrapped("Restoring will overwrite your current configuration. A backup will be created automatically before restoring.");
+            ImGui.PopStyleColor();
+
+            ImGui.Spacing();
+        }
+
+        private void CreateManualBackup()
+        {
+            try
+            {
+                string? customName = string.IsNullOrWhiteSpace(backupNameBuffer) ? null : backupNameBuffer.Trim();
+                string? backupPath = BackupManager.CreateManualBackup(plugin.Configuration, customName);
+                
+                if (!string.IsNullOrEmpty(backupPath))
+                {
+                    lastBackupStatusMessage = $"✓ Backup created: {Path.GetFileName(backupPath)}";
+                    lastBackupStatusTime = DateTime.Now;
+                    backupNameBuffer = ""; // Clear the input
+                    RefreshAvailableBackups();
+                }
+                else
+                {
+                    lastBackupStatusMessage = "❌ Failed to create backup";
+                    lastBackupStatusTime = DateTime.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Settings] Error creating manual backup: {ex.Message}");
+                lastBackupStatusMessage = "❌ Error creating backup";
+                lastBackupStatusTime = DateTime.Now;
+            }
+        }
+
+
+        private void ImportConfigurationFile()
+        {
+            Thread thread = new Thread(() =>
+            {
+                try
+                {
+                    using (OpenFileDialog openFileDialog = new OpenFileDialog())
+                    {
+                        openFileDialog.Filter = "JSON Configuration Files (*.json)|*.json|All Files (*.*)|*.*";
+                        openFileDialog.Title = "Select Configuration File to Import";
+
+                        if (openFileDialog.ShowDialog() == DialogResult.OK)
+                        {
+                            lock (this)
+                            {
+                                pendingImportPath = openFileDialog.FileName;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error($"[Settings] Error in import file dialog thread: {ex.Message}");
+                }
+            });
+
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+        }
+
+        private void RestoreFromBackup(string backupPath)
+        {
+            try
+            {
+                // Create emergency backup before restoring
+                BackupManager.CreateEmergencyBackup(plugin.Configuration);
+                
+                var restoredConfig = BackupManager.ImportConfiguration(backupPath);
+                if (restoredConfig != null)
+                {
+                    // Update the plugin interface reference using reflection
+                    var pluginInterfaceField = restoredConfig.GetType()
+                        .GetField("pluginInterface", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    pluginInterfaceField?.SetValue(restoredConfig, Plugin.PluginInterface);
+                    
+                    // Copy all the important configuration data back to the current config
+                    // This preserves the plugin instance while updating the data
+                    var currentConfig = plugin.Configuration;
+                    
+                    // Copy character data
+                    currentConfig.Characters.Clear();
+                    currentConfig.Characters.AddRange(restoredConfig.Characters);
+                    
+                    // Copy all configuration properties using reflection
+                    var configType = typeof(Configuration);
+                    var properties = configType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                        .Where(p => p.CanWrite && p.Name != "Characters");
+                    
+                    foreach (var prop in properties)
+                    {
+                        try
+                        {
+                            var value = prop.GetValue(restoredConfig);
+                            prop.SetValue(currentConfig, value);
+                        }
+                        catch (Exception propEx)
+                        {
+                            Plugin.Log.Warning($"[Settings] Could not restore property {prop.Name}: {propEx.Message}");
+                        }
+                    }
+                    
+                    // Save the updated configuration
+                    currentConfig.Save();
+                    
+                    lastBackupStatusMessage = $"✓ Configuration restored from {Path.GetFileName(backupPath)}";
+                    lastBackupStatusTime = DateTime.Now;
+                    
+                    Plugin.Log.Info($"[Settings] Successfully restored configuration from {backupPath}");
+                }
+                else
+                {
+                    lastBackupStatusMessage = "❌ Failed to restore configuration";
+                    lastBackupStatusTime = DateTime.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Settings] Error restoring from backup: {ex.Message}");
+                lastBackupStatusMessage = "❌ Error restoring configuration";
+                lastBackupStatusTime = DateTime.Now;
+            }
+        }
+
+        private void RefreshAvailableBackups()
+        {
+            try
+            {
+                availableBackups = BackupManager.GetAvailableBackups();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Settings] Error refreshing available backups: {ex.Message}");
+                availableBackups.Clear();
+            }
+        }
+
+        private void AddImportedFileToBackups(string importPath)
+        {
+            try
+            {
+                var backupDirectory = Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), "Backups");
+                Directory.CreateDirectory(backupDirectory);
+
+                string originalFileName = Path.GetFileName(importPath);
+                string destinationPath = Path.Combine(backupDirectory, originalFileName);
+
+                // If file already exists, add timestamp to avoid overwriting
+                if (File.Exists(destinationPath))
+                {
+                    string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                    string nameWithoutExt = Path.GetFileNameWithoutExtension(originalFileName);
+                    string extension = Path.GetExtension(originalFileName);
+                    originalFileName = $"{nameWithoutExt}_{timestamp}{extension}";
+                    destinationPath = Path.Combine(backupDirectory, originalFileName);
+                }
+
+                File.Copy(importPath, destinationPath, overwrite: false);
+
+                // Update the file's LastWriteTime to current time so it appears at top of list
+                File.SetLastWriteTime(destinationPath, DateTime.Now);
+
+                lastBackupStatusMessage = $"✓ Imported file added to backups: {originalFileName}";
+                lastBackupStatusTime = DateTime.Now;
+                RefreshAvailableBackups();
+
+                Plugin.Log.Info($"[Settings] Successfully imported file to backups: {destinationPath}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Settings] Error adding imported file to backups: {ex.Message}");
+                lastBackupStatusMessage = "❌ Error importing file to backups";
+                lastBackupStatusTime = DateTime.Now;
+            }
+        }
+
+        private void DeleteBackup(string backupFilePath, string backupFileName)
+        {
+            try
+            {
+                if (File.Exists(backupFilePath))
+                {
+                    File.Delete(backupFilePath);
+                    lastBackupStatusMessage = $"✓ Deleted backup: {backupFileName}";
+                    lastBackupStatusTime = DateTime.Now;
+                    RefreshAvailableBackups();
+                    Plugin.Log.Info($"[Settings] Successfully deleted backup: {backupFilePath}");
+                }
+                else
+                {
+                    lastBackupStatusMessage = "❌ Backup file not found";
+                    lastBackupStatusTime = DateTime.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[Settings] Error deleting backup: {ex.Message}");
+                lastBackupStatusMessage = "❌ Error deleting backup";
+                lastBackupStatusTime = DateTime.Now;
+            }
         }
 
         private void DrawTooltip(string text)

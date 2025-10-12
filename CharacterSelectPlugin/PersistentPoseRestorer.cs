@@ -2,48 +2,92 @@ using CharacterSelectPlugin.Managers;
 using CharacterSelectPlugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using System;
 
-public unsafe class SimplifiedPoseRestorer
+namespace CharacterSelectPlugin.Managers;
+
+public unsafe class PoseRestorer
 {
     private readonly IClientState clientState;
-    private readonly ImprovedPoseManager poseManager;
+    private readonly Plugin plugin;
 
-    public SimplifiedPoseRestorer(IClientState clientState, ImprovedPoseManager poseManager)
+    public PoseRestorer(IClientState clientState, Plugin plugin)
     {
         this.clientState = clientState;
-        this.poseManager = poseManager;
+        this.plugin = plugin;
     }
 
     public void RestorePosesFor(Character character)
     {
-        if (clientState.LocalPlayer == null)
-            return;
+        if (clientState.LocalPlayer == null) return;
+
         Plugin.Framework.RunOnTick(() =>
         {
-            ApplyCharacterPoses(character);
+            ApplyPose(character);
         }, delayTicks: 30);
     }
 
-    private void ApplyCharacterPoses(Character character)
+    private void ApplyPose(Character character)
     {
-        if (clientState.LocalPlayer?.Address == IntPtr.Zero)
+        var local = clientState.LocalPlayer;
+        if (local == null || local.Address == IntPtr.Zero)
             return;
 
-        var poses = new[]
-        {
-            (EmoteController.PoseType.Idle, character.IdlePoseIndex),
-            (EmoteController.PoseType.Sit, character.SitPoseIndex),
-            (EmoteController.PoseType.GroundSit, character.GroundSitPoseIndex),
-            (EmoteController.PoseType.Doze, character.DozePoseIndex)
-        };
+        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)local.Address;
 
-        foreach (var (type, index) in poses)
+        // This also ensures you're not in cutscene or a bad player state
+        if (charPtr->GameObject.ObjectIndex == 0xFFFF)
+            return;
+
+        TrySetPose(EmoteController.PoseType.Idle, character.IdlePoseIndex, charPtr);
+        TrySetPose(EmoteController.PoseType.Sit, character.SitPoseIndex, charPtr);
+        TrySetPose(EmoteController.PoseType.GroundSit, character.GroundSitPoseIndex, charPtr);
+        TrySetPose(EmoteController.PoseType.Doze, character.DozePoseIndex, charPtr);
+    }
+
+    private void TrySetPose(EmoteController.PoseType type, byte desired, FFXIVClientStructs.FFXIV.Client.Game.Character.Character* charPtr)
+    {
+        if (desired >= 254) return;
+
+        byte current = PlayerState.Instance()->SelectedPoses[(int)type];
+        if (current == desired) return;
+
+        PlayerState.Instance()->SelectedPoses[(int)type] = desired;
+
+        switch (type)
         {
-            if (index < 7) 
-            {
-                poseManager.ApplyPose(type, index);
-            }
+            case EmoteController.PoseType.Idle:
+                plugin.Configuration.LastIdlePoseAppliedByPlugin = desired;
+                break;
+            case EmoteController.PoseType.Sit:
+                plugin.Configuration.LastSitPoseAppliedByPlugin = desired;
+                break;
+            case EmoteController.PoseType.GroundSit:
+                plugin.Configuration.LastGroundSitPoseAppliedByPlugin = desired;
+                break;
+            case EmoteController.PoseType.Doze:
+                plugin.Configuration.LastDozePoseAppliedByPlugin = desired;
+                break;
         }
+
+        plugin.Configuration.Save();
+
+        // Use the PoseManager's new method instead of direct memory write
+        if (TranslatePoseState(charPtr->ModeParam) == type)
+        {
+            plugin.PoseManager?.ApplyPose(type, desired);
+        }
+    }
+
+    private EmoteController.PoseType TranslatePoseState(byte state)
+    {
+        return state switch
+        {
+            1 => EmoteController.PoseType.GroundSit,
+            2 => EmoteController.PoseType.Sit,
+            3 => EmoteController.PoseType.Doze,
+            _ => EmoteController.PoseType.Idle
+        };
     }
 }

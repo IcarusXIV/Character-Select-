@@ -7,163 +7,184 @@ using System.Threading.Tasks;
 
 namespace CharacterSelectPlugin.Managers;
 
-public unsafe class ImprovedPoseManager
+public class PoseManager
 {
     private readonly IClientState clientState;
     private readonly IFramework framework;
+    private readonly IChatGui chatGui;
+    private readonly ICommandManager commandManager;
     private readonly Plugin plugin;
 
-    private readonly PoseState currentState = new();
-    private DateTime lastPoseChange = DateTime.MinValue;
-    private const float POSE_CHANGE_COOLDOWN = 0.5f; // Prevent rapid changes
-    private DateTime loginGraceStart = DateTime.MinValue;
-
-    public ImprovedPoseManager(IClientState clientState, IFramework framework, Plugin plugin)
+    public PoseManager(IClientState clientState, IFramework framework, IChatGui chatGui, ICommandManager commandManager, Plugin plugin)
     {
         this.clientState = clientState;
         this.framework = framework;
+        this.chatGui = chatGui;
+        this.commandManager = commandManager;
         this.plugin = plugin;
 
         framework.Update += OnFrameworkUpdate;
-        clientState.Login += OnLogin;
     }
 
-    public bool ApplyPose(EmoteController.PoseType type, byte index)
+    public void ApplyPose(EmoteController.PoseType type, byte index)
     {
-        if (!CanApplyPose(type, index))
-            return false;
+        Plugin.Log.Debug($"[ApplyPose] Applying {type} pose {index}");
 
-        try
-        {
-            var success = SetPoseInternal(type, index);
-            if (success)
-            {
-                currentState.SetPluginControlled(type, index);
-                lastPoseChange = DateTime.Now;
-                SavePoseToConfig(type, index);
-                Plugin.Log.Debug($"[PoseManager] Successfully applied {type} pose {index}");
-            }
-            return success;
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.Error($"[PoseManager] Failed to apply pose: {ex.Message}");
-            return false;
-        }
-    }
-
-    private bool CanApplyPose(EmoteController.PoseType type, byte index)
-    {
-        if (index >= 7)
-        {
-            Plugin.Log.Debug($"[PoseManager] Invalid pose index: {index}");
-            return false;
-        }
-
-        if (clientState.LocalPlayer?.Address == IntPtr.Zero)
-        {
-            Plugin.Log.Debug("[PoseManager] Player not available");
-            return false;
-        }
-
-        // Cooldown to prevent spam
-        if ((DateTime.Now - lastPoseChange).TotalSeconds < POSE_CHANGE_COOLDOWN)
-        {
-            Plugin.Log.Debug("[PoseManager] Pose change on cooldown");
-            return false;
-        }
-
-        return true;
-    }
-
-    private bool SetPoseInternal(EmoteController.PoseType type, byte index)
-    {
-        var playerState = PlayerState.Instance();
-        if (playerState == null)
-            return false;
-
-        var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)clientState.LocalPlayer!.Address;
-        if (character == null || character->GameObject.ObjectIndex == 0xFFFF)
-            return false;
-
-        playerState->SelectedPoses[(int)type] = index;
-
-        // Only update CPoseState if we're currently in that pose mode
-        var currentMode = TranslatePoseState(character->ModeParam);
-        if (currentMode == type)
-        {
-            character->EmoteController.CPoseState = index;
-        }
-
-        return true;
-    }
-
-    private void OnFrameworkUpdate(IFramework framework)
-    {
-        if (!plugin.Configuration.EnablePoseAutoSave || !clientState.IsLoggedIn)
+        if (index >= 7 || clientState.LocalPlayer == null)
             return;
 
-        try
+        var characterAddress = clientState.LocalPlayer.Address;
+        
+        unsafe
         {
-            UpdatePoseTracking();
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.Error($"[PoseManager] Framework update error: {ex.Message}");
-        }
-    }
+            var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)characterAddress;
 
-    private void UpdatePoseTracking()
-    {
-        var playerState = PlayerState.Instance();
-        if (playerState == null)
-            return;
+            // Always apply to memory first - this is important!
+            PlayerState.Instance()->SelectedPoses[(int)type] = index;
 
-        foreach (EmoteController.PoseType type in Enum.GetValues<EmoteController.PoseType>())
-        {
-            var currentPose = playerState->SelectedPoses[(int)type];
-            var lastKnown = currentState.GetLastKnown(type);
-
-            // Detect user-initiated changes
-            if (currentPose != lastKnown &&
-                !currentState.IsPluginControlled(type) &&
-                currentPose < 7)
+            // Check if we're in the correct state to apply the pose visually
+            var currentState = TranslatePoseState(charPtr->ModeParam);
+            if (currentState == type)
             {
-                // Skip saving pose resets to 0 within 5 seconds of login
-                var secondsSinceLogin = (DateTime.Now - loginGraceStart).TotalSeconds;
-                if (currentPose == 0 && secondsSinceLogin < 5)
+                // We're in the correct state, now update the visual pose
+                var currentPose = charPtr->EmoteController.CPoseState;
+                
+                // Check if we should use command-based approach (default: true for compatibility)
+                if (plugin.Configuration.UseCommandBasedPoses ?? true)
                 {
-                    currentState.SetUserControlled(type, lastKnown); // Keep original pose in tracking
-                    continue;
+                    // Only use /cpose if we're not already at the target pose
+                    if (currentPose != index)
+                    {
+                        // First, try direct memory write for immediate effect
+                        charPtr->EmoteController.CPoseState = index;
+                        Plugin.Log.Debug($"[ApplyPose] Set CPoseState directly to {index} for immediate effect");
+                        
+                        // Then use command-based approach to ensure it's properly registered
+                        // This helps with sync plugins seeing the change
+                        StartApplyPoseTask(type, index, characterAddress);
+                    }
+                    else
+                    {
+                        Plugin.Log.Debug($"[ApplyPose] Already at target pose {index}, no need to cycle");
+                    }
                 }
-
-                Plugin.Log.Debug($"[PoseManager] User changed {type} pose to {currentPose}");
-                SavePoseToConfig(type, currentPose);
-                currentState.SetUserControlled(type, currentPose);
+                else
+                {
+                    // Legacy direct memory approach - always write to force update
+                    charPtr->EmoteController.CPoseState = index;
+                }
+            }
+            else
+            {
+                // We're not in the correct state, just update memory for when we enter that state
+                Plugin.Log.Debug($"[ApplyPose] Not in correct state for {type}, only updating memory");
             }
         }
-    }
 
-    private void SavePoseToConfig(EmoteController.PoseType type, byte index)
-    {
+        // Persist if plugin-driven
         switch (type)
         {
             case EmoteController.PoseType.Idle:
                 plugin.Configuration.DefaultPoses.Idle = index;
                 plugin.Configuration.LastIdlePoseAppliedByPlugin = index;
+                plugin.lastSeenIdlePose = index;
+                plugin.suppressIdleSaveForFrames = 60; // longer block
+                Plugin.Log.Debug($"[ApplyPose] Idle pose set to {index} and suppressed for 60 frames.");
                 break;
+
             case EmoteController.PoseType.Sit:
                 plugin.Configuration.DefaultPoses.Sit = index;
+                plugin.lastSeenSitPose = index;
+                plugin.suppressSitSaveForFrames = 60;
+                Plugin.Log.Debug($"[ApplyPose] Sit pose set to {index} and suppressed for 60 frames.");
                 break;
+
             case EmoteController.PoseType.GroundSit:
                 plugin.Configuration.DefaultPoses.GroundSit = index;
+                plugin.lastSeenGroundSitPose = index;
+                plugin.suppressGroundSitSaveForFrames = 60;
+                Plugin.Log.Debug($"[ApplyPose] Ground Sit pose set to {index} and suppressed for 60 frames.");
                 break;
+
             case EmoteController.PoseType.Doze:
                 plugin.Configuration.DefaultPoses.Doze = index;
+                plugin.lastSeenDozePose = index;
+                plugin.suppressDozeSaveForFrames = 60;
+                Plugin.Log.Debug($"[ApplyPose] Doze pose set to {index} and suppressed for 60 frames.");
                 break;
         }
 
+        // This makes the change persist!
         plugin.Configuration.Save();
+    }
+
+    private void StartApplyPoseTask(EmoteController.PoseType type, byte index, IntPtr characterAddress)
+    {
+        _ = Task.Run(async () => 
+        {
+            await ApplyPoseViaCommand(type, index, characterAddress);
+        });
+    }
+    
+    private async Task ApplyPoseViaCommand(EmoteController.PoseType type, byte targetIndex, IntPtr characterAddress)
+    {
+        // Small initial delay to let the direct memory write settle
+        await Task.Delay(50);
+        
+        var maxAttempts = 8;
+        var attempts = 0;
+        
+        // Use /cpose to cycle through poses to ensure network sync
+        while (attempts < maxAttempts)
+        {
+            // Check current state on framework thread
+            var (currentPose, shouldContinue) = await framework.RunOnFrameworkThread(() =>
+            {
+                unsafe
+                {
+                    var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)characterAddress;
+                    var current = charPtr->EmoteController.CPoseState;
+                    
+                    if (current == targetIndex)
+                    {
+                        Plugin.Log.Debug($"[ApplyPoseViaCommand] Confirmed at target pose {targetIndex}");
+                        return (current, false);
+                    }
+                    
+                    Plugin.Log.Debug($"[ApplyPoseViaCommand] Executing /cpose to sync from {current} to {targetIndex}");
+                    commandManager.ProcessCommand("/cpose");
+                    
+                    return (current, true);
+                }
+            });
+            
+            if (!shouldContinue)
+                break;
+            
+            // Shorter delay for faster cycling
+            await Task.Delay(50);
+            attempts++;
+        }
+        
+        if (attempts >= maxAttempts)
+        {
+            Plugin.Log.Warning($"[ApplyPoseViaCommand] Could not sync pose to {targetIndex} after {maxAttempts} attempts");
+        }
+        else
+        {
+            Plugin.Log.Info($"[ApplyPoseViaCommand] Successfully synced pose to {targetIndex}");
+        }
+    }
+
+    private unsafe void OnFrameworkUpdate(IFramework framework)
+    {
+        if (!plugin.Configuration.EnablePoseAutoSave || !clientState.IsLoggedIn)
+            return;
+        if (clientState.LocalPlayer == null)
+            return;
+
+        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)clientState.LocalPlayer.Address;
+        // Framework update logic would go here
     }
 
     private EmoteController.PoseType TranslatePoseState(byte state)
@@ -177,53 +198,8 @@ public unsafe class ImprovedPoseManager
         };
     }
 
-    private void OnLogin()
-    {
-        loginGraceStart = DateTime.Now;
-    }
-
     public void Dispose()
     {
         framework.Update -= OnFrameworkUpdate;
-        clientState.Login -= OnLogin;
-    }
-}
-
-public class PoseState
-{
-    private readonly Dictionary<EmoteController.PoseType, byte> lastKnownPoses = new();
-    private readonly Dictionary<EmoteController.PoseType, bool> pluginControlled = new();
-    private readonly Dictionary<EmoteController.PoseType, DateTime> lastChangeTime = new();
-
-    public void SetPluginControlled(EmoteController.PoseType type, byte pose)
-    {
-        lastKnownPoses[type] = pose;
-        pluginControlled[type] = true;
-        lastChangeTime[type] = DateTime.Now;
-
-        var timer = new System.Timers.Timer(2000);
-        timer.Elapsed += (sender, e) => {
-            pluginControlled[type] = false;
-            timer.Dispose();
-        };
-        timer.AutoReset = false;
-        timer.Start();
-    }
-
-    public void SetUserControlled(EmoteController.PoseType type, byte pose)
-    {
-        lastKnownPoses[type] = pose;
-        pluginControlled[type] = false;
-        lastChangeTime[type] = DateTime.Now;
-    }
-
-    public byte GetLastKnown(EmoteController.PoseType type)
-    {
-        return lastKnownPoses.TryGetValue(type, out byte value) ? value : (byte)255;
-    }
-
-    public bool IsPluginControlled(EmoteController.PoseType type)
-    {
-        return pluginControlled.TryGetValue(type, out bool value) && value;
     }
 }

@@ -30,6 +30,16 @@ namespace CharacterSelectPlugin
         public byte SitPoseIndex { get; set; } = 255;
         public byte GroundSitPoseIndex { get; set; } = 255;
         public byte DozePoseIndex { get; set; } = 255;
+        public Dictionary<string, bool>? SecretModState { get; set; } // Secret Mode mod selections
+        public List<string>? SecretModPins { get; set; } // Secret Mode pinned mods (character-specific)
+        
+        /// <summary>
+        /// Original mod option settings in this character's collection at session start
+        /// Used to restore baseline when switching between designs
+        /// Format: ModDirectory -> GroupName -> List of selected option names
+        /// </summary>
+        [JsonIgnore] // Don't persist - captured fresh each session
+        public Dictionary<string, Dictionary<string, List<string>>>? OriginalCollectionState { get; set; }
         public string? Pronouns { get; set; }
         public string? Gender { get; set; }
         public string? Age { get; set; }

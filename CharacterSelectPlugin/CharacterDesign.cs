@@ -21,6 +21,15 @@ namespace CharacterSelectPlugin
         public Guid? FolderId { get; set; } = null; 
         public Guid Id { get; set; } = Guid.NewGuid();
         public int SortOrder { get; set; } = 0;
+        public Dictionary<string, bool>? SecretModState { get; set; } // Secret Mode mod selections for this design
+        public HashSet<string>? SecretModPinOverrides { get; set; } // Mods that this design unpins (overrides character pins)
+        
+        /// <summary>
+        /// Design-specific mod option configurations
+        /// Only mods with explicitly saved options are stored here
+        /// Format: ModDirectory -> GroupName -> List of selected option names
+        /// </summary>
+        public Dictionary<string, Dictionary<string, List<string>>>? ModOptionSettings { get; set; }
 
 
 

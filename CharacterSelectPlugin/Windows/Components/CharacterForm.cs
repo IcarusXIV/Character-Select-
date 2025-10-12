@@ -27,6 +27,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterName = "";
         private string editedCharacterMacros = "";
         private string? editedCharacterImagePath = null;
+        private string nameValidationError = "";
         private Vector3 editedCharacterColor = new Vector3(1.0f, 1.0f, 1.0f);
         private string editedCharacterPenumbra = "";
         private string editedCharacterGlamourer = "";
@@ -70,15 +71,33 @@ namespace CharacterSelectPlugin.Windows.Components
             var uiScale = plugin.Configuration.UIScaleMultiplier;
             var totalScale = GetSafeScale(dpiScale * uiScale);
 
-            // Shhhh...it's a secret
-            if (plugin.IsSecretMode && !isSecretMode)
+            // Check if Conflict Resolution is enabled and determine secret mode
+            if (plugin.Configuration.EnableConflictResolution)
             {
-                isSecretMode = true;
-                if (!IsEditWindowOpen)
+                // Check if plugin.IsSecretMode is set (from Ctrl+Shift+Edit or Add)
+                if (plugin.IsSecretMode && !isSecretMode)
                 {
-                    plugin.NewCharacterMacros = GenerateSecretMacro();
+                    isSecretMode = true;
+                    plugin.IsSecretMode = false; // Reset the flag
                 }
-                plugin.IsSecretMode = false;
+                
+                // For editing existing characters, check if they already have secret mode data
+                if (IsEditWindowOpen && selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
+                {
+                    var character = plugin.Characters[selectedCharacterIndex];
+                    bool hasSecretModeData = character.SecretModState != null || 
+                                           (character.Designs?.Any(d => d.SecretModState != null) == true);
+                    
+                    if (hasSecretModeData && !isSecretMode)
+                    {
+                        isSecretMode = true;
+                    }
+                }
+                
+                if (!IsEditWindowOpen && isSecretMode)
+                {
+                    plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                }
             }
 
             uiStyles.PushFormStyle();
@@ -121,12 +140,33 @@ namespace CharacterSelectPlugin.Windows.Components
             // Character Name
             DrawFormField("Character Name*", labelWidth, inputWidth, inputOffset, () =>
             {
+                // Show red border if there's a validation error
+                if (!string.IsNullOrEmpty(nameValidationError))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(1.0f, 0.0f, 0.0f, 1.0f));
+                    ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 2.0f);
+                }
+                
                 ImGui.InputText("##CharacterName", ref tempName, 50);
                 plugin.CharacterNameFieldPos = ImGui.GetItemRectMin();
                 plugin.CharacterNameFieldSize = ImGui.GetItemRectSize();
 
+                if (!string.IsNullOrEmpty(nameValidationError))
+                {
+                    ImGui.PopStyleColor();
+                    ImGui.PopStyleVar();
+                    
+                    // Show error message
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.3f, 0.3f, 1.0f));
+                    ImGui.TextWrapped(nameValidationError);
+                    ImGui.PopStyleColor();
+                }
+
                 if (IsEditWindowOpen) editedCharacterName = tempName;
                 else plugin.NewCharacterName = tempName;
+                
+                // Validate name on change
+                ValidateCharacterName(tempName);
             }, "Enter your OC's name or nickname for profile here.", scale);
 
             ImGui.Separator();
@@ -185,7 +225,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                         else
                         {
-                            plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                         }
                     }
                 }
@@ -225,7 +265,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                         else
                         {
-                            plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                         }
                     }
                 }
@@ -255,6 +295,13 @@ namespace CharacterSelectPlugin.Windows.Components
             // Idle Pose
             DrawIdlePoseField(labelWidth, inputWidth, inputOffset, scale);
             ImGui.Separator();
+            
+            // Mod Manager (Conflict Resolution)
+            if (isSecretMode)
+            {
+                DrawSecretModeModsField(labelWidth, inputWidth, inputOffset, scale);
+                ImGui.Separator();
+            }
 
             // Image Selection
             DrawImageSelection(scale);
@@ -295,6 +342,105 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
+        private void DrawSecretModeModsField(float labelWidth, float inputWidth, float inputOffset, float scale)
+        {
+            DrawFormField("Mod Manager", labelWidth, inputWidth, inputOffset, () =>
+            {
+                var selectedCount = IsEditWindowOpen && plugin.Characters[selectedCharacterIndex].SecretModState != null
+                    ? plugin.Characters[selectedCharacterIndex].SecretModState.Count
+                    : (plugin.NewSecretModState?.Count ?? 0);
+                
+                var buttonText = selectedCount > 0 
+                    ? $"Configure Mods ({selectedCount} selected)###SecretMods"
+                    : "Configure Mods###SecretMods";
+                
+                // Validate that character name is filled before opening mod manager
+                string characterName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
+                bool hasValidName = !string.IsNullOrWhiteSpace(characterName);
+                
+                if (!hasValidName)
+                    ImGui.BeginDisabled();
+                
+                if (ImGui.Button(buttonText, new Vector2(inputWidth, 0)))
+                {
+                    if (hasValidName)
+                    {
+                        // Open the Secret Mode mod selection window
+                        if (plugin.SecretModeModWindow == null)
+                        {
+                            plugin.SecretModeModWindow = new SecretModeModWindow(plugin);
+                            plugin.WindowSystem.AddWindow(plugin.SecretModeModWindow);
+                        }
+                        
+                        Dictionary<string, bool>? currentSelection = null;
+                        HashSet<string>? currentPins = null;
+                        if (IsEditWindowOpen)
+                        {
+                            currentSelection = plugin.Characters[selectedCharacterIndex].SecretModState;
+                            currentPins = plugin.Characters[selectedCharacterIndex].SecretModPins != null ? new HashSet<string>(plugin.Characters[selectedCharacterIndex].SecretModPins) : null;
+                            Plugin.Log.Information($"[PIN DEBUG] Character form loading pins for character {selectedCharacterIndex}: {currentPins?.Count ?? 0} pins - {string.Join(", ", currentPins ?? new HashSet<string>())}");
+                        }
+                        else
+                        {
+                            currentSelection = plugin.NewSecretModState;
+                            currentPins = plugin.NewSecretModPins != null ? new HashSet<string>(plugin.NewSecretModPins) : null;
+                            Plugin.Log.Information($"[PIN DEBUG] Character form loading pins for new character: {currentPins?.Count ?? 0} pins - {string.Join(", ", currentPins ?? new HashSet<string>())}");
+                        }
+                        
+                        Plugin.Log.Information($"[PIN DEBUG] About to pass pins to mod manager: {currentPins?.Count ?? 0} pins - {string.Join(", ", currentPins ?? new HashSet<string>())}");
+                        plugin.SecretModeModWindow.Open(
+                            IsEditWindowOpen ? selectedCharacterIndex : null,
+                            currentSelection,
+                            currentPins,
+                            (selection) =>
+                            {
+                                if (IsEditWindowOpen)
+                                {
+                                    plugin.Characters[selectedCharacterIndex].SecretModState = selection;
+                                    plugin.SaveConfiguration();
+                                }
+                                else
+                                {
+                                    plugin.NewSecretModState = selection;
+                                }
+                            },
+                            (pins) =>
+                            {
+                                if (IsEditWindowOpen)
+                                {
+                                    Plugin.Log.Information($"[PIN DEBUG] Character save callback: saving {pins?.Count ?? 0} pins to character {selectedCharacterIndex}");
+                                    plugin.Characters[selectedCharacterIndex].SecretModPins = pins?.ToList();
+                                    plugin.SaveConfiguration();
+                                }
+                                else
+                                {
+                                    Plugin.Log.Information($"[PIN DEBUG] New character save callback: saving {pins?.Count ?? 0} pins to NewSecretModPins");
+                                    plugin.NewSecretModPins = pins?.ToList();
+                                }
+                            },
+                            null,  // No design context for character-level operations
+                            characterName  // Pass the character name for context
+                        );
+                    }
+                }
+                
+                if (!hasValidName)
+                {
+                    ImGui.EndDisabled();
+                    
+                    // Show tooltip explaining why the button is disabled
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.7f, 0.7f, 1.0f));
+                        ImGui.Text("Please enter a Character Name before configuring mods.");
+                        ImGui.PopStyleColor();
+                        ImGui.EndTooltip();
+                    }
+                }
+            }, "Select which mods to enable and configure their options for this character.\nAllows different characters to use different mod combinations and settings.", scale);
+        }
+        
         private void DrawAutomationField(float labelWidth, float inputWidth, float inputOffset, float scale)
         {
             string tempCharacterAutomation = IsEditWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
@@ -328,7 +474,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             }
                             else
                             {
-                                plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                                plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                             }
                         }
                     }
@@ -369,7 +515,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             }
                             else
                             {
-                                plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                                plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                             }
                         }
                     }
@@ -436,7 +582,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     }
                     else
                     {
-                        plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                        plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                     }
                 }
             }
@@ -484,7 +630,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                         else
                         {
-                            plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                         }
                     }
                 }
@@ -541,7 +687,7 @@ namespace CharacterSelectPlugin.Windows.Components
                                 }
                                 else
                                 {
-                                    plugin.NewCharacterMacros = isSecretMode ? GenerateSecretMacro() : GenerateMacro();
+                                    plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                                 }
                             }
                         }
@@ -708,7 +854,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     {
                         advancedCharacterMacroText = !string.IsNullOrWhiteSpace(plugin.NewCharacterMacros)
                             ? plugin.NewCharacterMacros
-                            : (isSecretMode ? GenerateSecretMacro() : GenerateMacro());
+                            : ((isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro());
                         plugin.NewCharacterMacros = advancedCharacterMacroText;
                     }
                 }
@@ -779,7 +925,8 @@ namespace CharacterSelectPlugin.Windows.Components
 
             bool canSaveCharacter = !string.IsNullOrWhiteSpace(tempName) &&
                                    !string.IsNullOrWhiteSpace(tempPenumbra) &&
-                                   !string.IsNullOrWhiteSpace(tempGlamourer);
+                                   !string.IsNullOrWhiteSpace(tempGlamourer) &&
+                                   string.IsNullOrEmpty(nameValidationError);
 
             uiStyles.PushDarkButtonStyle(scale);
 
@@ -1241,7 +1388,7 @@ namespace CharacterSelectPlugin.Windows.Components
             isSecretMode = secretMode;
             if (secretMode && !IsEditWindowOpen)
             {
-                plugin.NewCharacterMacros = GenerateSecretMacro();
+                plugin.NewCharacterMacros = (secretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
             }
         }
 
@@ -1249,6 +1396,13 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             IsEditWindowOpen = false;
             plugin.CloseAddCharacterWindow();
+            
+            // Close Mod Manager window if it's open
+            if (plugin.SecretModeModWindow?.IsOpen ?? false)
+            {
+                plugin.SecretModeModWindow.IsOpen = false;
+            }
+            
             isSecretMode = false;
             isAdvancedModeCharacter = false;
             ResetFields();
@@ -1336,6 +1490,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 character.ImagePath = editedCharacterImagePath;
             }
 
+            // Note: SecretModState is handled directly in the SecretModeModWindow callback
+            // and doesn't need to be copied here since it's already persisted to the character object
+
             plugin.SaveConfiguration();
         }
 
@@ -1393,6 +1550,36 @@ namespace CharacterSelectPlugin.Windows.Components
                 advancedCharacterMacroText = character.Macros;
             }
             IsEditWindowOpen = true;
+        }
+
+        private void ValidateCharacterName(string name)
+        {
+            nameValidationError = "";
+            
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            // Check if name already exists
+            bool nameExists;
+            if (IsEditWindowOpen && selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
+            {
+                // When editing, exclude the current character from the check
+                var currentCharName = plugin.Characters[selectedCharacterIndex].Name;
+                nameExists = plugin.Characters.Any(c => 
+                    !c.Name.Equals(currentCharName, StringComparison.OrdinalIgnoreCase) && 
+                    c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            }
+            else
+            {
+                // When creating new, check all characters
+                nameExists = plugin.Characters.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (nameExists)
+            {
+                nameValidationError = "You already have a character with this name. Please choose a different name. " +
+                                    "Try adding a number or variation (e.g., Name 2, Name Alt, etc.)";
+            }
         }
     }
 }

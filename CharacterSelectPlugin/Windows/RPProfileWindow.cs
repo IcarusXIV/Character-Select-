@@ -7,6 +7,8 @@ using System.Threading;
 using System.Windows.Forms;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using Newtonsoft.Json;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -203,6 +205,18 @@ namespace CharacterSelectPlugin.Windows
             profile = character.RPProfile ??= new RPProfile();
 
             var rp = character.RPProfile ??= new RPProfile();
+
+            // Sync NSFW status from server before opening editor
+            string? currentPlayerName = null;
+            string? currentWorldName = null;
+            var currentPlayer = Plugin.ClientState.LocalPlayer;
+            if (currentPlayer?.HomeWorld.IsValid == true)
+            {
+                currentPlayerName = currentPlayer.Name.TextValue;
+                currentWorldName = currentPlayer.HomeWorld.Value.Name.ToString();
+            }
+            
+            _ = SyncNSFWFromServerAsync(character, currentPlayerName, currentWorldName);
 
             // Store current values
             pronouns = rp.Pronouns ?? "";
@@ -851,7 +865,7 @@ namespace CharacterSelectPlugin.Windows
 
                             if (shouldUpload)
                             {
-                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName);
+                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName, isCharacterApplication: false);
                                 plugin.GalleryWindow.RefreshLikeStatesAfterProfileUpdate(character.Name);
                                 Plugin.Log.Info($"[RPProfile] ✅ Uploaded profile for {character.Name} from RP editor");
                             }
@@ -954,6 +968,45 @@ namespace CharacterSelectPlugin.Windows
         private float GetSafeScale(float baseScale)
         {
             return Math.Clamp(baseScale, 0.3f, 5.0f); // Prevent extreme scaling
+        }
+
+        private async System.Threading.Tasks.Task SyncNSFWFromServerAsync(Character character, string? playerName, string? worldName)
+        {
+            try
+            {
+                // Check gallery for current NSFW status
+                using var http = Plugin.CreateAuthenticatedHttpClient();
+                var response = await http.GetAsync("https://character-select-profile-server-production.up.railway.app/gallery?nsfw=true");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var profiles = JsonConvert.DeserializeObject<List<GalleryProfile>>(json);
+
+                    GalleryProfile? galleryProfile = null;
+
+                    // Always construct the exact gallery ID using passed-in player info
+                    if (!string.IsNullOrEmpty(playerName) && !string.IsNullOrEmpty(worldName))
+                    {
+                        var exactGalleryId = $"{character.Name}_{playerName}@{worldName}";
+                        galleryProfile = profiles?.FirstOrDefault(p => p.CharacterId == exactGalleryId);
+                    }
+
+                    if (galleryProfile != null && character.RPProfile != null &&
+                        galleryProfile.IsNSFW != character.RPProfile.IsNSFW)
+                    {
+                        // Update local profile to match server
+                        character.RPProfile.IsNSFW = galleryProfile.IsNSFW;
+                        isNSFW = galleryProfile.IsNSFW; // Update editor state
+                        originalIsNSFW = galleryProfile.IsNSFW; // Update original value
+                        plugin.Configuration.Save();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Silently handle sync errors
+            }
         }
     }
 }

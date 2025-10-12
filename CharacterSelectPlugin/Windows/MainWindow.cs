@@ -22,6 +22,8 @@ namespace CharacterSelectPlugin.Windows
         public bool IsDesignPanelOpen => designPanel?.IsOpen ?? false;
         public bool IsEditCharacterWindowOpen => characterForm?.IsEditWindowOpen ?? false;
         public bool IsReorderWindowOpen => reorderWindow?.IsOpen ?? false;
+        
+        public DesignPanel? GetDesignPanel() => designPanel;
 
         public MainWindow(Plugin plugin)
             : base("Character Select+", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoDocking)

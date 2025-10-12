@@ -714,16 +714,34 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SameLine(0, btnSpacing);
 
+            // Declare once for both Edit and Delete buttons
+            bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+            
             if (ImGui.Button($"Edit##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
                 int realIndex = plugin.Characters.IndexOf(character);
                 if (realIndex >= 0)
+                {
+                    if (isCtrlShiftPressed && plugin.Configuration.EnableConflictResolution)
+                    {
+                        // Enable secret mode for this character conversion
+                        plugin.IsSecretMode = true;
+                        
+                        // Ensure the character has secret mode data structure initialized
+                        var targetChar = plugin.Characters[realIndex];
+                        if (targetChar.SecretModState == null)
+                        {
+                            targetChar.SecretModState = new Dictionary<string, bool>();
+                        }
+                        
+                        Plugin.ChatGui.Print("[Character Select+] Character conversion to Secret Mode enabled. Configure mods in the Edit window.");
+                    }
+                    // Always open edit window (either with converted or original macro)
                     plugin.OpenEditCharacterWindow(realIndex);
+                }
             }
 
             ImGui.SameLine(0, btnSpacing);
-
-            bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
             if (ImGui.Button($"Delete##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
                 if (isCtrlShiftPressed)
@@ -936,9 +954,28 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             if (ImGui.Selectable("Apply to Target"))
             {
-                string macro = Plugin.GenerateTargetMacro(character.Macros);
-                if (!string.IsNullOrWhiteSpace(macro))
-                    plugin.ExecuteMacro(macro);
+                // Get target on main thread, then apply in background
+                var target = plugin.GetCurrentTarget();
+                if (target == null)
+                {
+                    Plugin.ChatGui.PrintError("[Character Select+] No target selected.");
+                }
+                else
+                {
+                    var targetInfo = new { ObjectIndex = target.ObjectIndex, ObjectKind = target.ObjectKind, Name = target.Name?.ToString() ?? "Unknown" };
+                    
+                    _ = System.Threading.Tasks.Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await plugin.ApplyToTarget(character, -1);
+                        }
+                        catch (Exception ex)
+                        {
+                            Plugin.Log.Error($"Error applying character to target: {ex}");
+                        }
+                    });
+                }
             }
 
             bool isMainCharacter = !string.IsNullOrEmpty(plugin.Configuration.MainCharacterName) &&
@@ -1001,10 +1038,29 @@ namespace CharacterSelectPlugin.Windows.Components
                     {
                         if (ImGui.Selectable($"Apply Design: {design.Name}"))
                         {
-                            var macro = Plugin.GenerateTargetMacro(
-                                design.IsAdvancedMode ? design.AdvancedMacro : design.Macro
-                            );
-                            plugin.ExecuteMacro(macro);
+                            // Get target on main thread, then apply design in background
+                            var target = plugin.GetCurrentTarget();
+                            if (target == null)
+                            {
+                                Plugin.ChatGui.PrintError("[Character Select+] No target selected.");
+                            }
+                            else
+                            {
+                                var designIndex = character.Designs.IndexOf(design);
+                                var targetInfo = new { ObjectIndex = target.ObjectIndex, ObjectKind = target.ObjectKind, Name = target.Name?.ToString() ?? "Unknown" };
+                                
+                                _ = System.Threading.Tasks.Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        await plugin.ApplyToTarget(character, designIndex);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Plugin.Log.Error($"Error applying design to target: {ex}");
+                                    }
+                                });
+                            }
                         }
                     }
                     ImGui.EndChild();
@@ -1217,6 +1273,18 @@ namespace CharacterSelectPlugin.Windows.Components
             if (plugin.IsDesignPanelOpen)
             {
                 plugin.IsDesignPanelOpen = false;
+            }
+
+            // Switch Penumbra collection if specified
+            if (!string.IsNullOrEmpty(character.PenumbraCollection))
+            {
+                plugin.SwitchPenumbraCollection(character.PenumbraCollection);
+            }
+            
+            // Apply Secret Mode mod states if configured
+            if (character.SecretModState != null && character.SecretModState.Any())
+            {
+                _ = plugin.ApplySecretModState(character);
             }
 
             plugin.ExecuteMacro(character.Macros, character, null);
@@ -1439,5 +1507,6 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             textSizeCache.Clear();
         }
+
     }
 }

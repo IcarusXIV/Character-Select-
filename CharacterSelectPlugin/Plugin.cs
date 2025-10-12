@@ -19,16 +19,21 @@ using System.Net.Http;
 using System.Text;
 using Newtonsoft.Json;
 using Dalamud.Game.ClientState.Objects;
+using Dalamud.Game.ClientState.Objects.Types;
 using static FFXIVClientStructs.FFXIV.Client.Game.Control.EmoteController;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Client.UI.Shell;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game;
+using System.Threading;
+using System.Drawing.Imaging;
 
 namespace CharacterSelectPlugin
 {
     public sealed class Plugin : IDalamudPlugin
     {
+        public static Plugin? Instance { get; private set; }
+        
         [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
         [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
         [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
@@ -44,7 +49,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.0.7"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.1.0"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -58,6 +63,7 @@ namespace CharacterSelectPlugin
         public RPProfileViewWindow RPProfileViewer { get; private set; }
         public GalleryWindow GalleryWindow { get; private set; } = null!;
         public TutorialManager TutorialManager { get; private set; } = null!;
+        public SecretModeModWindow? SecretModeModWindow { get; set; } = null;
         public enum SortType { Manual, Favorites, Alphabetical, Recent, Oldest }
 
         public List<Character> Characters => Configuration.Characters;
@@ -68,6 +74,8 @@ namespace CharacterSelectPlugin
         public string NewCharacterMacros { get; set; } = "";
         public string? NewCharacterImagePath { get; set; }
         public List<CharacterDesign> NewCharacterDesigns { get; set; } = new();
+        public Dictionary<string, bool>? NewSecretModState { get; set; } = null;
+        public List<string>? NewSecretModPins { get; set; } = null;
         public string NewPenumbraCollection { get; set; } = "";
         public string NewGlamourerDesign { get; set; } = "";
         public string NewCustomizeProfile { get; set; } = "";
@@ -79,11 +87,32 @@ namespace CharacterSelectPlugin
         public Vector3 NewCharacterHonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
         public Vector3 NewCharacterHonorificGlow { get; set; } = new Vector3(0.0f, 0.0f, 0.0f); // Default to no glow
         public string NewCharacterMoodlePreset { get; set; } = "";
-        public ImprovedPoseManager PoseManager { get; private set; } = null!;
+        public PoseManager PoseManager { get; private set; } = null!;
         public byte NewCharacterIdlePoseIndex { get; set; } = 0;
-        public SimplifiedPoseRestorer PoseRestorer { get; private set; } = null!;
+        public PoseRestorer PoseRestorer { get; private set; } = null!;
         private bool shouldApplyPoses = false;
         private DateTime loginTime;
+        
+        // Penumbra Integration
+        public PenumbraIntegration PenumbraIntegration { get; private set; } = null!;
+        public UserOverrideManager UserOverrideManager { get; private set; } = null!;
+        
+        // IPC Provider for other plugins
+        private IPCProvider? ipcProvider;
+        
+        // Target application safety tracking
+        private readonly Dictionary<int, DateTime> lastTargetApplicationTime = new();
+        private readonly TimeSpan minimumTargetApplicationInterval = TimeSpan.FromSeconds(2);
+        
+        // Target application IPC subscribers with correct signatures
+        private ICallGateSubscriber<Dictionary<Guid, string>>? penumbraGetCollectionsIpc;
+        private ICallGateSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>? penumbraSetCollectionForObjectIpc;
+        private ICallGateSubscriber<int, object>? penumbraRedrawObjectIpc;
+        private ICallGateSubscriber<Dictionary<Guid, string>>? glamourerGetDesignsIpc;
+        private ICallGateSubscriber<Guid, int, uint, ulong, int>? glamourerApplyDesignIpc;
+        private ICallGateSubscriber<IList<(Guid, string, string, IList<(string, ushort, byte, ushort)>, int, bool)>>? customizePlusGetProfileListIpc;
+        private ICallGateSubscriber<Guid, (int, string?)>? customizePlusGetByUniqueIdIpc;
+        private ICallGateSubscriber<ushort, string, (int, Guid?)>? customizePlusSetTempProfileIpc;
 
         private ICallGateSubscriber<string, RPProfile>? requestProfile;
         private ICallGateProvider<string, RPProfile>? provideProfile;
@@ -116,11 +145,15 @@ namespace CharacterSelectPlugin
         private string? _pendingSessionCharacterName = null;
         private float secondsSinceLogin = 0;
         private bool isLoginComplete = false;
-        public bool IsSecretMode { get; set; } = false;
-        private Character? activeCharacter = null!;
+        public bool IsSecretMode { get; set; } = false; // Now controlled by EnableConflictResolution setting
+        internal Character? activeCharacter = null!;
         private string lastExecutedGearsetCommand = "";
         private DateTime lastGearsetCommandTime = DateTime.MinValue;
         private readonly Dictionary<string, (string characterName, string designName, DateTime time)> lastAppliedByJob = new();
+        
+        // Conflict Resolution mod categorization cache
+        internal Dictionary<string, ModType>? modCategorizationCache = null;
+        private readonly string ModCacheFilePath;
         public void RefreshTreeItems(Character character)
         {
 
@@ -195,7 +228,12 @@ namespace CharacterSelectPlugin
         {
             try
             {
+                Instance = this;
                 GameInteropProvider = gameInteropProvider;
+                
+                // Initialize cache file path
+                ModCacheFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "mod_categorization_cache.json");
+                
                 var existingConfig = PluginInterface.GetPluginConfig() as Configuration;
                 if (existingConfig != null)
                 {
@@ -212,6 +250,12 @@ namespace CharacterSelectPlugin
             EnsureConfigurationDefaults();
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
+            
+            // Initialize Penumbra integration and services
+            PenumbraIntegration = new PenumbraIntegration(PluginInterface, Log);
+            
+            // Test available IPC methods for debugging
+            PenumbraIntegration.TestOnScreenMethods();
 
             // Patch macros only after loading config + setting
             foreach (var character in Configuration.Characters)
@@ -243,6 +287,8 @@ namespace CharacterSelectPlugin
                 }
             }
             Configuration.Save();
+            
+            // Cache initialization will happen after UserOverrideManager is ready
 
             try
             {
@@ -257,8 +303,18 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Error($"❌ Failed to load System.Windows.Forms: {ex.Message}");
             }
 
-            PoseManager = new ImprovedPoseManager(ClientState, Framework, this);
-            PoseRestorer = new SimplifiedPoseRestorer(ClientState, PoseManager);
+            PoseManager = new PoseManager(ClientState, Framework, ChatGui, CommandManager, this);
+            PoseRestorer = new PoseRestorer(ClientState, this);
+            
+            // Initialize Penumbra integration services
+            PenumbraIntegration = new PenumbraIntegration(PluginInterface, Log);
+            UserOverrideManager = new UserOverrideManager(PluginInterface);
+            
+            // Initialize mod categorization cache now that UserOverrideManager is ready
+            if (Configuration.EnableConflictResolution)
+            {
+                InitializeModCategorizationCache();
+            }
 
             // Initialize the MainWindow and ConfigWindow
             MainWindow = new Windows.MainWindow(this);
@@ -275,6 +331,14 @@ namespace CharacterSelectPlugin
             GalleryWindow = new GalleryWindow(this);
             WindowSystem.AddWindow(GalleryWindow);
             TutorialManager = new TutorialManager(this);
+            
+            // Initialize SecretModeModWindow (Mod Manager)
+            SecretModeModWindow = new SecretModeModWindow(this);
+            WindowSystem.AddWindow(SecretModeModWindow);
+            
+            // Initialize IPC provider for other plugins
+            ipcProvider = new IPCProvider(this, PluginInterface);
+            
             MigrateBackgroundImageNames();
 
             // This player registering their profile, if someone else requests it
@@ -283,6 +347,16 @@ namespace CharacterSelectPlugin
 
             // This player sending a request to another
             requestProfile = PluginInterface.GetIpcSubscriber<string, RPProfile>("CharacterSelect.RPProfile.Provide");
+            
+            // Initialize target application IPC subscribers with correct signatures
+            penumbraGetCollectionsIpc = PluginInterface.GetIpcSubscriber<Dictionary<Guid, string>>("Penumbra.GetCollections.V5");
+            penumbraSetCollectionForObjectIpc = PluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>("Penumbra.SetCollectionForObject.V5");
+            penumbraRedrawObjectIpc = PluginInterface.GetIpcSubscriber<int, object>("Penumbra.RedrawObject.V5");
+            glamourerGetDesignsIpc = PluginInterface.GetIpcSubscriber<Dictionary<Guid, string>>("Glamourer.GetDesignList.V2");
+            glamourerApplyDesignIpc = PluginInterface.GetIpcSubscriber<Guid, int, uint, ulong, int>("Glamourer.ApplyDesign");
+            customizePlusGetProfileListIpc = PluginInterface.GetIpcSubscriber<IList<(Guid, string, string, IList<(string, ushort, byte, ushort)>, int, bool)>>("CustomizePlus.Profile.GetList");
+            customizePlusGetByUniqueIdIpc = PluginInterface.GetIpcSubscriber<Guid, (int, string?)>("CustomizePlus.Profile.GetByUniqueId");
+            customizePlusSetTempProfileIpc = PluginInterface.GetIpcSubscriber<ushort, string, (int, Guid?)>("CustomizePlus.Profile.SetTemporaryProfileOnCharacter");
 
             // Patch Notes
             PatchNotesWindow = new PatchNotesWindow(this);
@@ -350,7 +424,7 @@ namespace CharacterSelectPlugin
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
             {
-                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, or /select random for random selection."
+                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, /select random for random selection, /select jobchange on|off to toggle reapply on job change, or /select save [CR] to save current look as design."
             });
             // Idles
             CommandManager.AddHandler("/sidle", new CommandInfo((_, args) =>
@@ -428,6 +502,16 @@ namespace CharacterSelectPlugin
 
             contextMenuManager = new ContextMenuManager(this, Plugin.ContextMenu);
             this.CleanupUnusedProfileImages();
+            
+            // Cleanup orphaned design preview images
+            try
+            {
+                Windows.Components.DesignPanel.CleanupOrphanedPreviewImages(this);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to cleanup orphaned preview images: {ex.Message}");
+            }
             try
             {
                 dialogueProcessor = new NPCDialogueProcessor(
@@ -444,6 +528,7 @@ namespace CharacterSelectPlugin
             {
                 Log.Error($"Failed to initialize dialogue processor: {ex.Message}");
             }
+
 
         }
         public static HttpClient CreateAuthenticatedHttpClient()
@@ -619,6 +704,7 @@ namespace CharacterSelectPlugin
                         NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor, // force correct colour
                         GalleryStatus = character.GalleryStatus,
                         Links = character.RPProfile?.Links,
+                        IsNSFW = character.RPProfile?.IsNSFW ?? false,
 
                         // Include background and effects data
                         BackgroundImage = character.RPProfile?.BackgroundImage ?? character.BackgroundImage,
@@ -640,13 +726,114 @@ namespace CharacterSelectPlugin
             SaveConfiguration();
             if (character == null) return;
 
+            // Capture original mod state if Conflict Resolution is enabled
+            if (Configuration.EnableConflictResolution && character.OriginalCollectionState == null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var (success, collectionId, collectionName) = PenumbraIntegration.GetCurrentCollection();
+                        if (success)
+                        {
+                            // Get all enabled mods in the collection
+                            var modSettings = await Task.Run(() => PenumbraIntegration.GetAllModSettingsRobust(collectionId));
+                            if (modSettings != null)
+                            {
+                                var enabledMods = modSettings
+                                    .Where(kvp => kvp.Value.Item1) // Only enabled mods
+                                    .Select(kvp => kvp.Key)
+                                    .ToList();
+                                
+                                // Capture the current options for all enabled mods
+                                character.OriginalCollectionState = PenumbraIntegration.CaptureCurrentModOptions(collectionId, enabledMods);
+                                Log.Info($"Captured original mod state for {character.Name}: {character.OriginalCollectionState?.Count ?? 0} mods with options");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"Error capturing original mod state: {ex}");
+                    }
+                });
+            }
+            
+            // Switch Penumbra UI collection to match the character's collection
+            if (!string.IsNullOrEmpty(character.PenumbraCollection))
+            {
+                var success = PenumbraIntegration.SwitchCollection(character.PenumbraCollection);
+                if (success)
+                {
+                    Log.Information($"Successfully switched Penumbra UI collection to: {character.PenumbraCollection}");
+                }
+                else
+                {
+                    Log.Warning($"Failed to switch Penumbra UI collection to: {character.PenumbraCollection}");
+                }
+            }
+            
             // Apply the character's macro
             ExecuteMacro(character.Macros, character, null);
-
-            // If a design is selected, apply that too
+            
+            // Apply Secret Mode state - first character-level, then design-specific
             if (designIndex >= 0 && designIndex < character.Designs.Count)
             {
-                ExecuteMacro(character.Designs[designIndex].Macro);
+                var design = character.Designs[designIndex];
+                
+                // Apply design-specific Secret Mode state using proper design-level conflict resolution
+                if (design.SecretModState != null && design.SecretModState.Any())
+                {
+                    _ = ApplyDesignModState(character, design);
+                }
+                else
+                {
+                    // Fallback to character-level Secret Mode state
+                    _ = ApplySecretModState(character);
+                }
+                
+                // Apply design-specific mod options if they exist
+                if (design.ModOptionSettings != null && design.ModOptionSettings.Any())
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // Get current collection
+                            var (success, collectionId, collectionName) = PenumbraIntegration.GetCurrentCollection();
+                            if (success)
+                            {
+                                // First, restore original state if available
+                                if (character.OriginalCollectionState != null && character.OriginalCollectionState.Any())
+                                {
+                                    Log.Info($"Restoring original mod options before applying design '{design.Name}'");
+                                    await PenumbraIntegration.ApplyModOptionsForDesign(collectionId, character.OriginalCollectionState);
+                                    await Task.Delay(100); // Small delay to ensure state is applied
+                                }
+                                
+                                // Then apply design-specific options
+                                Log.Info($"Applying mod options for design '{design.Name}' in collection '{collectionName}'");
+                                await PenumbraIntegration.ApplyModOptionsForDesign(collectionId, design.ModOptionSettings);
+                            }
+                            else
+                            {
+                                Log.Warning("Could not get current collection to apply mod options");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"Error applying mod options for design: {ex}");
+                        }
+                    });
+                }
+                
+                // Apply the design's macro (use advanced macro for CR mode)
+                string macroText = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                ExecuteMacro(macroText);
+            }
+            else
+            {
+                // No design selected - just apply character-level Secret Mode state
+                _ = ApplySecretModState(character);
             }
 
             // Only apply idle pose if it's not "None"
@@ -772,9 +959,15 @@ namespace CharacterSelectPlugin
             CommandManager.RemoveHandler("/spose");
             CommandManager.RemoveHandler("/gallery");
             contextMenuManager?.Dispose();
-            Framework.Update += FrameworkUpdate;
+            Framework.Update -= FrameworkUpdate; // Fixed: should be -= not +=
             PoseManager?.Dispose();
             dialogueProcessor?.Dispose();
+            
+            // Dispose Penumbra integration services
+            PenumbraIntegration?.Dispose();
+            
+            // Dispose IPC provider
+            ipcProvider?.Dispose();
             try
             {
                 string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
@@ -788,6 +981,8 @@ namespace CharacterSelectPlugin
             {
                 Plugin.Log.Warning($"[Dispose] Failed to delete boot_session.txt: {ex.Message}");
             }
+            
+            Instance = null;
         }
 
         private void OnCommand(string command, string args)
@@ -806,7 +1001,7 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name] or /select random");
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, or /select save [CR]");
                 return;
             }
 
@@ -814,6 +1009,39 @@ namespace CharacterSelectPlugin
             if (args.Trim().Equals("random", StringComparison.OrdinalIgnoreCase))
             {
                 SelectRandomCharacterAndDesign();
+                return;
+            }
+
+            // Handle jobchange on/off subcommand
+            if (args.Trim().StartsWith("jobchange", StringComparison.OrdinalIgnoreCase))
+            {
+                var jobchangeArgs = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (jobchangeArgs.Length == 2)
+                {
+                    string setting = jobchangeArgs[1].ToLower();
+                    if (setting == "on")
+                    {
+                        Configuration.ReapplyDesignOnJobChange = true;
+                        Configuration.Save();
+                        ChatGui.Print("[Character Select+] Reapply design on job change: Enabled");
+                        return;
+                    }
+                    else if (setting == "off")
+                    {
+                        Configuration.ReapplyDesignOnJobChange = false;
+                        Configuration.Save();
+                        ChatGui.Print("[Character Select+] Reapply design on job change: Disabled");
+                        return;
+                    }
+                }
+                ChatGui.PrintError("[Character Select+] Usage: /select jobchange on|off");
+                return;
+            }
+
+            // Handle save subcommand
+            if (args.Trim().StartsWith("save", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleSaveCommand(args);
                 return;
             }
 
@@ -825,7 +1053,7 @@ namespace CharacterSelectPlugin
 
             if (matches.Length < 1)
             {
-                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name] or /select random");
+                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, or /select save [CR]");
                 return;
             }
 
@@ -851,8 +1079,9 @@ namespace CharacterSelectPlugin
 
                 if (design != null)
                 {
+                    var designIndex = character.Designs.IndexOf(design);
                     ChatGui.Print($"[Character Select+] Applied design '{designName}' to {character.Name}.");
-                    ExecuteMacro(design.Macro, character, design.Name);
+                    ApplyProfile(character, designIndex);
                 }
                 else
                 {
@@ -861,6 +1090,285 @@ namespace CharacterSelectPlugin
             }
         }
 
+        private void HandleSaveCommand(string args)
+        {
+            var parts = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            
+            // Validate command structure: /select save [CR]
+            if (parts.Length < 1 || !parts[0].Equals("save", StringComparison.OrdinalIgnoreCase))
+            {
+                ChatGui.PrintError("[Character Select+] Usage: /select save [CR]");
+                return;
+            }
+            
+            // Parse CR flag - /select save [CR]
+            bool useConflictResolution = false;
+            
+            if (parts.Length > 1 && parts[1].Equals("CR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Configuration.EnableConflictResolution)
+                {
+                    useConflictResolution = true;
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Conflict Resolution is not enabled in settings.");
+                    return;
+                }
+            }
+
+            // Find currently applied CS+ character 
+            Character? currentCharacter = null;
+            
+            // Try to get the last used character for this player first
+            var currentPlayerName = ClientState.LocalPlayer?.Name.TextValue;
+            if (!string.IsNullOrEmpty(currentPlayerName) && Configuration.LastUsedCharacterByPlayer.ContainsKey(currentPlayerName))
+            {
+                var lastUsedCharacterName = Configuration.LastUsedCharacterByPlayer[currentPlayerName];
+                currentCharacter = Characters.FirstOrDefault(c => c.Name.Equals(lastUsedCharacterName, StringComparison.OrdinalIgnoreCase));
+            }
+            
+            // Fallback to the last used character key
+            if (currentCharacter == null && !string.IsNullOrEmpty(Configuration.LastUsedCharacterKey))
+            {
+                currentCharacter = Characters.FirstOrDefault(c => c.Name.Equals(Configuration.LastUsedCharacterKey, StringComparison.OrdinalIgnoreCase));
+            }
+            
+            // Final fallback to first character if available
+            if (currentCharacter == null && Characters.Count > 0)
+            {
+                currentCharacter = Characters[0];
+                ChatGui.Print($"[Character Select+] Using first available character: {currentCharacter.Name}");
+            }
+
+            if (currentCharacter == null)
+            {
+                ChatGui.PrintError("[Character Select+] No Character Select+ profiles available. Create a character profile first.");
+                return;
+            }
+
+            // Use smart snapshot - same as Shift+Click or Ctrl+Shift+Click on the UI button
+            var designPanel = MainWindow?.GetDesignPanel();
+            if (designPanel != null)
+            {
+                // Call the smart snapshot method directly
+                designPanel.CreateSmartSnapshotFromCommand(currentCharacter, useConflictResolution);
+            }
+            else
+            {
+                ChatGui.PrintError("[Character Select+] Unable to access design panel for snapshot creation.");
+            }
+        }
+
+        private void CreateSnapshotDesignForCharacter(Character character, string designName, bool useConflictResolution)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    ChatGui.Print($"[Character Select+] Creating design '{designName}' for {character.Name}...");
+
+                    var newDesign = new CharacterDesign(
+                        designName,
+                        "echo Design snapshot created",
+                        false,
+                        "",
+                        "",
+                        "",
+                        "",
+                        null
+                    );
+
+                    // Check for clipboard image and save it
+                    var clipboardImagePath = await SaveClipboardImageForDesign(Guid.NewGuid());
+                    if (!string.IsNullOrEmpty(clipboardImagePath))
+                    {
+                        newDesign.PreviewImagePath = clipboardImagePath;
+                        Log.Information($"Saved clipboard image for command snapshot: {clipboardImagePath}");
+                    }
+
+                    // Detect and set Glamourer design data
+                    var glamourerData = await GetGlamourerDesignDataForCommand();
+                    if (!string.IsNullOrEmpty(glamourerData))
+                    {
+                        newDesign.GlamourerDesign = glamourerData;
+                    }
+
+                    // Detect and set Customize+ profile
+                    var customizePlusProfile = await GetCustomizePlusProfileForCommand();
+                    if (!string.IsNullOrEmpty(customizePlusProfile))
+                    {
+                        newDesign.CustomizePlusProfile = customizePlusProfile;
+                    }
+
+                    // Generate appropriate macro
+                    newDesign.Macro = GenerateCommandSnapshotMacro(newDesign, useConflictResolution);
+
+                    // Add the design to the character
+                    character.Designs.Add(newDesign);
+                    
+                    // Save configuration
+                    Configuration.Save();
+
+                    ChatGui.Print($"[Character Select+] ✅ Design '{designName}' created successfully!");
+                    
+                    if (string.IsNullOrEmpty(glamourerData) && string.IsNullOrEmpty(customizePlusProfile))
+                    {
+                        ChatGui.Print("[Character Select+] ⚠ No Glamourer or Customize+ state detected. You may need to manually configure the design.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Error creating snapshot design via command: {ex}");
+                    ChatGui.PrintError($"[Character Select+] Failed to create design: {ex.Message}");
+                }
+            });
+        }
+
+        private async Task<string> GetGlamourerDesignDataForCommand()
+        {
+            try
+            {
+                // Get the current player's object ID
+                var localPlayer = ClientState.LocalPlayer;
+                if (localPlayer == null)
+                {
+                    Log.Warning("Local player not found for Glamourer design export");
+                    return string.Empty;
+                }
+
+                // Use Glamourer IPC to export current design
+                var glamourerExportIpc = PluginInterface.GetIpcSubscriber<int, uint, string>("Glamourer.GetDesignFromCharacter");
+                var designData = await Task.Run(() => 
+                {
+                    try
+                    {
+                        return glamourerExportIpc.InvokeFunc(localPlayer.ObjectIndex, 0); // 0 for current design
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Glamourer IPC call failed: {ex.Message}");
+                        return string.Empty;
+                    }
+                });
+
+                if (!string.IsNullOrEmpty(designData))
+                {
+                    Log.Info("Successfully retrieved Glamourer design data via command");
+                    return designData;
+                }
+                
+                Log.Info("No Glamourer design data available");
+                return string.Empty;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to get Glamourer design data via command: {ex}");
+                return string.Empty;
+            }
+        }
+
+        private async Task<string> GetCustomizePlusProfileForCommand()
+        {
+            try
+            {
+                // Get the current player's object ID
+                var localPlayer = ClientState.LocalPlayer;
+                if (localPlayer == null)
+                {
+                    Log.Warning("Local player not found for Customize+ profile export");
+                    return string.Empty;
+                }
+
+                // Use Customize+ IPC to get the active profile for the current character
+                var customizePlusActiveProfileIpc = PluginInterface.GetIpcSubscriber<ushort, (int, Guid?)>("CustomizePlus.Profile.GetActiveProfileIdOnCharacter");
+                var customizePlusExportIpc = PluginInterface.GetIpcSubscriber<Guid, (int, string?)>("CustomizePlus.Profile.GetProfileById");
+                
+                var profileData = await Task.Run(() => 
+                {
+                    try
+                    {
+                        // Get active profile ID for current character
+                        var activeProfileResult = customizePlusActiveProfileIpc.InvokeFunc((ushort)localPlayer.ObjectIndex);
+                        if (activeProfileResult.Item1 != 0 || !activeProfileResult.Item2.HasValue)
+                        {
+                            Log.Info("No active Customize+ profile found for current character");
+                            return string.Empty;
+                        }
+
+                        // Export the active profile
+                        var profileExportResult = customizePlusExportIpc.InvokeFunc(activeProfileResult.Item2.Value);
+                        if (profileExportResult.Item1 != 0 || string.IsNullOrEmpty(profileExportResult.Item2))
+                        {
+                            Log.Warning("Failed to export Customize+ profile data");
+                            return string.Empty;
+                        }
+
+                        return profileExportResult.Item2;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Customize+ IPC call failed: {ex.Message}");
+                        return string.Empty;
+                    }
+                });
+
+                if (!string.IsNullOrEmpty(profileData))
+                {
+                    Log.Info("Successfully retrieved Customize+ profile data via command");
+                    return profileData;
+                }
+                
+                Log.Info("No Customize+ profile data available");
+                return string.Empty;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to get Customize+ profile via command: {ex}");
+                return string.Empty;
+            }
+        }
+
+        private string GenerateCommandSnapshotMacro(CharacterDesign design, bool useConflictResolution)
+        {
+            var macroLines = new List<string>();
+
+            // Add Glamourer apply if we have it
+            if (!string.IsNullOrEmpty(design.GlamourerDesign))
+            {
+                if (useConflictResolution && Configuration.EnableConflictResolution)
+                {
+                    // Use Glamourer apply with design name for conflict resolution
+                    macroLines.Add($"/glamourer apply \"{design.Name}\" to self");
+                }
+                else
+                {
+                    // Use standard Glamourer apply
+                    macroLines.Add($"/glamourer apply \"{design.Name}\" to self");
+                }
+            }
+
+            // Add Customize+ apply if we have it
+            if (!string.IsNullOrEmpty(design.CustomizePlusProfile))
+            {
+                // Use proper Customize+ command syntax
+                macroLines.Add($"/customize+ set temporary \"{design.Name}\"");
+            }
+
+            // Add a redraw command to refresh appearance
+            if (macroLines.Count > 0)
+            {
+                macroLines.Add("/penumbra redraw self");
+            }
+
+            // Add a default message if no automation was detected
+            if (macroLines.Count == 0)
+            {
+                macroLines.Add("echo No automation detected - manual setup required");
+            }
+
+            return string.Join("\n", macroLines);
+        }
 
         private void DrawUI()
         {
@@ -914,7 +1422,9 @@ namespace CharacterSelectPlugin
                     IsAdvancedMode = NewCharacterIsAdvancedMode, // Use the plugin property
                     Tags = string.IsNullOrWhiteSpace(NewCharacterTag)
                 ? new List<string>()
-                : NewCharacterTag.Split(',').Select(f => f.Trim()).ToList()
+                : NewCharacterTag.Split(',').Select(f => f.Trim()).ToList(),
+                    SecretModState = NewSecretModState,
+                    SecretModPins = NewSecretModPins
                 };
 
                 // Auto-create a Design based on Glamourer Design if available
@@ -951,6 +1461,8 @@ namespace CharacterSelectPlugin
                 NewPenumbraCollection = "";
                 NewGlamourerDesign = "";
                 NewCustomizeProfile = "";
+                NewSecretModState = null;
+                NewSecretModPins = null;
 
                 // Reset Honorific Fields
                 NewCharacterHonorificTitle = "";
@@ -1383,13 +1895,239 @@ namespace CharacterSelectPlugin
             return string.Join("\n", lines);
         }
 
+        private void InitializeModCategorizationCache()
+        {
+            if (modCategorizationCache != null || PenumbraIntegration?.IsPenumbraAvailable != true)
+                return;
+
+            try
+            {
+                Log.Info("Initializing mod categorization cache...");
+
+                // Try to load cache from disk first
+                ModCacheData? diskCache = null;
+                if (File.Exists(ModCacheFilePath))
+                {
+                    try
+                    {
+                        var json = File.ReadAllText(ModCacheFilePath);
+                        diskCache = JsonConvert.DeserializeObject<ModCacheData>(json);
+                        Log.Info($"Loaded mod cache from disk (version {diskCache?.Version}, {diskCache?.Mods.Count} mods)");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Failed to load mod cache from disk: {ex.Message}");
+                    }
+                }
+
+                // Get current mod list from Penumbra
+                var currentModList = PenumbraIntegration.GetModList() ?? new Dictionary<string, string>();
+                
+                if (!currentModList.Any())
+                {
+                    Log.Warning("No mods found in Penumbra, skipping cache initialization");
+                    modCategorizationCache = new Dictionary<string, ModType>();
+                    return;
+                }
+
+                modCategorizationCache = new Dictionary<string, ModType>();
+                var cacheData = new ModCacheData { LastUpdated = DateTime.UtcNow };
+                var needsSave = false;
+                var newModCount = 0;
+                var removedModCount = 0;
+
+                // Process current mods
+                foreach (var (modDir, modName) in currentModList)
+                {
+                    // Check if we have cached data
+                    if (diskCache?.Mods.ContainsKey(modDir) == true)
+                    {
+                        // Use cached categorization
+                        var cached = diskCache.Mods[modDir];
+                        modCategorizationCache[modDir] = cached.Type;
+                        cacheData.Mods[modDir] = new ModCacheEntry
+                        {
+                            Name = modName,
+                            Type = cached.Type,
+                            LastSeen = DateTime.UtcNow
+                        };
+                    }
+                    else
+                    {
+                        // New mod - categorize it
+                        var modType = SecretModeModWindow.DetermineModType(modDir, modName, this);
+                        modCategorizationCache[modDir] = modType;
+                        cacheData.Mods[modDir] = new ModCacheEntry
+                        {
+                            Name = modName,
+                            Type = modType,
+                            LastSeen = DateTime.UtcNow
+                        };
+                        newModCount++;
+                        needsSave = true;
+                    }
+                }
+
+                // Check for removed mods
+                if (diskCache != null)
+                {
+                    foreach (var modDir in diskCache.Mods.Keys)
+                    {
+                        if (!currentModList.ContainsKey(modDir))
+                        {
+                            removedModCount++;
+                            needsSave = true;
+                        }
+                    }
+                }
+
+                // Save cache if changed
+                if (needsSave || diskCache == null)
+                {
+                    SaveModCache(cacheData);
+                }
+
+                Log.Info($"Mod categorization cache initialized with {modCategorizationCache.Count} mods " +
+                         $"({newModCount} new, {removedModCount} removed)");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to initialize mod categorization cache: {ex}");
+                modCategorizationCache = new Dictionary<string, ModType>();
+            }
+        }
+        
+        private void SaveModCache(ModCacheData cacheData)
+        {
+            try
+            {
+                var json = JsonConvert.SerializeObject(cacheData, Formatting.Indented);
+                File.WriteAllText(ModCacheFilePath, json);
+                Log.Info($"Saved mod cache to disk ({cacheData.Mods.Count} mods)");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to save mod cache to disk: {ex}");
+            }
+        }
+        
+        // Methods for updating mod cache from Penumbra events
+        public void UpdateModCache(string modDir, string modName, ModType modType)
+        {
+            try
+            {
+                // Load current cache from disk
+                ModCacheData? diskCache = null;
+                if (File.Exists(ModCacheFilePath))
+                {
+                    var json = File.ReadAllText(ModCacheFilePath);
+                    diskCache = JsonConvert.DeserializeObject<ModCacheData>(json);
+                }
+                
+                if (diskCache == null)
+                    diskCache = new ModCacheData { LastUpdated = DateTime.UtcNow };
+                
+                // Add new mod entry
+                diskCache.Mods[modDir] = new ModCacheEntry
+                {
+                    Name = modName,
+                    Type = modType,
+                    LastSeen = DateTime.UtcNow
+                };
+                diskCache.LastUpdated = DateTime.UtcNow;
+                
+                // Save updated cache
+                SaveModCache(diskCache);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to update mod cache for new mod {modDir}: {ex}");
+            }
+        }
+        
+        public void RemoveFromModCache(string modDir)
+        {
+            try
+            {
+                // Load current cache from disk
+                if (!File.Exists(ModCacheFilePath))
+                    return;
+                
+                var json = File.ReadAllText(ModCacheFilePath);
+                var diskCache = JsonConvert.DeserializeObject<ModCacheData>(json);
+                
+                if (diskCache == null)
+                    return;
+                
+                // Remove mod entry
+                if (diskCache.Mods.Remove(modDir))
+                {
+                    diskCache.LastUpdated = DateTime.UtcNow;
+                    SaveModCache(diskCache);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to remove mod from cache {modDir}: {ex}");
+            }
+        }
+        
+        public void MoveInModCache(string oldModDir, string newModDir, string modName, ModType modType)
+        {
+            try
+            {
+                // Load current cache from disk
+                if (!File.Exists(ModCacheFilePath))
+                    return;
+                
+                var json = File.ReadAllText(ModCacheFilePath);
+                var diskCache = JsonConvert.DeserializeObject<ModCacheData>(json);
+                
+                if (diskCache == null)
+                    return;
+                
+                // Remove old entry and add new entry
+                diskCache.Mods.Remove(oldModDir);
+                diskCache.Mods[newModDir] = new ModCacheEntry
+                {
+                    Name = modName,
+                    Type = modType,
+                    LastSeen = DateTime.UtcNow
+                };
+                diskCache.LastUpdated = DateTime.UtcNow;
+                
+                SaveModCache(diskCache);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to move mod in cache {oldModDir} -> {newModDir}: {ex}");
+            }
+        }
+
+        public static string ConvertMacroToConflictResolution(string macro)
+        {
+            if (string.IsNullOrWhiteSpace(macro))
+                return macro;
+                
+            var lines = macro.Split('\n').Select(l => l.Trim()).ToList();
+            
+            // Remove bulktag lines when explicitly converting to Conflict Resolution
+            lines.RemoveAll(l => l.StartsWith("/penumbra bulktag", StringComparison.OrdinalIgnoreCase));
+            
+            return string.Join("\n", lines);
+        }
+
         public static string SanitizeDesignMacro(string macro, CharacterDesign design, Character character, bool enableAutomations)
         {
             var lines = macro.Split('\n').Select(l => l.Trim()).ToList();
 
+            // Remove automation lines if automations are disabled
+            if (!enableAutomations)
+            {
+                lines.RemoveAll(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase));
+            }
             // Add automation if missing (only if enabled)
-            if (enableAutomations &&
-        !lines.Any(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase)))
+            else if (!lines.Any(l => l.StartsWith("/glamour automation enable", StringComparison.OrdinalIgnoreCase)))
             {
                 string automationName = !string.IsNullOrWhiteSpace(design.Automation)
                     ? design.Automation
@@ -1426,6 +2164,89 @@ namespace CharacterSelectPlugin
 
 
             return string.Join("\n", lines);
+        }
+
+        public static string ConvertToSecretModeMacro(string macro, string? characterPenumbraCollection = null)
+        {
+            if (string.IsNullOrWhiteSpace(macro))
+                return macro;
+
+            // Check if Conflict Resolution is enabled - if so, don't generate bulktag commands
+            if (Plugin.Instance?.Configuration?.EnableConflictResolution == true)
+                return macro;
+
+            var lines = macro.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).ToList();
+            var result = new List<string>();
+            
+            // Extract values from existing commands
+            string? penumbraCollection = null;
+            string? glamourerDesign = null;
+            
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("/penumbra collection individual", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = line.Split('|');
+                    if (parts.Length >= 2)
+                        penumbraCollection = parts[1].Trim();
+                }
+                else if (line.StartsWith("/glamour apply", StringComparison.OrdinalIgnoreCase) && !line.Contains("no clothes"))
+                {
+                    var parts = line.Split('|');
+                    if (parts.Length >= 1)
+                    {
+                        var designPart = parts[0].Substring("/glamour apply".Length).Trim();
+                        if (!string.IsNullOrWhiteSpace(designPart))
+                            glamourerDesign = designPart;
+                    }
+                }
+            }
+
+            // Use provided character collection if available, otherwise use extracted collection
+            string collectionToUse = !string.IsNullOrWhiteSpace(characterPenumbraCollection) 
+                ? characterPenumbraCollection 
+                : penumbraCollection;
+
+            // Add secret mode commands at the beginning (for designs)
+            if (!string.IsNullOrWhiteSpace(characterPenumbraCollection) && !string.IsNullOrWhiteSpace(glamourerDesign))
+            {
+                result.Add($"/penumbra bulktag disable {characterPenumbraCollection} | gear");
+                result.Add($"/penumbra bulktag disable {characterPenumbraCollection} | hair");
+                result.Add($"/penumbra bulktag enable {characterPenumbraCollection} | {glamourerDesign}");
+                result.Add("/glamour apply no clothes | self");
+            }
+            // Add secret mode commands for characters (with collection line)
+            else if (!string.IsNullOrWhiteSpace(collectionToUse) && !string.IsNullOrWhiteSpace(glamourerDesign))
+            {
+                result.Add($"/penumbra collection individual | {collectionToUse} | self");
+                result.Add($"/penumbra bulktag disable {collectionToUse} | gear");
+                result.Add($"/penumbra bulktag disable {collectionToUse} | hair");
+                result.Add($"/penumbra bulktag enable {collectionToUse} | {glamourerDesign}");
+                result.Add("/glamour apply no clothes | self");
+            }
+
+            // Add all other lines, replacing the original penumbra collection and glamour apply commands
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("/penumbra collection individual", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Skip - already added above
+                    continue;
+                }
+                else if (line.StartsWith("/glamour apply", StringComparison.OrdinalIgnoreCase) && !line.Contains("no clothes"))
+                {
+                    // Replace with our version
+                    if (!string.IsNullOrWhiteSpace(glamourerDesign))
+                        result.Add($"/glamour apply {glamourerDesign} | self");
+                }
+                else
+                {
+                    // Keep all other lines (including custom commands, honorific, moodle, etc.)
+                    result.Add(line);
+                }
+            }
+
+            return string.Join("\n", result);
         }
 
         public void OpenRPProfileWindow(Character character)
@@ -1665,7 +2486,7 @@ namespace CharacterSelectPlugin
             }
         }
 
-        public static async Task UploadProfileAsync(RPProfile profile, string characterName)
+        public static async Task UploadProfileAsync(RPProfile profile, string characterName, bool isCharacterApplication = true)
         {
             Stream? imageStream = null;
             StreamContent? imageContent = null;
@@ -1729,6 +2550,42 @@ namespace CharacterSelectPlugin
                     imageContent.Headers.ContentType =
                         new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
                     form.Add(imageContent, "image", $"{Guid.NewGuid()}.png");
+                }
+
+                // Only preserve server NSFW for character applications, not profile editor saves
+                if (isCharacterApplication)
+                {
+                    try 
+                    {
+                        using var checkHttp = CreateAuthenticatedHttpClient();
+                        var galleryResponse = await checkHttp.GetAsync("https://character-select-profile-server-production.up.railway.app/gallery?nsfw=true");
+                        
+                        if (galleryResponse.IsSuccessStatusCode)
+                        {
+                            var galleryJson = await galleryResponse.Content.ReadAsStringAsync();
+                            var galleryProfiles = JsonConvert.DeserializeObject<List<GalleryProfile>>(galleryJson);
+                            
+                            // Find this character's profile in gallery
+                            var existingGalleryProfile = galleryProfiles?.FirstOrDefault(p => 
+                                p.CharacterName == (profile.CharacterName ?? characterName) ||
+                                p.CharacterId.Contains(characterName));
+                            
+                            if (existingGalleryProfile != null && existingGalleryProfile.IsNSFW)
+                            {
+                                // Server has NSFW=true, preserve it for character applications
+                                profile.IsNSFW = true;
+                                Plugin.Log.Debug($"[UploadProfile] Preserving server NSFW=true for character application: {characterName}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Plugin.Log.Debug($"[UploadProfile] Could not check server NSFW status: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    Plugin.Log.Debug($"[UploadProfile] Profile editor save - respecting user's NSFW choice: {profile.IsNSFW} for {characterName}");
                 }
 
                 // Upload JSON - The profile parameter already has the correct data!
@@ -2363,6 +3220,20 @@ namespace CharacterSelectPlugin
             ExecuteMacro(selectedCharacter.Macros, selectedCharacter, null);
             SetActiveCharacter(selectedCharacter);
 
+            // Switch Penumbra UI collection to match the character's collection
+            if (!string.IsNullOrEmpty(selectedCharacter.PenumbraCollection))
+            {
+                var success = PenumbraIntegration.SwitchCollection(selectedCharacter.PenumbraCollection);
+                if (success)
+                {
+                    Log.Information($"Successfully switched Penumbra UI collection to: {selectedCharacter.PenumbraCollection}");
+                }
+                else
+                {
+                    Log.Warning($"Failed to switch Penumbra UI collection to: {selectedCharacter.PenumbraCollection}");
+                }
+            }
+
             string message = $"[Character Select+] Random selection: {selectedCharacter.Name}";
 
             // Apply random design if available
@@ -2518,11 +3389,18 @@ namespace CharacterSelectPlugin
         }
         private void TryRestorePosesAfterLogin()
         {
-            if (ClientState.LocalPlayer == null || activeCharacter == null)
+            if (ClientState.LocalPlayer == null)
                 return;
 
+            var currentActiveCharacter = GetActiveCharacter();
+            if (currentActiveCharacter == null)
+            {
+                Plugin.Log.Debug("[SafeRestore] No active character found for current player");
+                return;
+            }
+
             Plugin.Log.Debug("[SafeRestore] Applying poses after 5s login delay.");
-            PoseRestorer.RestorePosesFor(activeCharacter);
+            PoseRestorer.RestorePosesFor(currentActiveCharacter);
         }
         public void AddCharacterAssignment(string realCharacter, string csCharacter)
         {
@@ -2539,6 +3417,1379 @@ namespace CharacterSelectPlugin
         public string? GetAssignedCharacter(string realCharacter)
         {
             return Configuration.CharacterAssignments.TryGetValue(realCharacter, out var assigned) ? assigned : null;
+        }
+
+        public void SwitchPenumbraCollection(string collectionName)
+        {
+            try
+            {
+                // Use the proper PenumbraIntegration method instead of old IPC call
+                bool result = PenumbraIntegration.SwitchCollection(collectionName);
+                
+                if (result)
+                {
+                    Log.Info($"[Penumbra] Successfully switched to collection: {collectionName}");
+                }
+                else
+                {
+                    Log.Warning($"[Penumbra] Failed to switch to collection: {collectionName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Penumbra] Error switching to collection '{collectionName}': {ex.Message}");
+            }
+        }
+        
+        public async Task ApplyDesignModState(Character character, CharacterDesign design)
+        {
+            // Check if Conflict Resolution is enabled
+            if (!Configuration.EnableConflictResolution || design.SecretModState == null)
+                return;
+
+            try
+            {
+                Log.Info($"Applying Conflict Resolution mod state for design: {design.Name}");
+                
+                // Check if Penumbra is available
+                if (PenumbraIntegration?.IsPenumbraAvailable != true)
+                {
+                    Log.Warning("Penumbra is not available - skipping Conflict Resolution mod state application");
+                    return;
+                }
+                
+                // Get current collection
+                var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
+                var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2); // ApiCollectionType.Current
+                
+                if (currentCollectionResult?.Item1 == null)
+                {
+                    Log.Warning("Could not get current Penumbra collection for design mod state");
+                    return;
+                }
+                
+                var collectionId = currentCollectionResult.Value.Item1;
+                
+                // Get all mod settings to determine what needs to be disabled
+                var getAllModSettings = PluginInterface.GetIpcSubscriber<Guid, bool, bool, int, (int, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)>?)>("Penumbra.GetAllModSettings");
+                var result = getAllModSettings?.InvokeFunc(collectionId, false, false, 0);
+                
+                if (result?.Item2 == null)
+                {
+                    Log.Warning("Could not get mod settings for design mod state");
+                    return;
+                }
+                
+                var trySetMod = PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5");
+                if (trySetMod == null)
+                {
+                    Log.Warning("TrySetMod IPC not available for design mod state");
+                    return;
+                }
+                
+                // Use cached mod categorization (fast lookup)
+                var pinnedMods = new HashSet<string>(character.SecretModPins ?? new List<string>());
+                
+                // Get mod categories from cache (should be instant)
+                var modCategories = new Dictionary<string, CharacterSelectPlugin.Windows.ModType>();
+                if (modCategorizationCache == null)
+                {
+                    Log.Error("Mod categorization cache not initialized! Cannot apply Conflict Resolution.");
+                    return;
+                }
+                
+                foreach (var (modDir, settings) in result.Value.Item2)
+                {
+                    if (modCategorizationCache.ContainsKey(modDir))
+                    {
+                        modCategories[modDir] = modCategorizationCache[modDir];
+                    }
+                    else
+                    {
+                        Log.Warning($"Mod {modDir} not found in categorization cache, skipping");
+                    }
+                }
+                
+                // Get all mods that should be treated as "character-specific"
+                // This includes: Gear, Hair (always), and any individually checked mods from other categories
+                var managedMods = new HashSet<string>();
+                
+                // Always include all Gear and Hair mods
+                foreach (var (modDir, settings) in result.Value.Item2)
+                {
+                    if (modCategories.ContainsKey(modDir))
+                    {
+                        var modType = modCategories[modDir];
+                        if (modType == ModType.Gear || modType == ModType.Hair)
+                        {
+                            managedMods.Add(modDir);
+                        }
+                    }
+                }
+                
+                // Add individually checked mods from other categories (current design)
+                foreach (var (modDir, isSelected) in design.SecretModState)
+                {
+                    if (isSelected)
+                    {
+                        managedMods.Add(modDir);
+                    }
+                }
+                
+                // Also include any mods that have been selected in ANY design for this character
+                // These should be treated like Gear/Hair mods (managed across all design switches)
+                foreach (var characterDesign in character.Designs)
+                {
+                    if (characterDesign.SecretModState != null)
+                    {
+                        foreach (var (modDir, wasSelected) in characterDesign.SecretModState)
+                        {
+                            if (wasSelected)
+                            {
+                                managedMods.Add(modDir);
+                            }
+                        }
+                    }
+                }
+                
+                // Also check character-level selections if they exist
+                if (character.SecretModState != null)
+                {
+                    foreach (var (modDir, wasSelected) in character.SecretModState)
+                    {
+                        if (wasSelected)
+                        {
+                            managedMods.Add(modDir);
+                        }
+                    }
+                }
+                
+                // Build lists of mods to disable and enable
+                var modsToDisable = new List<string>();
+                var modsToEnable = new List<string>();
+                
+                // First pass: Collect mods that need to be disabled
+                foreach (var modDir in managedMods)
+                {
+                    // Skip if we don't have settings for this mod
+                    if (!result.Value.Item2.ContainsKey(modDir))
+                        continue;
+                    
+                    var settings = result.Value.Item2[modDir];
+                    
+                    // NEVER disable pinned mods
+                    if (pinnedMods.Contains(modDir))
+                    {
+                        continue;
+                    }
+                    
+                    // If mod is enabled and not in our selection, disable it
+                    if (settings.Item1 && (!design.SecretModState.ContainsKey(modDir) || !design.SecretModState[modDir]))
+                    {
+                        modsToDisable.Add(modDir);
+                    }
+                }
+                
+                // Second pass: Collect mods that need to be enabled
+                foreach (var (modDir, shouldEnable) in design.SecretModState)
+                {
+                    if (shouldEnable)
+                    {
+                        modsToEnable.Add(modDir);
+                    }
+                }
+                
+                // Execute all disable operations in parallel
+                var disableTasks = modsToDisable.Select(modDir => 
+                    Task.Run(() => trySetMod.InvokeFunc(collectionId, modDir, "", false))
+                ).ToArray();
+                
+                // Execute all enable operations in parallel
+                var enableTasks = modsToEnable.Select(modDir => 
+                    Task.Run(() => trySetMod.InvokeFunc(collectionId, modDir, "", true))
+                ).ToArray();
+                
+                // Wait for all operations to complete
+                await Task.WhenAll(disableTasks.Concat(enableTasks));
+                
+                Log.Info($"[DEBUG] Conflict Resolution for design '{design.Name}': Disabled {modsToDisable.Count} mods, Enabled {modsToEnable.Count} mods");
+
+                // Apply design-specific mod option settings (detailed configurations)
+                if (design.ModOptionSettings != null && design.ModOptionSettings.Any())
+                {
+                    Log.Info($"Applying mod option settings for design '{design.Name}' - {design.ModOptionSettings.Count} mods with custom options");
+                    await Task.Delay(50); // Small delay before applying detailed options
+                    PenumbraIntegration?.ApplyModOptionsForDesign(collectionId, design.ModOptionSettings);
+                }
+
+                Log.Info($"Applied Conflict Resolution mod state for design '{design.Name}' - {design.SecretModState.Count} mods configured");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error applying design mod state: {ex}");
+            }
+        }
+        
+        public async Task ApplySecretModState(Character character)
+        {
+            // Check if Conflict Resolution is enabled
+            if (!Configuration.EnableConflictResolution)
+                return;
+                
+            if (character.SecretModState == null || !character.SecretModState.Any())
+                return;
+                
+            try
+            {
+                Log.Info($"Applying Secret Mode mod state for character: {character.Name}");
+                
+                // Get current collection
+                var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
+                var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2); // ApiCollectionType.Current
+                
+                if (currentCollectionResult?.Item1 == null)
+                {
+                    Log.Warning("Could not get current Penumbra collection");
+                    return;
+                }
+                
+                var collectionId = currentCollectionResult.Value.Item1;
+                
+                // Get all mod settings to determine what needs to be disabled
+                var getAllModSettings = PluginInterface.GetIpcSubscriber<Guid, bool, bool, int, (int, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)>?)>("Penumbra.GetAllModSettings");
+                var result = getAllModSettings?.InvokeFunc(collectionId, false, false, 0);
+                
+                if (result?.Item2 == null)
+                {
+                    Log.Warning("Could not get mod settings");
+                    return;
+                }
+                
+                var trySetMod = PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5");
+                if (trySetMod == null)
+                {
+                    Log.Warning("TrySetMod IPC not available");
+                    return;
+                }
+                
+                var pinnedMods = new HashSet<string>(character.SecretModPins ?? new List<string>());
+                
+                // Use cached mod categorization (fast lookup)
+                var modCategories = new Dictionary<string, CharacterSelectPlugin.Windows.ModType>();
+                if (modCategorizationCache == null)
+                {
+                    Log.Error("Mod categorization cache not initialized! Cannot apply Conflict Resolution.");
+                    return;
+                }
+                
+                foreach (var (modDir, settings) in result.Value.Item2)
+                {
+                    if (modCategorizationCache.ContainsKey(modDir))
+                    {
+                        modCategories[modDir] = modCategorizationCache[modDir];
+                    }
+                    else
+                    {
+                        Log.Warning($"Mod {modDir} not found in categorization cache, skipping");
+                    }
+                }
+                
+                // Get all mods that should be treated as "character-specific"
+                // This includes: Gear, Hair (always), and any individually checked mods from other categories
+                var managedMods = new HashSet<string>();
+                
+                // Always include all Gear and Hair mods
+                foreach (var (modDir, settings) in result.Value.Item2)
+                {
+                    if (modCategories.ContainsKey(modDir))
+                    {
+                        var modType = modCategories[modDir];
+                        if (modType == ModType.Gear || modType == ModType.Hair)
+                        {
+                            managedMods.Add(modDir);
+                        }
+                    }
+                }
+                
+                // Add individually checked mods from other categories (treat them like Gear/Hair)
+                foreach (var (modDir, isSelected) in character.SecretModState)
+                {
+                    if (isSelected)
+                    {
+                        managedMods.Add(modDir);
+                    }
+                }
+                
+                // Also include any mods that have been selected in ANY design for this character
+                // These should be treated like Gear/Hair mods (managed when applying character)
+                foreach (var characterDesign in character.Designs)
+                {
+                    if (characterDesign.SecretModState != null)
+                    {
+                        foreach (var (modDir, wasSelected) in characterDesign.SecretModState)
+                        {
+                            if (wasSelected)
+                            {
+                                managedMods.Add(modDir);
+                            }
+                        }
+                    }
+                }
+                
+                // Build lists of mods to disable and enable
+                var modsToDisable = new List<string>();
+                var modsToEnable = new List<string>();
+                
+                // First pass: Collect mods that need to be disabled
+                foreach (var modDir in managedMods)
+                {
+                    // Skip if we don't have settings for this mod
+                    if (!result.Value.Item2.ContainsKey(modDir))
+                        continue;
+                    
+                    var settings = result.Value.Item2[modDir];
+                    
+                    // NEVER disable pinned mods
+                    if (pinnedMods.Contains(modDir))
+                    {
+                        continue;
+                    }
+                    
+                    // If mod is enabled and not in our selection, disable it
+                    if (settings.Item1 && (!character.SecretModState.ContainsKey(modDir) || !character.SecretModState[modDir]))
+                    {
+                        modsToDisable.Add(modDir);
+                    }
+                }
+                
+                // Second pass: Collect mods that need to be enabled
+                foreach (var (modDir, shouldEnable) in character.SecretModState)
+                {
+                    if (shouldEnable)
+                    {
+                        modsToEnable.Add(modDir);
+                    }
+                }
+                
+                // Execute all disable operations in parallel
+                var disableTasks = modsToDisable.Select(modDir => 
+                    Task.Run(() => trySetMod.InvokeFunc(collectionId, modDir, "", false))
+                ).ToArray();
+                
+                // Execute all enable operations in parallel
+                var enableTasks = modsToEnable.Select(modDir => 
+                    Task.Run(() => trySetMod.InvokeFunc(collectionId, modDir, "", true))
+                ).ToArray();
+                
+                // Wait for all operations to complete
+                await Task.WhenAll(disableTasks.Concat(enableTasks));
+                
+                Log.Info($"Applied Conflict Resolution mod state for character '{character.Name}' - {character.SecretModState.Count} mods configured");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error applying Secret Mode mod state: {ex}");
+            }
+        }
+        
+        /// <summary>
+        /// Simplified mod type determination for switching logic
+        /// </summary>
+        private CharacterSelectPlugin.Windows.ModType DetermineModTypeForSwitching(string modDir, string modName)
+        {
+            // This is a simplified version - in reality, you'd want to reuse the logic from SecretModeModWindow
+            // For now, we'll use basic name/path analysis
+            var nameLower = modName.ToLowerInvariant();
+            var dirLower = modDir.ToLowerInvariant();
+            
+            // Basic categorization
+            if (nameLower.Contains("hair") || dirLower.Contains("hair")) return ModType.Hair;
+            if (nameLower.Contains("body") || nameLower.Contains("bibo") || nameLower.Contains("tbse")) return ModType.Body;
+            if (nameLower.Contains("face") && !nameLower.Contains("face paint")) return ModType.Face;
+            if (nameLower.Contains("eye") || nameLower.Contains("iris")) return ModType.Eyes;
+            if (nameLower.Contains("tattoo")) return ModType.Tattoos;
+            if (nameLower.Contains("face paint") || nameLower.Contains("makeup")) return ModType.FacePaint;
+            if (nameLower.Contains("ear") || nameLower.Contains("tail")) return ModType.EarsTails;
+            if (nameLower.Contains("mount")) return ModType.Mount;
+            if (nameLower.Contains("minion") || nameLower.Contains("companion")) return ModType.Minion;
+            if (nameLower.Contains("emote") || nameLower.Contains("pose") || nameLower.Contains("idle")) return ModType.Emote;
+            if (nameLower.Contains("vfx") || nameLower.Contains("effect")) return ModType.VFX;
+            if (nameLower.Contains("skeleton") || nameLower.Contains("bone")) return ModType.Skeleton;
+            
+            // Default to gear for anything else
+            return ModType.Gear;
+        }
+
+
+        // Cache data structures
+        private class ModCacheData
+        {
+            public int Version { get; set; } = 1;
+            public DateTime LastUpdated { get; set; }
+            public Dictionary<string, ModCacheEntry> Mods { get; set; } = new();
+        }
+        
+        private class ModCacheEntry
+        {
+            public string Name { get; set; } = "";
+            public ModType Type { get; set; }
+            public DateTime LastSeen { get; set; }
+        }
+
+        /// <summary>
+        /// Apply character/design to target using direct IPC calls instead of macros
+        /// This works for GPose actors spawned by Brio/Ktisis unlike the old macro approach
+        /// </summary>
+        public async Task<bool> ApplyToTarget(Character character, int designIndex = -1)
+        {
+            try
+            {
+                // Get target info from the main thread to ensure fresh data
+                IGameObject? targetObject = null;
+                await Framework.RunOnFrameworkThread(() =>
+                {
+                    targetObject = GetCurrentTarget();
+                });
+                
+                if (targetObject == null)
+                {
+                    ChatGui.PrintError("[Character Select+] No valid target selected.");
+                    return false;
+                }
+                
+                
+                return await ApplyToTarget(character, designIndex, (int)targetObject.ObjectIndex, targetObject.ObjectKind, targetObject.Name?.ToString() ?? "Unknown");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error applying character to target: {ex}");
+                ChatGui.PrintError($"[Character Select+] Failed to apply to target: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Get the current target with proper handling for GPose and regular gameplay
+        /// </summary>
+        public IGameObject? GetCurrentTarget()
+        {
+            try
+            {
+                // Check if we're in GPose first
+                var isInGPose = ClientState.IsGPosing;
+                
+                // Get all available targets
+                var target = TargetManager.Target;
+                var softTarget = TargetManager.SoftTarget;
+                var focusTarget = TargetManager.FocusTarget;
+                var mouseOverTarget = TargetManager.MouseOverTarget;
+                
+                // In GPose, targeting works differently - show more ObjectTable info
+                if (isInGPose)
+                {
+                    for (int i = 0; i < Math.Min(ObjectTable.Length, 20); i++)
+                    {
+                        var obj = ObjectTable[i];
+                        if (obj != null)
+                        {
+                            // GPose object scan without debug logging
+                        }
+                    }
+                    
+                    // In GPose, try GPoseTarget from native TargetSystem (what Ktisis/Brio/Glamourer use)
+                    if (target == null)
+                    {
+                        
+                        try
+                        {
+                            unsafe
+                            {
+                                var targetSystem = TargetSystem.Instance();
+                                if (targetSystem != null && targetSystem->GPoseTarget != null)
+                                {
+                                    var gposeTarget = ObjectTable.CreateObjectReference((IntPtr)targetSystem->GPoseTarget);
+                                    if (gposeTarget != null)
+                                    {
+                                        return gposeTarget;
+                                    }
+                                    else
+                                    {
+                                    }
+                                }
+                                else
+                                {
+                                    Log.Debug($"[GetCurrentTarget] No GPoseTarget set - user needs to target a GPose actor first");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"[GetCurrentTarget] Error accessing GPoseTarget: {ex}");
+                        }
+                        
+                        // Fallback to other targeting methods
+                        if (softTarget != null)
+                        {
+                            Log.Debug($"[GetCurrentTarget] Fallback to SoftTarget: {softTarget.Name} (Index: {softTarget.ObjectIndex})");
+                            return softTarget;
+                        }
+                        
+                        if (focusTarget != null)
+                        {
+                                return focusTarget;
+                        }
+                        
+                        Log.Warning($"[GetCurrentTarget] No target found - user needs to select a GPose actor using Ktisis/Brio 'Target Actor'");
+                        return null;
+                    }
+                }
+                else
+                {
+                    // Regular gameplay - show fewer objects
+                    for (int i = 0; i < Math.Min(ObjectTable.Length, 10); i++)
+                    {
+                        var obj = ObjectTable[i];
+                        if (obj != null)
+                        {
+                            // Object scan logic without debug logging
+                        }
+                    }
+                }
+                
+                return target;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[GetCurrentTarget] Error: {ex}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Check if a target is a valid type for appearance modifications
+        /// </summary>
+        private bool IsValidTargetForModification(IGameObject target)
+        {
+            // Only allow modification of players, GPose actors, and companions
+            return target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player ||
+                   target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc ||
+                   target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion;
+        }
+        
+        /// <summary>
+        /// Comprehensive validation for target object safety before modifications
+        /// </summary>
+        private async Task<bool> ValidateTargetObjectSafety(int objectIndex, string targetName)
+        {
+            try
+            {
+                // Get the current target object to validate it's still valid
+                IGameObject? targetObject = null;
+                await Framework.RunOnFrameworkThread(() =>
+                {
+                    if (objectIndex >= 0 && objectIndex < ObjectTable.Length)
+                    {
+                        targetObject = ObjectTable[objectIndex];
+                    }
+                });
+                
+                if (targetObject == null)
+                {
+                    Log.Warning($"[ValidateTarget] Target object at index {objectIndex} is null");
+                    return false;
+                }
+                
+                // Validate object is still valid and hasn't been destroyed/replaced
+                if (targetObject.Address == nint.Zero)
+                {
+                    Log.Warning($"[ValidateTarget] Target object at index {objectIndex} has invalid address");
+                    return false;
+                }
+                
+                // Validate object name hasn't changed (indicates object was replaced)
+                var currentName = targetObject.Name?.ToString() ?? "";
+                if (!string.IsNullOrEmpty(targetName) && !currentName.Equals(targetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.Warning($"[ValidateTarget] Target name changed from '{targetName}' to '{currentName}' - object may have been replaced");
+                    return false;
+                }
+                
+                // Check if we're in a cutscene or other unsafe state
+                if (Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInCutSceneEvent] ||
+                    Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.WatchingCutscene78] ||
+                    Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInEvent])
+                {
+                    Log.Warning($"[ValidateTarget] Cannot modify target during cutscene or event");
+                    return false;
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[ValidateTarget] Error validating target safety: {ex}");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Apply character/design to target using direct IPC calls - thread-safe overload
+        /// </summary>
+        public async Task<bool> ApplyToTarget(Character character, int designIndex, int objectIndex, Dalamud.Game.ClientState.Objects.Enums.ObjectKind objectKind, string targetName)
+        {
+            try
+            {
+                // Validate target type - accept Players, NPCs, and GPose actors
+                var validTypes = new[] { 
+                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player, 
+                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc, 
+                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc,
+                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion 
+                };
+                
+                if (!validTypes.Contains(objectKind))
+                {
+                    ChatGui.PrintError($"[Character Select+] Invalid target type: {objectKind}");
+                    return false;
+                }
+                
+                // Check for rapid successive applications to prevent crashes
+                if (lastTargetApplicationTime.TryGetValue(objectIndex, out var lastTime))
+                {
+                    var timeSinceLastApplication = DateTime.Now - lastTime;
+                    if (timeSinceLastApplication < minimumTargetApplicationInterval)
+                    {
+                        var waitTime = minimumTargetApplicationInterval - timeSinceLastApplication;
+                        ChatGui.PrintError($"[Character Select+] Please wait {waitTime.TotalSeconds:F1} seconds between target applications to prevent crashes");
+                        return false;
+                    }
+                }
+                
+                // Update last application time
+                lastTargetApplicationTime[objectIndex] = DateTime.Now;
+                
+                // Comprehensive safety validation before any modifications
+                if (!await ValidateTargetObjectSafety(objectIndex, targetName))
+                {
+                    ChatGui.PrintError($"[Character Select+] Target object validation failed - cannot apply safely");
+                    return false;
+                }
+                
+                Log.Information($"[ApplyToTarget] Applying {character.Name} to target: {targetName} (Index: {objectIndex})");
+                
+                // Get the macro text to parse
+                string macroText;
+                if (designIndex >= 0 && designIndex < character.Designs.Count)
+                {
+                    var design = character.Designs[designIndex];
+                    macroText = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                }
+                else
+                {
+                    macroText = character.Macros;
+                }
+                
+                // Apply Conflict Resolution mod state to target BEFORE macro commands (like regular character application)
+                if (Configuration.EnableConflictResolution)
+                {
+                    await ApplyConflictResolutionToTarget(character, designIndex, objectIndex);
+                }
+                
+                // Parse macro text and execute via IPC after conflict resolution has set up mod state
+                var commands = ParseMacroForTargetApplication(macroText);
+                var success = await ExecuteTargetCommands(commands, objectIndex);
+                
+                return success;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error applying character to target: {ex}");
+                ChatGui.PrintError($"[Character Select+] Failed to apply to target: {ex.Message}");
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Apply Conflict Resolution mod state to target object
+        /// </summary>
+        private async Task ApplyConflictResolutionToTarget(Character character, int designIndex, int objectIndex)
+        {
+            try
+            {
+                
+                // For target application, we need to determine what collection to apply conflict resolution to
+                // This could be either from a collection switch command or the character's main collection
+                string targetCollectionName = "";
+                Guid currentCollectionId = Guid.Empty;
+                
+                // Extract collection name from character macro or design macro
+                string macroText;
+                if (designIndex >= 0 && designIndex < character.Designs.Count)
+                {
+                    var design = character.Designs[designIndex];
+                    macroText = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                }
+                else
+                {
+                    macroText = character.Macros;
+                }
+                
+                // First, try to find a collection name in the macro
+                var lines = macroText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.Contains("/penumbra collection individual", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var parts = trimmed.Split('|');
+                        if (parts.Length >= 2)
+                        {
+                            targetCollectionName = parts[1].Trim();
+                            break;
+                        }
+                    }
+                }
+                
+                // If no collection command found in macro, use the character's main collection
+                if (string.IsNullOrEmpty(targetCollectionName))
+                {
+                    targetCollectionName = character.PenumbraCollection;
+                }
+                
+                if (string.IsNullOrEmpty(targetCollectionName))
+                {
+                    return;
+                }
+                
+                // Get the target collection ID
+                var collections = penumbraGetCollectionsIpc?.InvokeFunc();
+                if (collections == null)
+                {
+                    return;
+                }
+                
+                var targetCollection = collections.FirstOrDefault(kvp => 
+                    string.Equals(kvp.Value, targetCollectionName, StringComparison.OrdinalIgnoreCase));
+                
+                if (targetCollection.Key == Guid.Empty)
+                {
+                    return;
+                }
+                
+                currentCollectionId = targetCollection.Key;
+                
+                // Check if we have any conflict resolution data to apply
+                bool hasCharacterMods = character.SecretModState != null && character.SecretModState.Any();
+                bool hasDesignMods = designIndex >= 0 && designIndex < character.Designs.Count && 
+                                   character.Designs[designIndex].SecretModState != null && 
+                                   character.Designs[designIndex].SecretModState.Any();
+                
+                if (!hasCharacterMods && !hasDesignMods)
+                {
+                    return; // Exit early if no conflict resolution data is available
+                }
+                
+                // Apply character-level mod state first
+                if (hasCharacterMods)
+                {
+                    await ApplyModStateToObject(character, currentCollectionId, objectIndex);
+                }
+                
+                // Apply design-specific mod state if we're applying a specific design
+                if (hasDesignMods)
+                {
+                    var design = character.Designs[designIndex];
+                    
+                    // Create a temporary character with the design's mod state for ApplyModStateToObject
+                    var tempCharacter = new Character("", "", null, new List<CharacterDesign>(), Vector3.Zero, "", "", "", "", "", "", Vector3.Zero, Vector3.Zero, "", "", "") 
+                    { 
+                        SecretModState = design.SecretModState 
+                    };
+                    await ApplyModStateToObject(tempCharacter, currentCollectionId, objectIndex);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error applying Conflict Resolution to target: {ex}");
+            }
+        }
+        
+        /// <summary>
+        /// Apply mod state to a specific object (target)
+        /// </summary>
+        private async Task ApplyModStateToObject(Character character, Guid collectionId, int objectIndex)
+        {
+            try
+            {
+                if (character.SecretModState == null || !character.SecretModState.Any())
+                    return;
+                
+                // Get all mod settings for the collection using robust method
+                var modSettings = PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
+                if (modSettings == null)
+                {
+                    return;
+                }
+                
+                // Use robust IPC calling for TrySetMod as well - actually test the methods work
+                ICallGateSubscriber<Guid, string, string, bool, int>? trySetModIpc = null;
+                var trySetModMethods = new[] { "Penumbra.TrySetMod.V5", "Penumbra.TrySetMod" };
+                
+                foreach (var method in trySetModMethods)
+                {
+                    try
+                    {
+                        var testIpc = PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>(method);
+                        if (testIpc != null)
+                        {
+                            // Actually test if the method is available by making a dummy call
+                            // This will throw if the method isn't registered
+                            var dummyResult = testIpc.InvokeFunc(Guid.Empty, "", "", false);
+                            // If we get here, the method works (even if it returns an error, it's registered)
+                            trySetModIpc = testIpc;
+                            break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        continue;
+                    }
+                }
+                
+                if (trySetModIpc == null)
+                {
+                    return;
+                }
+                
+                var modsToDisable = new List<string>();
+                var modsToEnable = new List<string>();
+                
+                // Collect mods that need state changes
+                foreach (var (modDir, shouldEnable) in character.SecretModState)
+                {
+                    if (!modSettings.ContainsKey(modDir))
+                        continue;
+                    
+                    var currentSettings = modSettings[modDir];
+                    var isCurrentlyEnabled = currentSettings.Item1;
+                    
+                    if (isCurrentlyEnabled != shouldEnable)
+                    {
+                        if (shouldEnable)
+                            modsToEnable.Add(modDir);
+                        else
+                            modsToDisable.Add(modDir);
+                    }
+                }
+                
+                // Apply changes with error handling like normal character application
+                var allTasks = new List<Task>();
+                
+                foreach (var modDir in modsToDisable)
+                {
+                    allTasks.Add(Task.Run(() =>
+                    {
+                        try
+                        {
+                            var result = trySetModIpc.InvokeFunc(collectionId, modDir, "", false);
+                            if (result != 0) // 0 = Success
+                            {
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"[ApplyToTarget] Error disabling mod {modDir} on object {objectIndex}: {ex.Message}");
+                        }
+                    }));
+                }
+                
+                foreach (var modDir in modsToEnable)
+                {
+                    allTasks.Add(Task.Run(() =>
+                    {
+                        try
+                        {
+                            var result = trySetModIpc.InvokeFunc(collectionId, modDir, "", true);
+                            if (result != 0) // 0 = Success
+                            {
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"[ApplyToTarget] Error enabling mod {modDir} on object {objectIndex}: {ex.Message}");
+                        }
+                    }));
+                }
+                
+                await Task.WhenAll(allTasks);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error applying mod state to object: {ex}");
+            }
+        }
+        
+        /// <summary>
+        /// Parse macro text and extract commands for target application
+        /// </summary>
+        private List<object> ParseMacroForTargetApplication(string macroText)
+        {
+            var commands = new List<object>();
+            
+            if (string.IsNullOrEmpty(macroText))
+            {
+                return commands;
+            }
+            
+            var lines = macroText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                
+                if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith("//"))
+                {
+                    continue;
+                }
+                
+                // Parse Penumbra collection commands - handle "individual" format: /penumbra collection individual | CollectionName | self
+                if (trimmed.Contains("/penumbra collection individual", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = trimmed.Split('|');
+                    if (parts.Length >= 2)
+                    {
+                        var collectionName = parts[1].Trim();
+                        if (!string.IsNullOrEmpty(collectionName))
+                        {
+                            commands.Add(new PenumbraCommand { CollectionName = collectionName });
+                        }
+                    }
+                }
+                // Parse Glamourer design commands - handle pipe format: /glamour apply DesignName | Self
+                else if (trimmed.Contains("/glamour apply", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = trimmed.Split('|');
+                    if (parts.Length >= 1)
+                    {
+                        var designPart = parts[0].Replace("/glamour apply", "").Trim();
+                        if (!string.IsNullOrEmpty(designPart))
+                        {
+                            commands.Add(new GlamourerCommand { DesignName = designPart });
+                        }
+                    }
+                }
+                // Parse CustomizePlus profile commands - handle enable format: /customize profile enable <me>, ProfileName
+                else if (trimmed.Contains("/customize profile enable", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = trimmed.Split(',');
+                    if (parts.Length >= 2)
+                    {
+                        var profileName = parts[1].Trim();
+                        if (!string.IsNullOrEmpty(profileName))
+                        {
+                            commands.Add(new CustomizePlusCommand { ProfileName = profileName });
+                        }
+                    }
+                }
+            }
+            
+            return commands;
+        }
+        
+        /// <summary>
+        /// Extract quoted parameter from command line
+        /// </summary>
+        private string ExtractQuotedParameter(string commandLine)
+        {
+            var firstQuote = commandLine.IndexOf('"');
+            if (firstQuote == -1) return "";
+            
+            var secondQuote = commandLine.IndexOf('"', firstQuote + 1);
+            if (secondQuote == -1) return "";
+            
+            return commandLine.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
+        }
+        
+        /// <summary>
+        /// Execute parsed commands via IPC for target application with enhanced safety
+        /// </summary>
+        private async Task<bool> ExecuteTargetCommands(List<object> commands, int objectIndex)
+        {
+            bool allSucceeded = true;
+            
+            foreach (var command in commands)
+            {
+                try
+                {
+                    // Validate object is still safe before each command - must run on main thread
+                    IGameObject? targetObject = null;
+                    await Framework.RunOnFrameworkThread(() =>
+                    {
+                        targetObject = objectIndex >= 0 && objectIndex < ObjectTable.Length ? ObjectTable[objectIndex] : null;
+                    });
+                    
+                    if (targetObject?.Address == nint.Zero)
+                    {
+                        Log.Warning($"[ExecuteTargetCommands] Target object at index {objectIndex} became invalid, aborting remaining commands");
+                        allSucceeded = false;
+                        break;
+                    }
+                    
+                    switch (command)
+                    {
+                        case PenumbraCommand penCmd:
+                            allSucceeded &= await ExecutePenumbraCommand(penCmd, (uint)objectIndex);
+                            break;
+                        case GlamourerCommand glamCmd:
+                            allSucceeded &= await ExecuteGlamourerCommand(glamCmd, (uint)objectIndex);
+                            break;
+                        case CustomizePlusCommand custCmd:
+                            allSucceeded &= await ExecuteCustomizePlusCommand(custCmd, (uint)objectIndex);
+                            break;
+                    }
+                    
+                    // Increased delay between commands to allow game to process changes safely
+                    await Task.Delay(200);
+                    
+                    // Additional validation after equipment/weapon related commands
+                    if (command is GlamourerCommand)
+                    {
+                        // Extra delay after Glamourer commands to prevent weapon loading race conditions
+                        await Task.Delay(300);
+                        
+                        // Validate object is still valid after glamour changes - must run on main thread
+                        await Framework.RunOnFrameworkThread(() =>
+                        {
+                            targetObject = objectIndex >= 0 && objectIndex < ObjectTable.Length ? ObjectTable[objectIndex] : null;
+                        });
+                        
+                        if (targetObject?.Address == nint.Zero)
+                        {
+                            Log.Warning($"[ExecuteTargetCommands] Target object became invalid after Glamourer command");
+                            allSucceeded = false;
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Error executing command {command}: {ex}");
+                    allSucceeded = false;
+                    
+                    // If we get an exception, add a longer delay before continuing
+                    await Task.Delay(500);
+                }
+            }
+            
+            // Final validation and redraw with enhanced safety - this is where LoadWeapon crashes occurred
+            if (allSucceeded)
+            {
+                // Final object validation before redraw to prevent LoadWeapon crashes - must run on main thread
+                IGameObject? finalTargetObject = null;
+                await Framework.RunOnFrameworkThread(() =>
+                {
+                    finalTargetObject = objectIndex >= 0 && objectIndex < ObjectTable.Length ? ObjectTable[objectIndex] : null;
+                });
+                
+                if (finalTargetObject?.Address == nint.Zero)
+                {
+                    Log.Warning($"[ExecuteTargetCommands] Target object became invalid before final redraw, skipping redraw");
+                    return false;
+                }
+                
+                // Add delay before redraw to ensure all previous changes have been processed
+                await Task.Delay(500);
+                
+                // Final redraw with enhanced retry logic
+                for (int attempt = 1; attempt <= 3; attempt++)
+                {
+                    try
+                    {
+                        // Re-validate object before each redraw attempt - must run on main thread
+                        await Framework.RunOnFrameworkThread(() =>
+                        {
+                            finalTargetObject = objectIndex >= 0 && objectIndex < ObjectTable.Length ? ObjectTable[objectIndex] : null;
+                        });
+                        
+                        if (finalTargetObject?.Address == nint.Zero)
+                        {
+                            Log.Warning($"[ExecuteTargetCommands] Target object became invalid during redraw attempts");
+                            break;
+                        }
+                        
+                        penumbraRedrawObjectIpc?.InvokeFunc((int)objectIndex);
+                        break;
+                    }
+                    catch (Dalamud.Plugin.Ipc.Exceptions.IpcNotReadyError)
+                    {
+                        if (attempt < 3)
+                        {
+                            await Task.Delay(attempt * 200);
+                            continue;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"[ApplyToTarget] Failed to trigger redraw on attempt {attempt}: {ex}");
+                        if (attempt < 3)
+                        {
+                            await Task.Delay(attempt * 300);
+                        }
+                        else
+                        {
+                            Log.Error($"[ApplyToTarget] All redraw attempts failed, this may prevent visual updates");
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Log.Warning($"[ExecuteTargetCommands] Some commands failed, skipping final redraw for safety");
+            }
+            
+            return allSucceeded;
+        }
+        
+        /// <summary>
+        /// Execute Penumbra collection command with retry logic
+        /// </summary>
+        private async Task<bool> ExecutePenumbraCommand(PenumbraCommand command, uint objectIndex)
+        {
+            const int maxRetries = 5;
+            const int baseDelayMs = 200;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                try
+                {
+                    // Get available collections
+                    var collections = penumbraGetCollectionsIpc?.InvokeFunc();
+                    if (collections == null)
+                    {
+                        return false;
+                    }
+                    
+                    // Find collection by name
+                    var targetCollection = collections.FirstOrDefault(kvp => 
+                        string.Equals(kvp.Value, command.CollectionName, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (targetCollection.Key == Guid.Empty)
+                    {
+                        return false;
+                    }
+                    
+                    // Apply collection to target object (using collection GUID)
+                    var (ec, pair) = penumbraSetCollectionForObjectIpc?.InvokeFunc((int)objectIndex, targetCollection.Key, true, true) ?? (-1, null);
+                    
+                    if (ec == 0 || ec == 1) // Success or NothingChanged
+                    {
+                        return true;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                catch (Dalamud.Plugin.Ipc.Exceptions.IpcNotReadyError)
+                {
+                    if (attempt < maxRetries)
+                    {
+                        int delayMs = baseDelayMs * attempt;
+                        await Task.Delay(delayMs);
+                        continue;
+                    }
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Error executing Penumbra command: {ex}");
+                    return false;
+                }
+            }
+            
+            return false;
+        }
+        
+        /// <summary>
+        /// Execute Glamourer design command with retry logic
+        /// </summary>
+        private async Task<bool> ExecuteGlamourerCommand(GlamourerCommand command, uint objectIndex)
+        {
+            const int maxRetries = 5;
+            const int baseDelayMs = 200;
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                try
+                {
+                    // Check if Glamourer IPC subscriber is available
+                    if (glamourerGetDesignsIpc == null)
+                    {
+                        return false;
+                    }
+
+                    // Get available designs
+                    var designs = glamourerGetDesignsIpc.InvokeFunc();
+                    if (designs == null)
+                    {
+                        return false;
+                    }
+                    
+                    // Find design by name
+                    var targetDesign = designs.FirstOrDefault(kvp => 
+                        string.Equals(kvp.Value, command.DesignName, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (targetDesign.Key == Guid.Empty)
+                    {
+                        return false;
+                    }
+                    
+                    // Apply design via IPC with correct parameters and default flags
+                    // DesignDefault = Once | Equipment | Customization = 0x01 | 0x02 | 0x04 = 0x07
+                    const ulong designDefaultFlags = 0x07uL; // ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization
+                    var result = glamourerApplyDesignIpc!.InvokeFunc(targetDesign.Key, (int)objectIndex, 0u, designDefaultFlags);
+                    
+                    return result == 0; // 0 = Success
+                }
+                catch (Dalamud.Plugin.Ipc.Exceptions.IpcNotReadyError)
+                {
+                    if (attempt < maxRetries)
+                    {
+                        int delayMs = baseDelayMs * attempt;
+                        await Task.Delay(delayMs);
+                        continue;
+                    }
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Error executing Glamourer command: {ex}");
+                    return false;
+                }
+            }
+            
+            return false;
+        }
+        
+        /// <summary>
+        /// Execute CustomizePlus profile command
+        /// </summary>
+        private async Task<bool> ExecuteCustomizePlusCommand(CustomizePlusCommand command, uint objectIndex)
+        {
+            try
+            {
+                
+                // Get available profiles
+                var profiles = customizePlusGetProfileListIpc?.InvokeFunc();
+                if (profiles == null)
+                {
+                    return false;
+                }
+                
+                
+                // Find profile by name
+                var targetProfile = profiles.FirstOrDefault(profile => 
+                    string.Equals(profile.Item2, command.ProfileName, StringComparison.OrdinalIgnoreCase));
+                
+                if (targetProfile.Item1 == Guid.Empty)
+                {
+                    return false;
+                }
+                
+                
+                // Get the actual profile JSON data by Guid
+                var (errorCode, profileJson) = customizePlusGetByUniqueIdIpc?.InvokeFunc(targetProfile.Item1) ?? (1, null);
+                if (errorCode != 0 || string.IsNullOrEmpty(profileJson))
+                {
+                    return false;
+                }
+                
+                
+                // Apply profile to target object using JSON data
+                var result = customizePlusSetTempProfileIpc?.InvokeFunc((ushort)objectIndex, profileJson);
+                
+                
+                // Check if the result indicates success
+                if (result.HasValue && result.Value.Item1 == 0)
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error executing CustomizePlus command: {ex}");
+                return false;
+            }
+        }
+        
+        // Command classes for parsed macro commands
+        private class PenumbraCommand
+        {
+            public string CollectionName { get; set; } = "";
+        }
+        
+        private class GlamourerCommand
+        {
+            public string DesignName { get; set; } = "";
+        }
+        
+        private class CustomizePlusCommand
+        {
+            public string ProfileName { get; set; } = "";
+        }
+
+        private async Task<string> SaveClipboardImageForDesign(Guid designId)
+        {
+            try
+            {
+                string imagePath = "";
+                
+                // Clipboard operations need to be on STA thread
+                var thread = new Thread(() =>
+                {
+                    try
+                    {
+                        if (!System.Windows.Forms.Clipboard.ContainsImage())
+                            return;
+
+                        var image = System.Windows.Forms.Clipboard.GetImage();
+                        if (image == null)
+                            return;
+
+                        // Create designs directory if it doesn't exist
+                        var designsDir = Path.Combine(PluginInterface.ConfigDirectory.FullName, "Designs");
+                        Directory.CreateDirectory(designsDir);
+
+                        // Generate filename with timestamp
+                        var fileName = $"design_{designId:N}_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+                        imagePath = Path.Combine(designsDir, fileName);
+
+                        // Save the image as PNG
+                        image.Save(imagePath, System.Drawing.Imaging.ImageFormat.Png);
+                        Log.Information($"Saved clipboard image to: {imagePath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"Failed to save clipboard image: {ex.Message}");
+                    }
+                });
+                
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Start();
+                thread.Join();
+
+                return imagePath;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"Failed to process clipboard image: {ex.Message}");
+                return "";
+            }
         }
 
     }
