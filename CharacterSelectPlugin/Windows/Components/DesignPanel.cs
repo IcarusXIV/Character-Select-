@@ -3378,6 +3378,43 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
+        private string GenerateSnapshotMacro(Character character, string glamourerDesign, string customizePlusProfile)
+        {
+            if (string.IsNullOrWhiteSpace(glamourerDesign))
+                return "";
+
+            string macro = $"/glamour apply {glamourerDesign} | self";
+
+            // Conditionally include automation line
+            if (plugin.Configuration.EnableAutomations)
+            {
+                string automationToUse = !string.IsNullOrWhiteSpace(character.CharacterAutomation)
+                    ? character.CharacterAutomation
+                    : "None";
+
+                macro += $"\n/glamour automation enable {automationToUse}";
+            }
+
+            // Always disable Customize+ first
+            macro += "\n/customize profile disable <me>";
+
+            // Determine Customize+ profile
+            string customizeProfileToUse = !string.IsNullOrWhiteSpace(customizePlusProfile)
+                ? customizePlusProfile
+                : !string.IsNullOrWhiteSpace(character.CustomizeProfile)
+                    ? character.CustomizeProfile
+                    : string.Empty;
+
+            // Enable only if needed
+            if (!string.IsNullOrWhiteSpace(customizeProfileToUse))
+                macro += $"\n/customize profile enable <me>, {customizeProfileToUse}";
+
+            // Redraw line
+            macro += "\n/penumbra redraw self";
+
+            return macro;
+        }
+
         private void CreateSmartSnapshotDesign((string Name, DateTimeOffset CreationDate, Guid Id) recentDesign)
         {
             try
@@ -3390,10 +3427,16 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 Plugin.Log.Information($"Creating smart snapshot design for character '{snapshotTargetCharacter.Name}' using Glamourer design '{recentDesign.Name}'");
 
+                // Generate the proper macro for the snapshot design
+                string snapshotMacro = GenerateSnapshotMacro(snapshotTargetCharacter, recentDesign.Name, 
+                    !string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) && snapshotDetectedCustomizePlusProfile != "Character" 
+                        ? snapshotDetectedCustomizePlusProfile 
+                        : "");
+
                 // Create new design based on detected character state
                 var newDesign = new CharacterDesign(
                     name: recentDesign.Name,
-                    macro: "", // Will be generated when design is applied
+                    macro: snapshotMacro,
                     isAdvancedMode: false,
                     advancedMacro: "",
                     glamourerDesign: recentDesign.Name, // Use the Glamourer design name
