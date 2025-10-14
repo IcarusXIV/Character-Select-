@@ -1,6 +1,7 @@
 using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Textures.TextureWraps;
+using Dalamud.Interface.Utility;
 using Dalamud.Bindings.ImGui;
 using System;
 using System.IO;
@@ -46,6 +47,8 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
+            
             // Reset scroll tracking if window was just opened
             if (IsOpen && !wasOpen)
             {
@@ -53,7 +56,7 @@ namespace CharacterSelectPlugin.Windows
             }
             wasOpen = IsOpen;
 
-            ImGui.SetNextWindowSize(new Vector2(800, 650), ImGuiCond.Always);
+            ImGui.SetNextWindowSize(new Vector2(800 * totalScale, 650 * totalScale), ImGuiCond.Always);
 
             // UI Stylin'
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
@@ -62,15 +65,15 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.15f, 0.15f, 0.18f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.2f, 0.2f, 0.25f, 1.0f));
             ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.25f, 0.25f, 0.3f, 1.0f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f);
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8, 8));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * totalScale);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * totalScale);
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * totalScale, 8 * totalScale));
 
             try
             {
-                DrawModernHeader();
-                DrawPatchNotes();
-                DrawBottomButton();
+                DrawModernHeader(totalScale);
+                DrawPatchNotes(totalScale);
+                DrawBottomButton(totalScale);
             }
             finally
             {
@@ -79,15 +82,15 @@ namespace CharacterSelectPlugin.Windows
             }
         }
 
-        private void DrawModernHeader()
+        private void DrawModernHeader(float totalScale)
         {
             // Window position
             var windowPos = ImGui.GetWindowPos();
             var windowPadding = ImGui.GetStyle().WindowPadding;
 
             // Header area dimensions - let it start higher
-            var headerWidth = 800f - (windowPadding.X * 2);
-            var headerHeight = 180f;
+            var headerWidth = (800f * totalScale) - (windowPadding.X * 2);
+            var headerHeight = 180f * totalScale;
 
             // Start the header
             var headerStart = windowPos + new Vector2(windowPadding.X, windowPadding.Y * 1.1f);
@@ -189,10 +192,10 @@ namespace CharacterSelectPlugin.Windows
             ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Character Gallery, Visual Overhaul & Interactive Tutorial");
         }
 
-        private void DrawPatchNotes()
+        private void DrawPatchNotes(float totalScale)
         {
             // Scrollable content area
-            ImGui.BeginChild("PatchNotesScroll", new Vector2(0, -70), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
+            ImGui.BeginChild("PatchNotesScroll", new Vector2(0, -70 * totalScale), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
             // Track scroll position for enabling button
             float currentScrollY = ImGui.GetScrollY();
@@ -224,7 +227,7 @@ namespace CharacterSelectPlugin.Windows
             }
 
             // Previous Patch Notes - v2.0.0.0
-            if (DrawModernCollapsingHeader("v2.0.0.0 – Character Gallery & Visual Overhaul - July 19 2025", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
+            if (DrawModernCollapsingHeader("v2.0.0.0 – Character Gallery & Visual Overhaul", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
             {
                 Draw120Notes();
             }
@@ -312,6 +315,13 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("CR mode: Auto-configures mods for your current outfit when using Conflict Resolution");
             ImGui.BulletText("Simple workflow: Click camera button in Design Panel or use chat command");
             ImGui.BulletText("Chat command: /select save - optionally add CR for Conflict Resolution mode");
+            ImGui.Spacing();
+
+            // UI Scaling
+            DrawFeatureSection("\uf00e", "UI Scaling Done Right", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Character Select+ is now properly responsive to the user's resolution and Dalamud's Global Font Scaling.");
+            ImGui.BulletText("Removed UI scaling options in Settings Panel.");
+            ImGui.BulletText("Let me know if there are any issues using this.");
             ImGui.Spacing();
 
             // Penumbra Collection UI Sync
@@ -565,14 +575,14 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("Various UI tweaks, bugfixes, and behind-the-scenes improvements.");
         }
 
-        private void DrawBottomButton()
+        private void DrawBottomButton(float totalScale)
         {
             ImGui.Spacing();
             ImGui.Spacing();
 
             // Center the button
             float windowWidth = ImGui.GetWindowSize().X;
-            float buttonWidth = 90f;
+            float buttonWidth = 90f * totalScale;
             ImGui.SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
 
             // Button is only enabled if user has scrolled enough
@@ -597,9 +607,9 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
             }
 
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f * totalScale);
 
-            bool buttonClicked = ImGui.Button("Got it!", new Vector2(buttonWidth, 30));
+            bool buttonClicked = ImGui.Button("Got it!", new Vector2(buttonWidth, 30 * totalScale));
 
             // Show tooltip when disabled
             if (!buttonEnabled && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))

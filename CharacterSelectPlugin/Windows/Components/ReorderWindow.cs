@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows.Components
@@ -40,12 +41,10 @@ namespace CharacterSelectPlugin.Windows.Components
             if (!IsOpen)
                 return;
 
-            // Calculate dynamic window size based on DPI and UI scale
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            // Calculate dynamic window size - use UI scale multiplier only, let Dalamud handle DPI
+            var totalScale = GetSafeScale(plugin.Configuration.UIScaleMultiplier);
 
-            // Base dimensions
+            // Base dimensions (unscaled, let Dalamud handle DPI)
             var windowWidth = 500f * totalScale;
             var minHeight = 300f * totalScale;
             var maxHeight = 800f * totalScale;

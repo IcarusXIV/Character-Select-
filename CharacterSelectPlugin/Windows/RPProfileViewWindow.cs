@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -53,13 +54,9 @@ namespace CharacterSelectPlugin.Windows
             this.plugin = plugin;
             IsOpen = false;
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
-
             SizeConstraints = new WindowSizeConstraints
             {
-                MinimumSize = new Vector2(420 * totalScale, 550 * totalScale),
+                MinimumSize = new Vector2(420, 550),
                 MaximumSize = new Vector2(9999, 9999)
             };
 
@@ -154,9 +151,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             var rp = CurrentProfile;
             if (rp == null)

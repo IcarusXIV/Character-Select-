@@ -42,7 +42,17 @@ namespace CharacterSelectPlugin
         public string? LastSessionId { get; set; } = null;
         public string? PreviousSessionId { get; set; }
         [JsonProperty]
-        public float UIScaleMultiplier { get; set; } = 1.0f;
+        private float _uiScaleMultiplier = 1.0f;
+        
+        /// <summary>
+        /// UI Scale multiplier with automatic bounds checking (0.5x to 2.0x).
+        /// Note: This setting is no longer exposed in the UI but maintained for backward compatibility.
+        /// </summary>
+        public float UIScaleMultiplier 
+        { 
+            get => _uiScaleMultiplier;
+            set => _uiScaleMultiplier = Math.Clamp(value, 0.5f, 2.0f);
+        }
         [DefaultValue(true)]
         public bool ApplyIdleOnLogin { get; set; } = true;
         public uint LastKnownJobId { get; set; } = 0;

@@ -1,6 +1,7 @@
 using Dalamud.Bindings.ImGui;
 using System.Numerics;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using System;
 using System.Linq;
 
@@ -76,9 +77,7 @@ namespace CharacterSelectPlugin
         {
             if (!IsActive) return;
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             CheckTutorialProgression();
 
@@ -607,9 +606,7 @@ namespace CharacterSelectPlugin
         {
             if (!IsActive) return;
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = dpiScale * uiScale;
+            var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
             Plugin.Log.Info($"[Tutorial] RP Profile Overlay - Step: {CurrentStep}, Editor Open: {plugin.IsRPProfileEditorOpen}");
 

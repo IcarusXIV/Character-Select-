@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using CharacterSelectPlugin.Windows.Styles;
 using Newtonsoft.Json.Linq;
@@ -118,9 +119,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (!IsOpen) return;
 
             // Calculate responsive sizing
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             // Scale the panel dimensions
             float scaledPanelWidth = PanelWidth * GetSafeScale(totalScale);
@@ -339,7 +338,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private void DrawHeader(Character character, float scale)
         {
             float buttonSize = 25f * scale;
-            float spacing = 5f * scale;
+            float spacing = 2f * scale;
 
             
             ImGui.BeginGroup();
@@ -401,7 +400,7 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1f));
 
             ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button("\uf07b##AddFolder", new Vector2(buttonSize, buttonSize)))
+            if (ImGui.Button("\uf07b##AddFolder"))
                 ImGui.OpenPopup("CreateFolderPopup");
             ImGui.PopFont();
 
@@ -415,9 +414,8 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Search button
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button("\uf002##SearchDesigns", new Vector2(buttonSize, buttonSize)))
+            ImGui.SameLine(0, spacing);
+            if (uiStyles.IconButton("\uf002", "Search designs"))
             {
                 showSearchBar = !showSearchBar;
                 if (!showSearchBar)
@@ -426,7 +424,6 @@ namespace CharacterSelectPlugin.Windows.Components
                     InvalidateFilterCache();
                 }
             }
-            ImGui.PopFont();
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Search designs");
 
@@ -440,8 +437,9 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.4f, 0.4f, 0.9f)); // Medium gray  
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));  // Light gray
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 1.0f, 1.0f, 1.0f));          // White text
+            ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));        // Center icon
 
-            if (ImGui.Button($"\uf030##CreateSnapshot", new Vector2(buttonSize, buttonSize)))
+            if (ImGui.Button($"\uf030##CreateSnapshot"))
             {
                 if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count)
                 {
@@ -461,6 +459,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
 
+            ImGui.PopStyleVar(1);
             ImGui.PopStyleColor(4);
             ImGui.PopFont();
 
@@ -472,15 +471,14 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Close button
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (2 * scale));
+            ImGui.SameLine(0, spacing);
 
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.27f, 0.27f, 1.0f));
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.2f, 0.2f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.3f, 0.3f, 1f));
 
-            if (ImGui.Button("×##CloseDesignPanel", new Vector2(buttonSize, buttonSize)))
+            if (ImGui.Button("×##CloseDesignPanel"))
             {
                 Close();
             }

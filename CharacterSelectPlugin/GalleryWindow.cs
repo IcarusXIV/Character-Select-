@@ -9,6 +9,7 @@ using System.Net.Http;
 using Newtonsoft.Json;
 using System.IO;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Textures.TextureWraps;
 using System.Threading;
 using CharacterSelectPlugin.Effects;
@@ -236,9 +237,7 @@ namespace CharacterSelectPlugin.Windows
             this.plugin = plugin;
             IsOpen = false;
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             SizeConstraints = new WindowSizeConstraints
             {
@@ -259,9 +258,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             // Main window dark styling
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));

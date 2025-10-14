@@ -5,6 +5,7 @@ using Dalamud.Bindings.ImGui;
 using CharacterSelectPlugin.Windows.Components;
 using CharacterSelectPlugin.Windows.Styles;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using CharacterSelectPlugin.Effects;
 
 namespace CharacterSelectPlugin.Windows
@@ -102,9 +103,7 @@ namespace CharacterSelectPlugin.Windows
             // Move to the same line and position Discord button at far right
             ImGui.SameLine();
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = dpiScale * uiScale;
+            var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
             float buttonWidth = 70 * totalScale;
             float buttonHeight = ImGui.GetTextLineHeight() + ImGui.GetStyle().FramePadding.Y * 2;
@@ -141,6 +140,9 @@ namespace CharacterSelectPlugin.Windows
 
         private void DrawMainContent()
         {
+            // Calculate scale once for the entire method
+            var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
+            
             // Character form (Add/Edit)
             if (plugin.IsAddCharacterWindowOpen || characterForm.IsEditWindowOpen)
             {
@@ -150,16 +152,13 @@ namespace CharacterSelectPlugin.Windows
             float characterGridWidth = 0;
             if (designPanel.IsOpen)
             {
-                var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-                var uiScale = plugin.Configuration.UIScaleMultiplier;
-                var totalScale = dpiScale * uiScale;
                 float scaledPanelWidth = designPanel.PanelWidth * totalScale;
-
                 characterGridWidth = -(scaledPanelWidth + 10);
             }
 
-            // Main area
-            ImGui.BeginChild("CharacterGrid", new Vector2(characterGridWidth, -30), true);
+            // Main area - reserve space for bottom bar based on scaled button height
+            float bottomBarHeight = ImGui.GetFrameHeight() + (10 * totalScale); // Button height + minimal padding
+            ImGui.BeginChild("CharacterGrid", new Vector2(characterGridWidth, -bottomBarHeight), true);
             characterGrid.Draw();
             ImGui.EndChild();
 
@@ -168,10 +167,6 @@ namespace CharacterSelectPlugin.Windows
             {
                 ImGui.SameLine();
                 float characterGridHeight = ImGui.GetItemRectSize().Y;
-
-                var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-                var uiScale = plugin.Configuration.UIScaleMultiplier;
-                var totalScale = dpiScale * uiScale;
                 float scaledPanelWidth = designPanel.PanelWidth * totalScale;
 
                 ImGui.BeginChild("DesignPanel", new Vector2(scaledPanelWidth, characterGridHeight), true);
@@ -197,7 +192,12 @@ namespace CharacterSelectPlugin.Windows
 
         private void DrawBottomBar()
         {
-            ImGui.SetCursorPos(new Vector2(10, ImGui.GetWindowHeight() - 30));
+            var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
+            
+            // Use a simpler approach - just use scaled padding from the bottom
+            float bottomPadding = 10 * totalScale;
+            
+            ImGui.SetCursorPos(new Vector2(10 * totalScale, ImGui.GetWindowHeight() - ImGui.GetFrameHeight() - bottomPadding));
 
             // Settings Button
             if (uiStyles.IconButton("\uf013", "Settings"))
@@ -285,8 +285,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SameLine();
 
             // Random Button
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button("\uf522##RandomSelect", new Vector2(30, 25)))
+            if (uiStyles.IconButton("\uf522", "Select Random Character & Design"))
             {
                 // Trigger dice effect
                 Vector2 effectPos = ImGui.GetItemRectMin() + ImGui.GetItemRectSize() / 2;
@@ -294,7 +293,6 @@ namespace CharacterSelectPlugin.Windows
 
                 plugin.SelectRandomCharacterAndDesign();
             }
-            ImGui.PopFont();
 
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
             {
@@ -308,15 +306,13 @@ namespace CharacterSelectPlugin.Windows
 
         private void DrawSupportButton()
         {
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = dpiScale * uiScale;
+            var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
             Vector2 windowPos = ImGui.GetWindowPos();
             Vector2 windowSize = ImGui.GetWindowSize();
             float buttonWidth = 105 * totalScale;
-            float buttonHeight = 25 * totalScale;
-            float padding = 5 * totalScale;
+            float buttonHeight = ImGui.GetFrameHeight(); // Use same height as other buttons
+            float padding = 10 * totalScale; // Match the bottom bar padding
 
             ImGui.SetCursorScreenPos(new Vector2(
                 windowPos.X + windowSize.X - buttonWidth - padding,

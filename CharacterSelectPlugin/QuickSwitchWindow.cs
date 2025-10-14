@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using Dalamud.Interface.Utility;
 using System.Collections.Generic;
 
 namespace CharacterSelectPlugin.Windows
@@ -30,6 +31,8 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
+            
             // Initialize selection on first draw or when characters are available
             if (!hasInitializedSelection && plugin.Characters.Count > 0)
             {
@@ -49,8 +52,8 @@ namespace CharacterSelectPlugin.Windows
                     | ImGuiWindowFlags.NoBackground;
                 SizeConstraints = new WindowSizeConstraints
                 {
-                    MinimumSize = new System.Numerics.Vector2(360, 28),
-                    MaximumSize = new System.Numerics.Vector2(360, 28),
+                    MinimumSize = new System.Numerics.Vector2(360 * scale, 28 * scale),
+                    MaximumSize = new System.Numerics.Vector2(360 * scale, 28 * scale),
                 };
             }
             else
@@ -61,13 +64,13 @@ namespace CharacterSelectPlugin.Windows
                            | ImGuiWindowFlags.NoScrollWithMouse;
                 SizeConstraints = new WindowSizeConstraints
                 {
-                    MinimumSize = new System.Numerics.Vector2(360, 55),
-                    MaximumSize = new System.Numerics.Vector2(360, 58),
+                    MinimumSize = new System.Numerics.Vector2(360 * scale, 55 * scale),
+                    MaximumSize = new System.Numerics.Vector2(360 * scale, 58 * scale),
                 };
             }
 
-            float dropdownWidth = 135;
-            float spacing = 6;
+            float dropdownWidth = 135 * scale;
+            float spacing = 6 * scale;
 
             // Character Dropdown
             ImGui.SetNextItemWidth(dropdownWidth);

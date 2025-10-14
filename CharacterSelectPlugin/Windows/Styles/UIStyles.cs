@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 
 namespace CharacterSelectPlugin.Windows.Styles
 {
@@ -18,7 +19,7 @@ namespace CharacterSelectPlugin.Windows.Styles
 
         public void PushMainWindowStyle()
         {
-            float scale = plugin.Configuration.UIScaleMultiplier;
+            float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
             // Matte black styling
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
@@ -55,12 +56,10 @@ namespace CharacterSelectPlugin.Windows.Styles
             colorStackCount += 18;
             styleStackCount += 10;
 
-            ImGui.SetWindowFontScale(scale);
         }
 
         public void PopMainWindowStyle()
         {
-            ImGui.SetWindowFontScale(1f);
             ImGui.PopStyleVar(styleStackCount);
             ImGui.PopStyleColor(colorStackCount);
             styleStackCount = 0;
@@ -69,12 +68,15 @@ namespace CharacterSelectPlugin.Windows.Styles
 
         public void PushCharacterCardStyle(Vector3 glowColor, bool isHovered = false, float scale = 1.0f)
         {
+            // Use GlobalScale combined with any additional scaling
+            float finalScale = ImGuiHelpers.GlobalScale * scale;
+            
             // Dark card background with subtle transparency
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
 
             // Rounded corners
-            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 12.0f * scale);
-            ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, (isHovered ? 2.0f : 1.0f) * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 12.0f * finalScale);
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, (isHovered ? 2.0f : 1.0f) * finalScale);
 
             colorStackCount++;
             styleStackCount += 2;
@@ -91,14 +93,15 @@ namespace CharacterSelectPlugin.Windows.Styles
         public void DrawGlowingBorder(Vector2 min, Vector2 max, Vector3 color, float intensity = 1.0f, bool isHovered = false, float scale = 1.0f)
         {
             var drawList = ImGui.GetWindowDrawList();
+            float finalScale = ImGuiHelpers.GlobalScale * scale;
 
             // Convert colour to ImGui format
             var glowColor = new Vector4(color.X, color.Y, color.Z, intensity);
             uint glowColorU32 = ImGui.GetColorU32(glowColor);
 
             // Draw multiple borders for glow effect - scale thickness and radius
-            float thickness = (isHovered ? 2.0f : 1.5f) * scale;
-            float cornerRadius = 12.0f * scale;
+            float thickness = (isHovered ? 2.0f : 1.5f) * finalScale;
+            float cornerRadius = 12.0f * finalScale;
 
             // Outer glow
             for (int i = 0; i < 5; i++)
@@ -107,7 +110,7 @@ namespace CharacterSelectPlugin.Windows.Styles
                 if (alpha <= 0) break;
 
                 uint outerColor = ImGui.GetColorU32(new Vector4(color.X, color.Y, color.Z, alpha));
-                float offset = (i + 1) * 1.5f * scale;
+                float offset = (i + 1) * 1.5f * finalScale;
 
                 drawList.AddRect(
                     min - new Vector2(offset, offset),
@@ -115,7 +118,7 @@ namespace CharacterSelectPlugin.Windows.Styles
                     outerColor,
                     cornerRadius + offset,
                     ImDrawFlags.RoundCornersAll,
-                    1.0f * scale
+                    1.0f * finalScale
                 );
             }
 
@@ -124,12 +127,12 @@ namespace CharacterSelectPlugin.Windows.Styles
             {
                 uint brightColor = ImGui.GetColorU32(new Vector4(color.X, color.Y, color.Z, intensity * 0.8f));
                 drawList.AddRect(
-                    min + new Vector2(1 * scale, 1 * scale),
-                    max - new Vector2(1 * scale, 1 * scale),
+                    min + new Vector2(1 * finalScale, 1 * finalScale),
+                    max - new Vector2(1 * finalScale, 1 * finalScale),
                     brightColor,
-                    cornerRadius - (1 * scale),
+                    cornerRadius - (1 * finalScale),
                     ImDrawFlags.RoundCornersAll,
-                    1.0f * scale
+                    1.0f * finalScale
                 );
             }
 
@@ -139,6 +142,8 @@ namespace CharacterSelectPlugin.Windows.Styles
 
         public void PushDarkButtonStyle(float scale = 1.0f)
         {
+            float finalScale = ImGuiHelpers.GlobalScale * scale;
+            
             // Dark button styling
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
@@ -146,7 +151,7 @@ namespace CharacterSelectPlugin.Windows.Styles
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
 
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * scale); // Scale button rounding
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * finalScale); // Scale button rounding
 
             colorStackCount += 4;
             styleStackCount += 2;
@@ -163,12 +168,13 @@ namespace CharacterSelectPlugin.Windows.Styles
         public bool IconButton(string icon, string tooltip, Vector2? size = null, float scale = 1.0f)
         {
             ImGui.PushFont(UiBuilder.IconFont);
+            float finalScale = ImGuiHelpers.GlobalScale * scale;
 
             // Scale the button size if provided
             Vector2 buttonSize = size ?? Vector2.Zero;
             if (size.HasValue)
             {
-                buttonSize = new Vector2(size.Value.X * scale, size.Value.Y * scale);
+                buttonSize = new Vector2(size.Value.X * finalScale, size.Value.Y * finalScale);
             }
 
             bool result = ImGui.Button(icon, buttonSize);
@@ -220,8 +226,9 @@ namespace CharacterSelectPlugin.Windows.Styles
             if (totalPages <= 1) return;
 
             var drawList = ImGui.GetWindowDrawList();
-            float dotSize = 8.0f * scale; 
-            float spacing = 16.0f * scale; 
+            float finalScale = ImGuiHelpers.GlobalScale * scale;
+            float dotSize = 8.0f * finalScale; 
+            float spacing = 16.0f * finalScale; 
 
             for (int i = 0; i < totalPages; i++)
             {
@@ -235,22 +242,22 @@ namespace CharacterSelectPlugin.Windows.Styles
                 // Glow effect for active dot
                 if (i == currentPage)
                 {
-                    drawList.AddCircle(dotPos, dotSize / 2 + (2 * scale),
-                        ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, 0.5f)), 0, 1.0f * scale);
+                    drawList.AddCircle(dotPos, dotSize / 2 + (2 * finalScale),
+                        ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, 0.5f)), 0, 1.0f * finalScale);
                 }
             }
         }
 
         public void PushFormStyle()
         {
-            float scale = plugin.Configuration.UIScaleMultiplier;
+            float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
             // Form-specific styling
             ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.28f, 0.28f, 0.28f, 0.9f));
 
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * ImGuiHelpers.GlobalScale);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(6 * scale, 4 * scale));
 
             colorStackCount += 3;

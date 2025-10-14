@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using CharacterSelectPlugin.Windows.Styles;
 using CharacterSelectPlugin.Effects;
 
@@ -47,6 +48,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private float cachedCardWidth = 0f;
         private int cachedColumnCount = 0;
         private float cachedAvailableWidth = 0f;
+        private float cachedScale = 0f;
         private bool layoutCacheDirty = true;
 
         // Cache expensive string operations
@@ -81,10 +83,8 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void Draw()
         {
-            // Calculate responsive scaling
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            // Calculate responsive scaling using Dalamud's GlobalScale
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             ImGuiWindowFlags windowFlags = ImGuiWindowFlags.None;
 
@@ -170,13 +170,11 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Tag Filter Toggle
             ImGui.SameLine(ImGui.GetWindowWidth() - tagIconOffset - (20f * scale));
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button("\uf0b0", new Vector2(buttonSize, buttonSize)))
+            if (uiStyles.IconButton("\uf0b0", "Filter by Tags"))
             {
                 showTagFilter = !showTagFilter;
                 InvalidateCache();
             }
-            ImGui.PopFont();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
             {
                 ImGui.BeginTooltip();
@@ -216,8 +214,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Search Button
             ImGui.SameLine(ImGui.GetWindowWidth() - (55f * scale));
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button("\uf002", new Vector2(buttonSize, buttonSize)))
+            if (uiStyles.IconButton("\uf002", "Search for a Character"))
             {
                 showSearchBar = !showSearchBar;
                 if (!showSearchBar)
@@ -226,7 +223,6 @@ namespace CharacterSelectPlugin.Windows.Components
                     InvalidateFilterCache();
                 }
             }
-            ImGui.PopFont();
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
             {
                 ImGui.BeginTooltip();
@@ -250,7 +246,9 @@ namespace CharacterSelectPlugin.Windows.Components
             var pagedCharacters = GetPagedCharacters(filteredCharacters);
 
             float availableWidth = ImGui.GetContentRegionAvail().X;
-            if (Math.Abs(availableWidth - cachedAvailableWidth) > 1f || layoutCacheDirty)
+            if (Math.Abs(availableWidth - cachedAvailableWidth) > 1f || 
+                Math.Abs(scale - cachedScale) > 0.01f || 
+                layoutCacheDirty)
             {
                 RecalculateLayout(availableWidth, scale);
             }
@@ -320,6 +318,7 @@ namespace CharacterSelectPlugin.Windows.Components
             cachedCardWidth = cardWidth;
             cachedColumnCount = columnCount;
             cachedAvailableWidth = availableWidth;
+            cachedScale = scale;
             layoutCacheDirty = false;
         }
 

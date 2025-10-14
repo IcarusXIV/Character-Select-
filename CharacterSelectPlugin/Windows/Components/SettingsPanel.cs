@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using CharacterSelectPlugin.Windows.Styles;
 using System.Collections.Generic;
 using CharacterSelectPlugin.Managers;
@@ -54,9 +55,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 return;
 
             // Calculate dynamic height based on expanded sections
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             var windowWidth = 480f * totalScale;
 
@@ -161,9 +160,10 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void DrawFixedSettingsContent()
         {
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
             var contentWidth = ImGui.GetContentRegionAvail().X;
-            var labelWidth = 140f;
-            var inputWidth = contentWidth - labelWidth - 20f;
+            var labelWidth = 140f * totalScale;
+            var inputWidth = contentWidth - labelWidth - (20f * totalScale);
 
             // Header
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.85f, 0.95f, 1.0f));
@@ -304,17 +304,6 @@ namespace CharacterSelectPlugin.Windows.Components
                 DrawTooltip("Spacing between character profile cards.");
             });
 
-            // UI Scale
-            DrawFixedSetting("UI Scale:", labelWidth, inputWidth, () =>
-            {
-                float scaleSetting = plugin.Configuration.UIScaleMultiplier;
-                if (ImGui.SliderFloat("##UIScale", ref scaleSetting, 0.5f, 2.0f, "%.2fx"))
-                {
-                    plugin.Configuration.UIScaleMultiplier = scaleSetting;
-                    plugin.Configuration.Save();
-                }
-                DrawTooltip("Scales the entire Character Select+ UI manually.\nUseful for high-DPI monitors (2K / 3K / 4K).");
-            });
 
             // Sort Characters By
             DrawFixedSetting("Sort Characters By:", labelWidth, inputWidth, () =>
@@ -1234,9 +1223,10 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.Text("Create Manual Backup:");
             ImGui.Spacing();
 
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
             var contentWidth = ImGui.GetContentRegionAvail().X;
-            var labelWidth = 120f;
-            var inputWidth = contentWidth - labelWidth - 20f;
+            var labelWidth = 120f * totalScale;
+            var inputWidth = contentWidth - labelWidth - (20f * totalScale);
 
             DrawFixedSetting("Backup Name:", labelWidth, inputWidth * 0.7f, () =>
             {
@@ -1252,7 +1242,7 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.9f, 0.6f, 0.8f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 1.0f, 0.7f, 1.0f));
 
-            if (ImGui.Button("Create Manual Backup", new Vector2(200f, 30f)))
+            if (ImGui.Button("Create Manual Backup", new Vector2(200f * totalScale, 30f * totalScale)))
             {
                 CreateManualBackup();
             }
@@ -1284,17 +1274,17 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.Spacing();
 
                 // Backup list with restore buttons
-                if (ImGui.BeginChild("BackupList", new Vector2(0, 120f), true))
+                if (ImGui.BeginChild("BackupList", new Vector2(0, 120f * totalScale), true))
                 {
                     foreach (var backup in availableBackups.Take(10)) // Show only first 10
                     {
                         // Calculate positions for proper alignment
                         var availableWidth = ImGui.GetContentRegionAvail().X;
-                        var restoreButtonWidth = 70f;
-                        var deleteButtonWidth = 60f;
-                        var buttonSpacing = 5f;
+                        var restoreButtonWidth = 70f * totalScale;
+                        var deleteButtonWidth = 60f * totalScale;
+                        var buttonSpacing = 5f * totalScale;
                         var totalButtonWidth = restoreButtonWidth + deleteButtonWidth + buttonSpacing;
-                        var textWidth = availableWidth - totalButtonWidth - 10f; // 10f for spacing
+                        var textWidth = availableWidth - totalButtonWidth - (10f * totalScale); // 10f for spacing
                         
                         // Display backup name with color coding
                         var displayColor = backup.IsManual ? new Vector4(0.8f, 0.9f, 1.0f, 1f) : new Vector4(0.7f, 0.7f, 0.8f, 1f);
@@ -1388,7 +1378,7 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1.0f, 0.8f, 0.5f, 0.8f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1.0f, 0.9f, 0.6f, 1.0f));
 
-            if (ImGui.Button("Add Config File...", new Vector2(200f, 30f)))
+            if (ImGui.Button("Add Config File...", new Vector2(200f * totalScale, 30f * totalScale)))
             {
                 ImportConfigurationFile();
             }

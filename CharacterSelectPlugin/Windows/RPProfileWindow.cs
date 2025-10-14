@@ -1,5 +1,6 @@
 using Dalamud.Interface.Windowing;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility;
 using System.IO;
 using System;
 using System.Numerics;
@@ -60,14 +61,10 @@ namespace CharacterSelectPlugin.Windows
             IsOpen = false;
             LoadAvailableBackgrounds();
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
-
             SizeConstraints = new WindowSizeConstraints
             {
-                MinimumSize = new Vector2(700 * totalScale, 500 * totalScale),
-                MaximumSize = new Vector2(900 * totalScale, 700 * totalScale)
+                MinimumSize = new Vector2(700, 500),
+                MaximumSize = new Vector2(900, 700)
             };
         }
 
@@ -279,9 +276,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             if (character == null)
             {

@@ -7,6 +7,7 @@ using System.Threading;
 using System.Windows.Forms;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows.Components
@@ -67,9 +68,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (!plugin.IsAddCharacterWindowOpen && !IsEditWindowOpen)
                 return;
 
-            var dpiScale = ImGui.GetIO().DisplayFramebufferScale.X;
-            var uiScale = plugin.Configuration.UIScaleMultiplier;
-            var totalScale = GetSafeScale(dpiScale * uiScale);
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             // Check if Conflict Resolution is enabled and determine secret mode
             if (plugin.Configuration.EnableConflictResolution)
