@@ -1372,6 +1372,11 @@ namespace CharacterSelectPlugin.Windows
                 {
                     categoryMods = availableMods.Where(m => m.ModType == ModType.Mount || m.ModType == ModType.Minion).ToList();
                 }
+                else if (targetType == ModType.Other)
+                {
+                    // Include both Other and Unknown mods in 'Other' category
+                    categoryMods = availableMods.Where(m => m.ModType == ModType.Other || m.ModType == ModType.Unknown).ToList();
+                }
                 else
                 {
                     categoryMods = availableMods.Where(m => m.ModType == targetType).ToList();

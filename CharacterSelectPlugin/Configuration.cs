@@ -73,6 +73,10 @@ namespace CharacterSelectPlugin
         public bool EnableSafeMode { get; set; } = false;
         public bool QuickSwitchCompact { get; set; } = false;
         public bool EnableCharacterHoverEffects { get; set; } = false;
+        
+        // Seasonal Theme Settings
+        public bool UseSeasonalTheme { get; set; } = false;
+        
         public HashSet<string> FavoriteGalleryProfiles { get; set; } = new();
         public HashSet<string> LikedGalleryProfiles { get; set; } = new();
         public List<FavoriteSnapshot> FavoriteSnapshots { get; set; } = new();
@@ -88,6 +92,8 @@ namespace CharacterSelectPlugin
         public int GalleryAutoRefreshSeconds { get; set; } = 30;
         [DefaultValue(false)]
         public bool RandomSelectionFavoritesOnly { get; set; } = false;
+        [DefaultValue(true)]
+        public bool ShowRandomSelectionChatMessages { get; set; } = true;
         public string? MainCharacterName { get; set; } = null; 
         public bool EnableMainCharacterOnly { get; set; } = false;
         public bool ShowMainCharacterCrown { get; set; } = true;

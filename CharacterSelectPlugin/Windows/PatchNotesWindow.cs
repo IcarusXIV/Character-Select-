@@ -102,7 +102,7 @@ namespace CharacterSelectPlugin.Windows
             {
                 string pluginDirectory = Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? "";
                 string assetsPath = Path.Combine(pluginDirectory, "Assets");
-                string imagePath = Path.Combine(assetsPath, "banner.png");
+                string imagePath = Path.Combine(assetsPath, "halloweenbanner.png");
 
                 if (File.Exists(imagePath))
                 {
@@ -145,6 +145,9 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SetCursorPosY((windowPadding.Y * 0.5f) + headerHeight - 10);
 
+            // Halloween Special Announcement Box
+            DrawHalloweenAnnouncementBox(totalScale);
+
             // Version badge
             ImGui.SetCursorPosX(9);
             ImGui.PushFont(UiBuilder.IconFont);
@@ -158,7 +161,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Conflict Resolution, IPC, Apply to Target (GPose)");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Halloween UI Theme, Conflict Resolution, IPC, Apply to Target (GPose)");
 
             ImGui.Separator();
             ImGui.Spacing();
@@ -741,6 +744,37 @@ namespace CharacterSelectPlugin.Windows
 
             particle.Life = particle.MaxLife;
             particles.Add(particle);
+        }
+
+        private void DrawHalloweenAnnouncementBox(float totalScale)
+        {
+            // Halloween announcement as a child window/scrollable area
+            ImGui.BeginChild("HalloweenAnnouncement", new Vector2(0, 120 * totalScale), true, ImGuiWindowFlags.None);
+            
+            // Title with ghost icons and date
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), "\uf6e2"); // FontAwesome ghost
+            ImGui.PopFont();
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1.0f, 0.6f, 0.1f, 1.0f), " Special Halloween Update! (Oct 15 2025) ");
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), "\uf6e2"); // FontAwesome ghost
+            ImGui.PopFont();
+            
+            ImGui.Spacing();
+            
+            // Announcement content - conversational style
+            ImGui.PushTextWrapPos();
+            ImGui.TextColored(new Vector4(0.9f, 0.8f, 0.9f, 1.0f),
+                "Hi hi! I've got some spooky surprises for you this Halloween season. You can now enable seasonal themes in your settings (Visual Settings) -- changes your UI in Real-Time so you can easily toggle it on or off. Consider this a sneak peek into providing more options with the UI! " +
+                "I've also fixed a bug where the Character Assignment 'None' option wasn't working properly, and added a new command '/select random CHARACTERNAME' that lets you randomize which design you get for a specific character. " +
+                "Happy Halloween, and enjoy the new features!");
+            ImGui.PopTextWrapPos();
+            
+            ImGui.EndChild();
+            
+            ImGui.Spacing();
         }
     }
 }

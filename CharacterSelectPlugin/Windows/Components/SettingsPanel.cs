@@ -355,6 +355,18 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             DrawTooltip("Characters grow slightly when hovered over for visual feedback.");
 
+            // Use Seasonal Theme
+            bool useSeasonalTheme = plugin.Configuration.UseSeasonalTheme;
+            if (ImGui.Checkbox("Use Seasonal Theme", ref useSeasonalTheme))
+            {
+                plugin.Configuration.UseSeasonalTheme = useSeasonalTheme;
+                plugin.SaveConfiguration();
+            }
+            
+            var currentTheme = SeasonalThemeManager.GetCurrentSeasonalTheme();
+            var themeName = SeasonalThemeManager.GetThemeDisplayNameSafe(currentTheme);
+            DrawTooltip($"Apply seasonal visual themes to the interface. Current season: {themeName}");
+
             ImGui.Spacing();
         }
 
@@ -418,6 +430,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.Configuration.Save();
             }
             DrawTooltip("When enabled, random selection will only choose from favourited characters and designs.\nRequires at least one favourited character to work.");
+
+            bool showRandomChatMessages = plugin.Configuration.ShowRandomSelectionChatMessages;
+            if (ImGui.Checkbox("Show Random Selection Chat Messages", ref showRandomChatMessages))
+            {
+                plugin.Configuration.ShowRandomSelectionChatMessages = showRandomChatMessages;
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("When enabled, displays themed chat messages when using random selection.\nMessages become spooky during Halloween season!");
 
             ImGui.Spacing();
         }

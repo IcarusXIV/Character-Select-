@@ -21,6 +21,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string selectedTag = "All";
         private bool showTagFilter = false;
         private Dictionary<int, FavoriteSparkEffect> characterFavoriteEffects = new();
+        private FogSequenceEffect fogEffect;
 
         // Drag and drop state
         private int? draggedCharacterIndex = null;
@@ -58,6 +59,14 @@ namespace CharacterSelectPlugin.Windows.Components
         // Frame limiting for animations
         private float lastAnimationUpdate = 0f;
         private const float AnimationUpdateInterval = 1f / 60f; // 60 FPS max
+        
+        // Halloween wiggle animation state
+        private readonly Dictionary<int, float> wiggleStartTimes = new();
+        private readonly Dictionary<int, Vector2> wiggleOffsets = new();
+        private float lastWiggleCheck = 0f;
+        private const float WiggleCheckInterval = 2f; // Check every 2 seconds for new wiggles
+        private const float WiggleDuration = 0.8f; // Each wiggle lasts 0.8 seconds
+        private const float WiggleIntensity = 3f; // Maximum wiggle offset in pixels
 
         // Ghost image state
         private Character? draggedCharacter = null;
@@ -71,6 +80,7 @@ namespace CharacterSelectPlugin.Windows.Components
             this.plugin = plugin;
             this.uiStyles = uiStyles;
             CurrentSort = (Plugin.SortType)plugin.Configuration.CurrentSortIndex;
+            fogEffect = new FogSequenceEffect(plugin);
         }
 
         public void Dispose()
@@ -79,6 +89,7 @@ namespace CharacterSelectPlugin.Windows.Components
             fileExistsCache.Clear();
             textSizeCache.Clear();
             characterFavoriteEffects.Clear();
+            fogEffect?.Dispose();
         }
 
         public void Draw()
@@ -95,6 +106,20 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Apply the flags to window
+            
+            // Draw Halloween spider webs and fog behind everything (before toolbar)
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                DrawHalloweenSpiderWebs();
+                
+                // Set fog area right before drawing
+                Vector2 windowSize = ImGui.GetWindowSize();
+                fogEffect?.SetEffectArea(windowSize);
+                
+                fogEffect?.Draw(); // Draw fog on same layer as spider webs
+            }
+            
             DrawToolbar(totalScale);
             DrawCharacterGridContent(totalScale);
 
@@ -118,6 +143,217 @@ namespace CharacterSelectPlugin.Windows.Components
             foreach (var effect in characterFavoriteEffects.Values)
             {
                 effect.Update(deltaTime);
+            }
+            
+            // Update fog effect for Halloween theme
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                // Set fog effect area to current window content region
+                Vector2 contentSize = ImGui.GetContentRegionAvail();
+                if (contentSize.X > 0 && contentSize.Y > 0)
+                {
+                    fogEffect.SetEffectArea(contentSize);
+                }
+                fogEffect.Update(deltaTime);
+            }
+        }
+
+        private void DrawHalloweenSpiderWebs()
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            var windowPos = ImGui.GetWindowPos();
+            var windowSize = ImGui.GetWindowSize();
+            
+            // Use white color for spider webs
+            var webColor = new Vector4(1.0f, 1.0f, 1.0f, 0.6f); // White with higher opacity
+            uint color = ImGui.GetColorU32(webColor);
+            
+            // Draw simple corner webs
+            float webSize = 50f;
+            
+            // Top-left corner web - positioned exactly at corner
+            Vector2 cornerTL = windowPos;
+            DrawSimpleWeb(drawList, cornerTL, webSize, color, 0); // Top-left
+            
+            // Top-right corner web - positioned exactly at corner
+            Vector2 cornerTR = windowPos + new Vector2(windowSize.X, 0);
+            DrawSimpleWeb(drawList, cornerTR, webSize, color, 1); // Top-right
+            
+            // Bottom-right corner web - positioned exactly at corner (skip bottom-left to avoid hiding behind character cards)
+            Vector2 cornerBR = windowPos + new Vector2(windowSize.X, windowSize.Y);
+            DrawSimpleWeb(drawList, cornerBR, webSize, color, 3); // Bottom-right
+        }
+
+        private void DrawSimpleWeb(ImDrawListPtr drawList, Vector2 corner, float size, uint color, int cornerType)
+        {
+            // Vary pattern based on corner for uniqueness
+            int strands = cornerType switch
+            {
+                0 => 5, // Top-left: 5 strands
+                1 => 4, // Top-right: 4 strands  
+                2 => 6, // Bottom-left: 6 strands
+                3 => 4, // Bottom-right: 4 strands
+                _ => 4
+            };
+            
+            // Draw radial strands from corner
+            for (int i = 0; i < strands; i++)
+            {
+                float angle = 0f;
+                Vector2 direction = Vector2.Zero;
+                
+                switch (cornerType)
+                {
+                    case 0: // Top-left
+                        angle = (float)(Math.PI * 0.5f * i / (strands - 1));
+                        direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
+                        break;
+                    case 1: // Top-right
+                        angle = (float)(Math.PI * 0.5f + Math.PI * 0.5f * i / (strands - 1));
+                        direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
+                        break;
+                    case 2: // Bottom-left
+                        angle = (float)(Math.PI * 1.5f + Math.PI * 0.5f * i / (strands - 1));
+                        direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
+                        break;
+                    case 3: // Bottom-right
+                        angle = (float)(Math.PI + Math.PI * 0.5f * i / (strands - 1));
+                        direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
+                        break;
+                }
+                
+                // Vary strand length for more organic look
+                float strandLength = size * (0.8f + (i % 2) * 0.2f);
+                Vector2 endPoint = corner + direction * strandLength;
+                
+                // Vary line thickness
+                float thickness = i == 0 || i == strands - 1 ? 1.2f : 0.8f;
+                drawList.AddLine(corner, endPoint, color, thickness);
+            }
+            
+            // Draw connecting rings with varied complexity
+            int rings = cornerType == 2 ? 4 : 3; // Bottom-left gets extra ring
+            for (int ring = 1; ring <= rings; ring++)
+            {
+                float ringSize = size * ring / rings * 0.9f;
+                
+                // Add some irregularity to ring connections
+                for (int i = 0; i < strands - 1; i++)
+                {
+                    float angle1 = 0f, angle2 = 0f;
+                    
+                    switch (cornerType)
+                    {
+                        case 0: // Top-left
+                            angle1 = (float)(Math.PI * 0.5f * i / (strands - 1));
+                            angle2 = (float)(Math.PI * 0.5f * (i + 1) / (strands - 1));
+                            break;
+                        case 1: // Top-right
+                            angle1 = (float)(Math.PI * 0.5f + Math.PI * 0.5f * i / (strands - 1));
+                            angle2 = (float)(Math.PI * 0.5f + Math.PI * 0.5f * (i + 1) / (strands - 1));
+                            break;
+                        case 2: // Bottom-left
+                            angle1 = (float)(Math.PI * 1.5f + Math.PI * 0.5f * i / (strands - 1));
+                            angle2 = (float)(Math.PI * 1.5f + Math.PI * 0.5f * (i + 1) / (strands - 1));
+                            break;
+                        case 3: // Bottom-right
+                            angle1 = (float)(Math.PI + Math.PI * 0.5f * i / (strands - 1));
+                            angle2 = (float)(Math.PI + Math.PI * 0.5f * (i + 1) / (strands - 1));
+                            break;
+                    }
+                    
+                    // Add slight curve to connections for more organic look
+                    Vector2 point1 = corner + new Vector2((float)Math.Cos(angle1), (float)Math.Sin(angle1)) * ringSize;
+                    Vector2 point2 = corner + new Vector2((float)Math.Cos(angle2), (float)Math.Sin(angle2)) * ringSize;
+                    
+                    // Draw all connections for complete web
+                    drawList.AddLine(point1, point2, color, 0.6f);
+                }
+            }
+            
+            // Add small spider at corner for some webs
+            if (cornerType == 0 || cornerType == 3) // Top-left and bottom-right
+            {
+                Vector2 spiderPos = corner + new Vector2(
+                    cornerType == 0 ? 8 : -8,
+                    cornerType == 0 ? 8 : -8
+                );
+                drawList.AddCircleFilled(spiderPos, 2f, color, 6);
+            }
+        }
+
+        private void DrawCharacterCardSpiderWebs(ImDrawListPtr drawList, Vector2 cardMin, float cardWidth, float imageHeight, float scale, float hoverAmount)
+        {
+            // Smaller, more subtle webs for character cards
+            float baseAlpha = 0.4f;
+            float hoverAlpha = baseAlpha + (hoverAmount * 0.3f); // Increase visibility on hover
+            var webColor = new Vector4(1.0f, 1.0f, 1.0f, hoverAlpha);
+            uint color = ImGui.GetColorU32(webColor);
+            
+            float baseWebSize = 25f * scale;
+            float webSize = baseWebSize * (1.0f + hoverAmount * 0.2f); // Grow on hover
+            
+            // Only draw on top corners to not obstruct character image too much
+            Vector2 topLeft = cardMin;
+            Vector2 topRight = cardMin + new Vector2(cardWidth, 0);
+            
+            // Draw small spider webs in top corners
+            DrawCardWeb(drawList, topLeft, webSize, color, 0); // Top-left
+            DrawCardWeb(drawList, topRight, webSize, color, 1); // Top-right
+        }
+
+        private void DrawCardWeb(ImDrawListPtr drawList, Vector2 corner, float size, uint color, int cornerType)
+        {
+            // Simpler web pattern for character cards
+            int strands = 3; // Fewer strands for subtlety
+            
+            for (int i = 0; i < strands; i++)
+            {
+                float angle = 0f;
+                
+                switch (cornerType)
+                {
+                    case 0: // Top-left
+                        angle = (float)(Math.PI * 0.5f * i / (strands - 1));
+                        break;
+                    case 1: // Top-right
+                        angle = (float)(Math.PI * 0.5f + Math.PI * 0.5f * i / (strands - 1));
+                        break;
+                }
+                
+                Vector2 direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
+                Vector2 endPoint = corner + direction * size;
+                
+                drawList.AddLine(corner, endPoint, color, 0.8f);
+            }
+            
+            // Add simple connecting rings
+            for (int ring = 1; ring <= 2; ring++)
+            {
+                float ringSize = size * ring / 2f * 0.8f;
+                
+                for (int i = 0; i < strands - 1; i++)
+                {
+                    float angle1 = 0f, angle2 = 0f;
+                    
+                    switch (cornerType)
+                    {
+                        case 0: // Top-left
+                            angle1 = (float)(Math.PI * 0.5f * i / (strands - 1));
+                            angle2 = (float)(Math.PI * 0.5f * (i + 1) / (strands - 1));
+                            break;
+                        case 1: // Top-right
+                            angle1 = (float)(Math.PI * 0.5f + Math.PI * 0.5f * i / (strands - 1));
+                            angle2 = (float)(Math.PI * 0.5f + Math.PI * 0.5f * (i + 1) / (strands - 1));
+                            break;
+                    }
+                    
+                    Vector2 point1 = corner + new Vector2((float)Math.Cos(angle1), (float)Math.Sin(angle1)) * ringSize;
+                    Vector2 point2 = corner + new Vector2((float)Math.Cos(angle2), (float)Math.Sin(angle2)) * ringSize;
+                    
+                    drawList.AddLine(point1, point2, color, 0.6f);
+                }
             }
         }
 
@@ -175,12 +411,6 @@ namespace CharacterSelectPlugin.Windows.Components
                 showTagFilter = !showTagFilter;
                 InvalidateCache();
             }
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-            {
-                ImGui.BeginTooltip();
-                ImGui.Text("Filter by Tags.");
-                ImGui.EndTooltip();
-            }
 
             // Tag Filter Dropdown
             if (showTagFilter)
@@ -222,12 +452,6 @@ namespace CharacterSelectPlugin.Windows.Components
                     searchQuery = "";
                     InvalidateFilterCache();
                 }
-            }
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-            {
-                ImGui.BeginTooltip();
-                ImGui.Text("Search for a Character.");
-                ImGui.EndTooltip();
             }
 
             // Search Input Field
@@ -385,8 +609,23 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             float hoverAmount = UpdateHoverAnimation(index, isHovered);
+            
+            // Get Halloween wiggle offset (use plugin.Characters.Count for total character count)
+            Vector2 wiggleOffset = UpdateHalloweenWiggle(index, plugin.Characters.Count);
 
             Vector3 borderColor = character.NameplateColor;
+            
+            // Override border color for Halloween theme with alternating pattern
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
+                // Alternate between orange and purple based on character index
+                borderColor = index % 2 == 0 
+                    ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)    // Orange
+                    : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Purple
+            }
+            
             float borderIntensity = 0.6f + hoverAmount * 0.4f;
 
             if (draggedCharacterIndex == index)
@@ -394,10 +633,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 borderIntensity = 1.0f;
             }
 
+            // Apply wiggle offset to card positions
+            var wiggleCardMin = cardMin + wiggleOffset;
+            var wiggleCardMax = cardMax + wiggleOffset;
+
             var borderMargin = (4f + (hoverAmount * 2f)) * scale;
             uiStyles.DrawGlowingBorder(
-                cardMin - new Vector2(borderMargin, borderMargin),
-                cardMax + new Vector2(borderMargin, borderMargin),
+                wiggleCardMin - new Vector2(borderMargin, borderMargin),
+                wiggleCardMax + new Vector2(borderMargin, borderMargin),
                 borderColor,
                 borderIntensity,
                 isHovered || draggedCharacterIndex == index
@@ -405,9 +648,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
             var drawList = ImGui.GetWindowDrawList();
             uint cardBgColor = ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.12f, 0.95f));
-            drawList.AddRectFilled(cardMin, cardMax, cardBgColor, 12f * scale);
+            drawList.AddRectFilled(wiggleCardMin, wiggleCardMax, cardBgColor, 12f * scale);
 
-            var imageArea = cardMin;
+            var imageArea = wiggleCardMin;
             var imageAreaSize = new Vector2(cardWidth, imageHeight);
 
             if (!string.IsNullOrEmpty(finalImagePath))
@@ -459,12 +702,26 @@ namespace CharacterSelectPlugin.Windows.Components
                     var imagePos = imageArea + new Vector2(paddingX, paddingY + liftOffset);
                     var imagePosMax = imagePos + new Vector2(finalWidth, finalHeight);
 
+                    // For high-resolution images, use slightly inset UVs to improve sampling quality
+                    Vector2 uvMin = new Vector2(0, 0);
+                    Vector2 uvMax = new Vector2(1, 1);
+                    
+                    // Detect very large textures that might look crunchy when downscaled
+                    bool isHighRes = originalWidth > 1920 || originalHeight > 1080;
+                    if (isHighRes)
+                    {
+                        // Use slightly inset UV coordinates to avoid edge artifacts and improve sampling
+                        float uvInset = 0.001f; // Very small inset to avoid sampling edge pixels
+                        uvMin = new Vector2(uvInset, uvInset);
+                        uvMax = new Vector2(1.0f - uvInset, 1.0f - uvInset);
+                    }
+
                     drawList.AddImageRounded(
                         (ImTextureID)texture.Handle,
                         imagePos,
                         imagePosMax,
-                        new Vector2(0, 0),
-                        new Vector2(1, 1),
+                        uvMin,
+                        uvMax,
                         ImGui.GetColorU32(new Vector4(1, 1, 1, 1)),
                         8f * scale,
                         ImDrawFlags.RoundCornersTop
@@ -482,7 +739,15 @@ namespace CharacterSelectPlugin.Windows.Components
                 drawList.AddText(textPos, ImGui.GetColorU32(new Vector4(0.7f, 0.7f, 0.7f, 1f)), "No Image");
             }
 
-            DrawIntegratedNameplate(character, cardMin, cardWidth, imageHeight, nameplateHeight, index, hoverAmount, scale);
+            // Draw Halloween spider webs on character cards
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                // Add spider webs to all character cards with hover animation
+                DrawCharacterCardSpiderWebs(drawList, wiggleCardMin, cardWidth, imageHeight, scale, hoverAmount);
+            }
+
+            DrawIntegratedNameplate(character, wiggleCardMin, cardWidth, imageHeight, nameplateHeight, index, hoverAmount, scale);
 
             ImGui.EndGroup();
             ImGui.Dummy(new Vector2(0, spacing));
@@ -575,21 +840,78 @@ namespace CharacterSelectPlugin.Windows.Components
 
             float topRowY = nameplateMin.Y + (12 * scale);
 
-            // Favourite Star
-            string starSymbol = character.IsFavorite ? "★" : "☆";
+            // Favourite Star/Ghost
+            string starSymbol;
+            bool usesFontAwesome = false;
+            
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                starSymbol = "\uf6e2"; // Ghost icon (same icon, different colors for favorite/unfavorite)
+                usesFontAwesome = true;
+            }
+            else
+            {
+                starSymbol = character.IsFavorite ? "★" : "☆"; // Default stars
+                usesFontAwesome = false;
+            }
+            
+            // Push FontAwesome font if needed
+            if (usesFontAwesome)
+            {
+                ImGui.PushFont(UiBuilder.IconFont);
+            }
+            
             var starPos = new Vector2(nameplateMin.X + (8 * scale), topRowY);
             var starSize = GetCachedTextSize(starSymbol);
 
+            // Get star colors based on seasonal theme
+            Vector4 starMainColor, starGlowColor;
+            
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
+                if (character.IsFavorite)
+                {
+                    starMainColor = themeColors.PrimaryAccent; // Orange
+                    starGlowColor = new Vector4(themeColors.GlowColor.X, themeColors.GlowColor.Y, themeColors.GlowColor.Z, 0.5f + hoverAmount * 0.3f);
+                }
+                else
+                {
+                    starMainColor = new Vector4(1.0f, 1.0f, 1.0f, 0.7f + hoverAmount * 0.3f); // White
+                    starGlowColor = starMainColor;
+                }
+            }
+            else
+            {
+                // Default colors
+                if (character.IsFavorite)
+                {
+                    starMainColor = new Vector4(1f, 0.9f, 0.2f, 1f); // Gold
+                    starGlowColor = new Vector4(1f, 0.8f, 0f, 0.5f + hoverAmount * 0.3f);
+                }
+                else
+                {
+                    starMainColor = new Vector4(0.5f, 0.5f, 0.5f, 0.7f + hoverAmount * 0.3f); // Gray
+                    starGlowColor = starMainColor;
+                }
+            }
+
             if (character.IsFavorite)
             {
-                uint starGlow = ImGui.GetColorU32(new Vector4(1f, 0.8f, 0f, 0.5f + hoverAmount * 0.3f));
+                uint starGlow = ImGui.GetColorU32(starGlowColor);
                 drawList.AddText(starPos + new Vector2(1 * scale, 1 * scale), starGlow, starSymbol);
             }
 
-            uint starColor = character.IsFavorite
-                ? ImGui.GetColorU32(new Vector4(1f, 0.9f, 0.2f, 1f))
-                : ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.5f, 0.7f + hoverAmount * 0.3f));
+            uint starColor = ImGui.GetColorU32(starMainColor);
             drawList.AddText(starPos, starColor, starSymbol);
+            
+            // Pop FontAwesome font if it was used
+            if (usesFontAwesome)
+            {
+                ImGui.PopFont();
+            }
 
             var starHitMin = starPos - new Vector2(2 * scale, 2 * scale);
             var starHitMax = starPos + starSize + new Vector2(2 * scale, 2 * scale);
@@ -687,10 +1009,24 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SetCursorScreenPos(new Vector2(nameplateMin.X + (8 * scale), bottomRowY));
 
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+            // Halloween themed button styling or default
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            {
+                // Halloween button styling - dark orange theme
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.10f, 0.05f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.15f, 0.08f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.20f, 0.10f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.87f, 0.70f, 1.0f)); // Warm white text
+            }
+            else
+            {
+                // Default button styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+            }
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * scale);
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
 
@@ -920,12 +1256,27 @@ namespace CharacterSelectPlugin.Windows.Components
 
                     // Draw image with transparency
                     uint imageColor = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, ghostImageAlpha));
+                    
+                    // For high-resolution images, use slightly inset UVs to improve sampling quality
+                    Vector2 uvMin = new Vector2(0, 0);
+                    Vector2 uvMax = new Vector2(1, 1);
+                    
+                    // Detect very large textures that might look crunchy when downscaled
+                    bool isHighRes = originalWidth > 1920 || originalHeight > 1080;
+                    if (isHighRes)
+                    {
+                        // Use slightly inset UV coordinates to avoid edge artifacts and improve sampling
+                        float uvInset = 0.001f; // Very small inset to avoid sampling edge pixels
+                        uvMin = new Vector2(uvInset, uvInset);
+                        uvMax = new Vector2(1.0f - uvInset, 1.0f - uvInset);
+                    }
+                    
                     drawList.AddImageRounded(
                         (ImTextureID)texture.Handle,
                         imagePos,
                         imagePos + imageSize,
-                        new Vector2(0, 0),
-                        new Vector2(1, 1),
+                        uvMin,
+                        uvMax,
                         imageColor,
                         6f * scale,
                         ImDrawFlags.RoundCornersTop
@@ -1443,6 +1794,68 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             return current;
+        }
+
+        private Vector2 UpdateHalloweenWiggle(int characterIndex, int totalCharacters)
+        {
+            if (!SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) || 
+                SeasonalThemeManager.GetCurrentSeasonalTheme() != SeasonalTheme.Halloween)
+            {
+                return Vector2.Zero;
+            }
+
+            float currentTime = (float)ImGui.GetTime();
+
+            // Check if it's time to trigger new wiggles
+            if (currentTime - lastWiggleCheck >= WiggleCheckInterval)
+            {
+                lastWiggleCheck = currentTime;
+                
+                // Random chance to start wiggles on 1-3 random characters
+                Random rand = new Random();
+                int numWiggles = rand.Next(1, 4); // 1-3 wiggles
+                
+                for (int i = 0; i < numWiggles; i++)
+                {
+                    int randomIndex = rand.Next(0, totalCharacters);
+                    
+                    // Don't start a new wiggle if one is already active
+                    if (!wiggleStartTimes.ContainsKey(randomIndex) || 
+                        currentTime - wiggleStartTimes[randomIndex] >= WiggleDuration)
+                    {
+                        wiggleStartTimes[randomIndex] = currentTime;
+                    }
+                }
+                
+                // Clean up expired wiggles
+                var expiredWiggles = wiggleStartTimes.Where(kvp => currentTime - kvp.Value >= WiggleDuration).ToList();
+                foreach (var expired in expiredWiggles)
+                {
+                    wiggleStartTimes.Remove(expired.Key);
+                    wiggleOffsets.Remove(expired.Key);
+                }
+            }
+
+            // Calculate wiggle offset for this character
+            if (wiggleStartTimes.ContainsKey(characterIndex))
+            {
+                float wiggleElapsed = currentTime - wiggleStartTimes[characterIndex];
+                
+                if (wiggleElapsed < WiggleDuration)
+                {
+                    // Sine wave wiggle with decay
+                    float progress = wiggleElapsed / WiggleDuration;
+                    float intensity = (1f - progress) * WiggleIntensity; // Decay over time
+                    float wiggleFreq = 15f; // Fast wiggle
+                    
+                    float offsetX = (float)(Math.Sin(wiggleElapsed * wiggleFreq) * intensity);
+                    float offsetY = (float)(Math.Sin(wiggleElapsed * wiggleFreq * 1.3f) * intensity * 0.5f); // Less Y movement
+                    
+                    return new Vector2(offsetX, offsetY);
+                }
+            }
+
+            return Vector2.Zero;
         }
 
         public void SortCharacters()

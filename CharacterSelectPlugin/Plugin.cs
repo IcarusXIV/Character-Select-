@@ -27,6 +27,8 @@ using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game;
 using System.Threading;
 using System.Drawing.Imaging;
+using Dalamud.Game.Text.SeStringHandling;
+using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin
 {
@@ -49,7 +51,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.1.2"; // Match repo.json and .csproj version
+        public static readonly string CurrentPluginVersion = "2.0.1.3"; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -104,6 +106,11 @@ namespace CharacterSelectPlugin
         private readonly Dictionary<int, DateTime> lastTargetApplicationTime = new();
         private readonly TimeSpan minimumTargetApplicationInterval = TimeSpan.FromSeconds(2);
         
+        // Startup coordination between AutoLoad-LastUsed and DeferredStartup
+        private bool characterAlreadyAppliedOnStartup = false;
+        private bool autoLoadAlreadyRanThisStartup = false;
+        
+        
         // Target application IPC subscribers with correct signatures
         private ICallGateSubscriber<Dictionary<Guid, string>>? penumbraGetCollectionsIpc;
         private ICallGateSubscriber<int, Guid?, bool, bool, (int, (Guid, string)?)>? penumbraSetCollectionForObjectIpc;
@@ -150,6 +157,9 @@ namespace CharacterSelectPlugin
         private string lastExecutedGearsetCommand = "";
         private DateTime lastGearsetCommandTime = DateTime.MinValue;
         private readonly Dictionary<string, (string characterName, string designName, DateTime time)> lastAppliedByJob = new();
+        private readonly Dictionary<string, (string designName, DateTime time)> lastRandomDesignApplied = new();
+        private readonly Dictionary<string, DateTime> lastDesignMacroExecuted = new();
+        private bool randomDesignCRAppliedThisSession = false;
         
         // Conflict Resolution mod categorization cache
         internal Dictionary<string, ModType>? modCategorizationCache = null;
@@ -833,7 +843,11 @@ namespace CharacterSelectPlugin
             else
             {
                 // No design selected - just apply character-level Secret Mode state
-                _ = ApplySecretModState(character);
+                // But skip if a random design has already applied its CR this session
+                if (!randomDesignCRAppliedThisSession)
+                {
+                    _ = ApplySecretModState(character);
+                }
             }
 
             // Only apply idle pose if it's not "None"
@@ -1001,14 +1015,29 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, or /select save [CR]");
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random [Character Name], /select jobchange on|off, or /select save [CR]");
                 return;
             }
 
             // Handle random selection
-            if (args.Trim().Equals("random", StringComparison.OrdinalIgnoreCase))
+            if (args.Trim().StartsWith("random", StringComparison.OrdinalIgnoreCase))
             {
-                SelectRandomCharacterAndDesign();
+                var randomArgs = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (randomArgs.Length == 1)
+                {
+                    // /select random - random character and design
+                    SelectRandomCharacterAndDesign();
+                }
+                else if (randomArgs.Length == 2)
+                {
+                    // /select random CHARACTER - random design only from specific character
+                    var targetCharacterName = randomArgs[1];
+                    SelectRandomDesignOnly(targetCharacterName);
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Usage: /select random [Character Name]");
+                }
                 return;
             }
 
@@ -2851,6 +2880,7 @@ namespace CharacterSelectPlugin
             {
                 secondsSinceLogin = 0;
                 isLoginComplete = false;
+                randomDesignCRAppliedThisSession = false; // Reset for new session
             }
             else if (!isLoginComplete)
             {
@@ -3012,10 +3042,19 @@ namespace CharacterSelectPlugin
                 string fullKey = $"{localName}@{worldName}";
 
                 bool hasAssignment = Configuration.CharacterAssignments.ContainsKey(fullKey);
+                string? assignmentValue = hasAssignment ? Configuration.CharacterAssignments[fullKey] : null;
 
-                if (hasAssignment)
+                if (characterAlreadyAppliedOnStartup)
                 {
-                    Plugin.Log.Debug($"[DeferredStartup] Skipping session profile '{_pendingSessionCharacterName}' - {fullKey} has specific assignment");
+                    Plugin.Log.Debug($"[DeferredStartup] Skipping - character already applied by AutoLoad-LastUsed");
+                }
+                else if (assignmentValue == "None")
+                {
+                    Plugin.Log.Debug($"[DeferredStartup] Skipping - {fullKey} assigned to 'None'");
+                }
+                else if (hasAssignment)
+                {
+                    Plugin.Log.Debug($"[DeferredStartup] Skipping session profile '{_pendingSessionCharacterName}' - {fullKey} has specific assignment to '{assignmentValue}'");
                 }
                 else
                 {
@@ -3026,6 +3065,7 @@ namespace CharacterSelectPlugin
                     {
                         Plugin.Log.Debug($"[DeferredStartup] Applying session profile: {_pendingSessionCharacterName}");
                         ApplyProfile(character, -1);
+                        characterAlreadyAppliedOnStartup = true; // Mark as handled
                     }
                     else
                     {
@@ -3058,6 +3098,13 @@ namespace CharacterSelectPlugin
         }
         private void ApplyLastUsedCharacter(string fullKey)
         {
+            // Prevent AutoLoad-LastUsed from running multiple times during startup
+            if (autoLoadAlreadyRanThisStartup)
+            {
+                return;
+            }
+            autoLoadAlreadyRanThisStartup = true;
+
             // First check for specific character assignment
             if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName))
             {
@@ -3075,6 +3122,7 @@ namespace CharacterSelectPlugin
                     Plugin.Log.Debug($"[AutoLoad-Assignment] ✅ Applying assigned character {assignedCharacter.Name} for {fullKey}");
                     ApplyProfile(assignedCharacter, -1);
                     lastAppliedCharacter = fullKey;
+                    characterAlreadyAppliedOnStartup = true; // Mark as handled
                     return;
                 }
                 else
@@ -3100,6 +3148,7 @@ namespace CharacterSelectPlugin
                     Plugin.Log.Debug($"[AutoLoad-LastUsed] ✅ Applying {character.Name} for {fullKey}");
                     ApplyProfile(character, -1);
                     lastAppliedCharacter = fullKey;
+                    characterAlreadyAppliedOnStartup = true; // Mark as handled
                 }
                 else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
                 {
@@ -3193,7 +3242,12 @@ namespace CharacterSelectPlugin
             if (availableCharacters.Count == 0 && Configuration.RandomSelectionFavoritesOnly)
             {
                 availableCharacters = Characters.ToList();
-                ChatGui.Print("[Character Select+] No favourite characters found, selecting from all characters.");
+                
+                // Create colored fallback message
+                var builder = new SeStringBuilder();
+                builder.AddText("[").AddBlue("Character Select+", true).AddText("] ");
+                builder.AddText("No favourite characters found, selecting from ").AddBlue("all characters", false).AddText(".");
+                ChatGui.Print(builder.BuiltString);
             }
 
             if (availableCharacters.Count == 0)
@@ -3234,22 +3288,32 @@ namespace CharacterSelectPlugin
                 }
             }
 
-            string message = $"[Character Select+] Random selection: {selectedCharacter.Name}";
-
             // Apply random design if available
             if (availableDesigns.Count > 0)
             {
                 var selectedDesign = availableDesigns[random.Next(availableDesigns.Count)];
                 ExecuteMacro(selectedDesign.Macro, selectedCharacter, selectedDesign.Name);
-                message += $" with design '{selectedDesign.Name}'";
+
+                // Apply conflict resolution if enabled
+                if (Configuration.EnableConflictResolution)
+                {
+                    // Apply mod state asynchronously first, then execute macro with proper threading
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await ApplyDesignModState(selectedCharacter, selectedDesign);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"Error applying conflict resolution for random selection: {ex}");
+                        }
+                    });
+                }
 
                 // Update last used design tracking
                 Configuration.LastUsedDesignCharacterKey = selectedCharacter.Name;
                 Configuration.LastUsedDesignByCharacter[selectedCharacter.Name] = selectedDesign.Name;
-            }
-            else
-            {
-                message += " (no designs available)";
             }
 
             // Apply poses if login is complete
@@ -3269,9 +3333,145 @@ namespace CharacterSelectPlugin
                 shouldApplyPoses = true;
             }
 
-            ChatGui.Print(message);
+            // Send themed chat message if enabled
+            if (Configuration.ShowRandomSelectionChatMessages)
+            {
+                SeString message = GetRandomSelectionChatMessage(selectedCharacter.Name);
+                ChatGui.Print(message);
+            }
             SaveConfiguration();
         }
+
+        public void SelectRandomDesignOnly(string characterName)
+        {
+            var character = Characters.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+            if (character == null)
+            {
+                ChatGui.PrintError($"[Character Select+] Character '{characterName}' not found.");
+                return;
+            }
+
+            // Get available designs for the character
+            var availableDesigns = Configuration.RandomSelectionFavoritesOnly
+                ? character.Designs.Where(d => d.IsFavorite).ToList()
+                : character.Designs.ToList();
+
+            // Fallback to all designs if no favourites exist
+            if (availableDesigns.Count == 0 && Configuration.RandomSelectionFavoritesOnly)
+            {
+                availableDesigns = character.Designs.ToList();
+            }
+
+            if (availableDesigns.Count == 0)
+            {
+                ChatGui.PrintError($"[Character Select+] No designs available for character '{characterName}'.");
+                return;
+            }
+
+            // Select random design
+            var random = new Random();
+            var selectedDesign = availableDesigns[random.Next(availableDesigns.Count)];
+
+            
+            // Apply conflict resolution if this design has it
+            if (Configuration.EnableConflictResolution && selectedDesign.SecretModState != null && selectedDesign.SecretModState.Any())
+            {
+                ApplyDesignModState(character, selectedDesign).GetAwaiter().GetResult();
+                // Set flag to prevent character CR from overwriting design CR
+                randomDesignCRAppliedThisSession = true;
+            }
+            
+            // Execute the selected design's macro
+            ExecuteMacro(selectedDesign.Macro, character, selectedDesign.Name);
+
+            // Update last used design tracking
+            Configuration.LastUsedDesignCharacterKey = character.Name;
+            Configuration.LastUsedDesignByCharacter[character.Name] = selectedDesign.Name;
+            Configuration.Save();
+
+            // Send themed chat message if enabled
+            if (Configuration.ShowRandomSelectionChatMessages)
+            {
+                SeString message = GetRandomSelectionChatMessage(character.Name);
+                ChatGui.Print(message);
+            }
+        }
+
+        private SeString GetRandomSelectionChatMessage(string characterName)
+        {
+            var random = new Random();
+            var builder = new SeStringBuilder();
+            
+            // Check if Halloween theme is active
+            bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(Configuration) && 
+                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
+            
+            if (isHalloween)
+            {
+                // Add purple plugin prefix for Halloween
+                builder.AddText("[").AddPurple("Character Select+", true).AddText("] ");
+                
+                // Halloween themed messages with purple text and white character names
+                var halloweenMessages = new System.Action<SeStringBuilder, string>[]
+                {
+                    (b, name) => b.AddWhite(name, true).AddPurple(" was transformed by a mysterious hex...", false),
+                    (b, name) => b.AddPurple("Dark magic coursed through ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddPurple("A wicked spell took hold of ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" was bewitched by ancient forces...", false),
+                    (b, name) => b.AddPurple("Shadowy enchantments changed ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" fell under a malevolent charm...", false),
+                    (b, name) => b.AddPurple("Otherworldly powers possessed ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddPurple("Spectral forces reshaped ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" was cursed with a new form...", false),
+                    (b, name) => b.AddPurple("Eerie magic enveloped ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" succumbed to dark sorcery...", false),
+                    (b, name) => b.AddPurple("Sinister whispers changed ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" was touched by haunting magic...", false),
+                    (b, name) => b.AddPurple("Phantom energies transformed ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" was enshrouded by mystical darkness...", false),
+                    (b, name) => b.AddPurple("Forbidden rituals altered ", false).AddWhite(name, true).AddPurple("...", false),
+                    (b, name) => b.AddWhite(name, true).AddPurple(" was influenced by ethereal shadows...", false),
+                    (b, name) => b.AddPurple("Necromantic forces shifted ", false).AddWhite(name, true).AddPurple("...", false)
+                };
+                
+                var selectedMessage = halloweenMessages[random.Next(halloweenMessages.Length)];
+                selectedMessage(builder, characterName);
+            }
+            else
+            {
+                // Add blue plugin prefix for normal
+                builder.AddText("[").AddBlue("Character Select+", true).AddText("] ");
+                
+                // Normal themed messages with blue text and white character names
+                var normalMessages = new System.Action<SeStringBuilder, string>[]
+                {
+                    (b, name) => b.AddWhite(name, true).AddBlue(" underwent a random transformation...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" adopted a new appearance...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" received a style makeover...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" embraced a different look...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was given a fresh appearance...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" changed their style...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" got a random makeover...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" experimented with a new design...", false),
+                    (b, name) => b.AddBlue("Fashion magic touched ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" discovered a fresh aesthetic...", false),
+                    (b, name) => b.AddBlue("Style inspiration struck ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" refreshed their entire wardrobe...", false),
+                    (b, name) => b.AddBlue("Creative energy flowed through ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" reinvented their personal style...", false),
+                    (b, name) => b.AddBlue("Aesthetic inspiration influenced ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" explored a bold new direction...", false),
+                    (b, name) => b.AddBlue("Design innovation guided ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" embraced creative transformation...", false)
+                };
+                
+                var selectedMessage = normalMessages[random.Next(normalMessages.Length)];
+                selectedMessage(builder, characterName);
+            }
+            
+            return builder.BuiltString;
+        }
+
         public string? GetTargetedPlayerName()
         {
             try

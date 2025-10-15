@@ -1421,14 +1421,38 @@ namespace CharacterSelectPlugin.Windows.Components
                 x += handleWidth + spacing;
             }
 
-            // Favourite star
+            // Favourite star/ghost
             ImGui.SetCursorScreenPos(new Vector2(x, rowMin.Y + (rowH - btnSize) / 2));
-            string star = design.IsFavorite ? "★" : "☆";
+            
+            // Check for Halloween theme
+            bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
+            
+            string star = isHalloween
+                ? (design.IsFavorite ? "\uf6e2" : "\uf6e2") // Ghost icons for Halloween
+                : (design.IsFavorite ? "★" : "☆"); // Normal stars
+            
+            bool usesFontAwesome = isHalloween;
 
-            var starColor = design.IsFavorite
-                ? new Vector4(1f, 0.8f, 0.2f, hovered ? 1f : 0.7f)
-                : new Vector4(0.5f, 0.5f, 0.5f, hovered ? 0.8f : 0.4f);
+            Vector4 starColor;
+            if (isHalloween)
+            {
+                var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
+                starColor = design.IsFavorite
+                    ? new Vector4(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z, hovered ? 1f : 0.7f) // Orange
+                    : new Vector4(1.0f, 1.0f, 1.0f, hovered ? 0.8f : 0.6f); // White
+            }
+            else
+            {
+                starColor = design.IsFavorite
+                    ? new Vector4(1f, 0.8f, 0.2f, hovered ? 1f : 0.7f)
+                    : new Vector4(0.5f, 0.5f, 0.5f, hovered ? 0.8f : 0.4f);
+            }
 
+            // Handle FontAwesome font for ghosts
+            if (usesFontAwesome)
+                ImGui.PushFont(UiBuilder.IconFont);
+            
             ImGui.PushStyleColor(ImGuiCol.Text, starColor);
             if (ImGui.Button($"{star}##{design.Name}", new Vector2(btnSize, btnSize)))
             {
@@ -1446,6 +1470,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 SortDesigns(character);
             }
             ImGui.PopStyleColor();
+            
+            // Pop FontAwesome font if used
+            if (usesFontAwesome)
+                ImGui.PopFont();
 
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(design.IsFavorite ? "Remove from favourites" : "Add to favourites");

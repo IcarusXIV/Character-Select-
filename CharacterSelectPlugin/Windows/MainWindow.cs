@@ -284,8 +284,19 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
 
-            // Random Button
-            if (uiStyles.IconButton("\uf522", "Select Random Character & Design"))
+            // Random Button - use vial icon during Halloween
+            bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
+            string randomIcon = isHalloween ? "\uf492" : "\uf522"; // Vial for Halloween, dice for normal
+            
+            string randomTooltip = plugin.Configuration.RandomSelectionFavoritesOnly 
+                ? "Randomly selects from favourited characters and designs only"
+                : "Randomly selects from all characters and designs";
+            
+            // Use green color for Halloween vial icon
+            Vector4? iconColor = isHalloween ? new Vector4(0.2f, 0.8f, 0.3f, 1.0f) : null; // Bright green for Halloween
+            
+            if (uiStyles.IconButtonWithColor(randomIcon, randomTooltip, null, 1.0f, iconColor))
             {
                 // Trigger dice effect
                 Vector2 effectPos = ImGui.GetItemRectMin() + ImGui.GetItemRectSize() / 2;
@@ -294,14 +305,6 @@ namespace CharacterSelectPlugin.Windows
                 plugin.SelectRandomCharacterAndDesign();
             }
 
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
-            {
-                ImGui.BeginTooltip();
-                ImGui.Text("Select Random Character & Design");
-                if (plugin.Configuration.RandomSelectionFavoritesOnly)
-                    ImGui.Text("(Favourites Only)");
-                ImGui.EndTooltip();
-            }
         }
 
         private void DrawSupportButton()
