@@ -51,7 +51,17 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.1.3"; // Match repo.json and .csproj version
+#if DEBUG
+        private static bool s_isDebug => true;
+#else
+        private static bool s_isDebug => false;
+#endif
+
+        private static readonly string Version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "(Unknown Version)";
+
+        public static bool IsDebug => s_isDebug;
+
+        public static readonly string CurrentPluginVersion = Version; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
