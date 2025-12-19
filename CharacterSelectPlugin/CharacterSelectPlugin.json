@@ -1,23 +1,23 @@
 {
-  "Author": "Kid Icarus",
-  "Name": "Character Select+",
-  "InternalName": "CharacterSelectPlugin",
-  "AssemblyVersion": "2.0.0.8",
-  "Description": "Instant Character Switching Made Simple\n\nCreate and save character profiles, then switch between them instantly. Applies Penumbra Collections, Glamourer Designs, Customize+ Profiles, Honorifics, Moodles, and Idles.Key Features: One-click character switching, multiple designs per character, advanced macro support, roleplay profiles, a character gallery, and immersive dialogue options. Perfect for roleplayers, gposers, and anyone who loves seamless character customization without manually switching between multiple plugins.\n",
-  "ApplicableVersion": "any",
-  "Tags": [
-    "character",
-    "select",
-    "ocs",
-    "rp",
-    "roleplay"
-  ],
-  "DalamudApiLevel": 13,
-  "LoadRequiredState": 0,
-  "LoadSync": false,
-  "CanUnloadAsync": false,
-  "LoadPriority": 0,
-  "Punchline": "Swap between your OCs with a single click",
-  "AcceptsFeedback": true,
-  "IconUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/CharacterSelectPlugin/Assets/Icon.png"
+    "Author": "Kid Icarus",
+    "Name": "Character Select+",
+    "InternalName": "CharacterSelectPlugin",
+    "AssemblyVersion": "2.0.1.4",
+    "Description": "Instant Character Switching Made Simple\n\nCreate and save character profiles, then switch between them instantly. Applies Penumbra Collections, Glamourer Designs, Customize+ Profiles, Honorifics, Moodles, and Idles.Key Features: One-click character switching, multiple designs per character, advanced macro support, roleplay profiles, a character gallery, and immersive dialogue options. Perfect for roleplayers, gposers, and anyone who loves seamless character customization without manually switching between multiple plugins.\n",
+    "ApplicableVersion": "any",
+    "Tags": [
+        "character",
+        "select",
+        "ocs",
+        "rp",
+        "roleplay"
+    ],
+    "DalamudApiLevel": 14,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "Punchline": "Swap between your OCs with a single click",
+    "AcceptsFeedback": false,
+    "IconUrl": "https://raw.githubusercontent.com/IcarusXIV/Character-Select-/master/CharacterSelectPlugin/Assets/Icon.png"
 }
