@@ -62,6 +62,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCustomizeProfile = "";
         private string editedDesignPreviewPath = "";
         private string advancedDesignMacroText = "";
+        private string originalAdvancedMacroText = "";
         private string originalDesignName = "";
         private string? pendingDesignImagePath = null;
         private string? pendingPastedImagePath = null;
@@ -944,6 +945,48 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
             
+            // Quick update button for gear/hair changes
+            ImGui.SameLine();
+            
+            ImGui.PushFont(UiBuilder.IconFont);
+            
+            bool canQuickUpdate = hasValidDesignName && plugin.Configuration.EnableConflictResolution;
+            
+            if (!canQuickUpdate)
+                ImGui.BeginDisabled();
+            
+            if (ImGui.Button("\uf2f1")) // Import icon - suggests pulling in current state
+            {
+                if (canQuickUpdate)
+                {
+                    PerformQuickGearHairUpdate(character);
+                }
+            }
+            
+            if (!canQuickUpdate)
+                ImGui.EndDisabled();
+            
+            ImGui.PopFont();
+            
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                if (canQuickUpdate)
+                {
+                    ImGui.Text("Update gear/hair changes");
+                }
+                else
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.7f, 0.7f, 1.0f));
+                    if (!hasValidDesignName)
+                        ImGui.Text("Enter a Design Name first");
+                    else if (!plugin.Configuration.EnableConflictResolution)
+                        ImGui.Text("Conflict Resolution must be enabled");
+                    ImGui.PopStyleColor();
+                }
+                ImGui.EndTooltip();
+            }
+            
             if (!hasValidDesignName)
             {
                 ImGui.EndDisabled();
@@ -969,7 +1012,24 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 if (isAdvancedModeDesign)
                 {
-                    advancedDesignMacroText = EnsureProperDesignMacroStructure();
+                    // Load existing advanced macro if available, otherwise generate one
+                    if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count && !isNewDesign)
+                    {
+                        var character = plugin.Characters[activeCharacterIndex];
+                        var existingDesign = character.Designs.FirstOrDefault(d => d.Name == originalDesignName);
+                        if (existingDesign != null && !string.IsNullOrEmpty(existingDesign.AdvancedMacro))
+                        {
+                            advancedDesignMacroText = existingDesign.AdvancedMacro;
+                        }
+                        else
+                        {
+                            advancedDesignMacroText = EnsureProperDesignMacroStructure();
+                        }
+                    }
+                    else
+                    {
+                        advancedDesignMacroText = EnsureProperDesignMacroStructure();
+                    }
                 }
             }
 
@@ -1426,13 +1486,28 @@ namespace CharacterSelectPlugin.Windows.Components
             
             // Check for Halloween theme
             bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
+                              SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Halloween;
             
-            string star = isHalloween
-                ? (design.IsFavorite ? "\uf6e2" : "\uf6e2") // Ghost icons for Halloween
-                : (design.IsFavorite ? "★" : "☆"); // Normal stars
+            string star;
+            bool usesFontAwesome = false;
             
-            bool usesFontAwesome = isHalloween;
+            if (isHalloween)
+            {
+                star = "\uf6e2"; // Ghost icon for Halloween
+                usesFontAwesome = true;
+            }
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                    (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
+                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
+            {
+                star = "\uf2dc"; // Snowflake icon for Winter/Christmas
+                usesFontAwesome = true;
+            }
+            else
+            {
+                star = design.IsFavorite ? "★" : "☆"; // Normal stars
+                usesFontAwesome = false;
+            }
 
             Vector4 starColor;
             if (isHalloween)
@@ -1442,19 +1517,41 @@ namespace CharacterSelectPlugin.Windows.Components
                     ? new Vector4(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z, hovered ? 1f : 0.7f) // Orange
                     : new Vector4(1.0f, 1.0f, 1.0f, hovered ? 0.8f : 0.6f); // White
             }
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                    (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
+                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
+            {
+                starColor = design.IsFavorite
+                    ? new Vector4(1.0f, 1.0f, 1.0f, hovered ? 1f : 0.8f) // Pure white for favorited snowflake
+                    : new Vector4(0.7f, 0.7f, 0.8f, hovered ? 0.8f : 0.5f); // Light gray for unfavorited
+            }
             else
             {
                 starColor = design.IsFavorite
-                    ? new Vector4(1f, 0.8f, 0.2f, hovered ? 1f : 0.7f)
-                    : new Vector4(0.5f, 0.5f, 0.5f, hovered ? 0.8f : 0.4f);
+                    ? new Vector4(1f, 0.8f, 0.2f, hovered ? 1f : 0.7f) // Gold for normal favorites
+                    : new Vector4(0.5f, 0.5f, 0.5f, hovered ? 0.8f : 0.4f); // Gray for normal unfavorited
             }
 
-            // Handle FontAwesome font for ghosts
+            // Ensure proper icon centering with explicit alignment
             if (usesFontAwesome)
+            {
                 ImGui.PushFont(UiBuilder.IconFont);
+            }
             
             ImGui.PushStyleColor(ImGuiCol.Text, starColor);
-            if (ImGui.Button($"{star}##{design.Name}", new Vector2(btnSize, btnSize)))
+            ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f)); // CENTER ICON
+            
+            bool buttonClicked = ImGui.Button($"{star}##{design.Name}", new Vector2(btnSize, btnSize));
+            
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor();
+            
+            if (usesFontAwesome)
+            {
+                ImGui.PopFont();
+            }
+            
+            if (buttonClicked)
             {
                 bool wasFavorite = design.IsFavorite;
                 design.IsFavorite = !design.IsFavorite;
@@ -1464,19 +1561,17 @@ namespace CharacterSelectPlugin.Windows.Components
                 string effectKey = $"{character.Name}_{design.Name}";
                 if (!designFavoriteEffects.ContainsKey(effectKey))
                     designFavoriteEffects[effectKey] = new FavoriteSparkEffect();
-                designFavoriteEffects[effectKey].Trigger(effectPos, design.IsFavorite);
+                designFavoriteEffects[effectKey].Trigger(effectPos, design.IsFavorite, plugin.Configuration);
 
                 plugin.SaveConfiguration();
                 SortDesigns(character);
             }
-            ImGui.PopStyleColor();
             
-            // Pop FontAwesome font if used
-            if (usesFontAwesome)
-                ImGui.PopFont();
-
+            // Add tooltip for all favorite buttons
             if (ImGui.IsItemHovered())
+            {
                 ImGui.SetTooltip(design.IsFavorite ? "Remove from favourites" : "Add to favourites");
+            }
 
             x += btnSize + spacing;
 
@@ -1491,7 +1586,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 name = TruncateWithEllipsis(name, availW);
 
             // Design name
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1f));
+            bool isActive = IsDesignCurrentlyActive(character, design);
+            var textColor = isActive ? new Vector4(0.2f, 0.9f, 0.2f, 1f) : new Vector4(0.9f, 0.9f, 0.9f, 1f); // Green for active, light gray for inactive
+            ImGui.PushStyleColor(ImGuiCol.Text, textColor);
             ImGui.TextUnformatted(name);
             ImGui.PopStyleColor();
 
@@ -1527,13 +1624,47 @@ namespace CharacterSelectPlugin.Windows.Components
                     _ = Task.Run(async () =>
                     {
                         await plugin.ApplyDesignModState(character, design);
-                        Plugin.Framework.RunOnFrameworkThread(() => plugin.ExecuteMacro(design.Macro, character, design.Name));
+                        Plugin.Framework.RunOnFrameworkThread(() => {
+                            plugin.ExecuteMacro(design.Macro, character, design.Name);
+                            // Track last used design and character for auto-reapplication and UI feedback
+                            plugin.Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
+                            plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
+                            plugin.Configuration.LastUsedCharacterKey = character.Name;
+                            
+                            // Update player-specific character tracking for green highlighting
+                            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                            {
+                                string localName = player.Name.TextValue;
+                                string worldName = player.HomeWorld.Value.Name.ToString();
+                                string fullKey = $"{localName}@{worldName}";
+                                string pluginCharacterKey = $"{character.Name}@{worldName}";
+                                plugin.Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+                            }
+                            
+                            plugin.Configuration.Save();
+                        });
                     });
                 }
                 else
                 {
                     // Regular design - just execute the macro
                     plugin.ExecuteMacro(design.Macro, character, design.Name);
+                    // Track last used design and character for auto-reapplication and UI feedback
+                    plugin.Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
+                    plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
+                    plugin.Configuration.LastUsedCharacterKey = character.Name;
+                    
+                    // Update player-specific character tracking for green highlighting
+                    if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                    {
+                        string localName = player.Name.TextValue;
+                        string worldName = player.HomeWorld.Value.Name.ToString();
+                        string fullKey = $"{localName}@{worldName}";
+                        string pluginCharacterKey = $"{character.Name}@{worldName}";
+                        plugin.Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+                    }
+                    
+                    plugin.Configuration.Save();
                 }
             }
             ImGui.PopStyleColor();
@@ -1740,8 +1871,12 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             if (!isAdvancedModeWindowOpen)
                 return;
+                
+            // Store original text on first open (for cancel functionality)
+            if (string.IsNullOrEmpty(originalAdvancedMacroText))
+                originalAdvancedMacroText = advancedDesignMacroText;
 
-            var windowSize = new Vector2(500 * scale, 200 * scale);
+            var windowSize = new Vector2(600 * scale, 400 * scale); // Larger window for more text space
             ImGui.SetNextWindowSize(windowSize, ImGuiCond.FirstUseEver);
 
             if (ImGui.Begin("Advanced Macro Editor", ref isAdvancedModeWindowOpen, ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoResize))
@@ -1754,10 +1889,72 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.08f, 0.08f, 0.08f, 0.95f));
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
 
+                // Reserve space for smaller buttons at the bottom
+                float buttonHeight = 25 * scale; // Smaller buttons
+                float availableHeight = ImGui.GetContentRegionAvail().Y - buttonHeight - (10 * scale); // 10px spacing
+                
                 ImGui.InputTextMultiline("##AdvancedDesignMacroPopup", ref advancedDesignMacroText, 2000,
-                    new Vector2(-1, -1), ImGuiInputTextFlags.AllowTabInput);
+                    new Vector2(-1, availableHeight), ImGuiInputTextFlags.AllowTabInput);
 
                 ImGui.PopStyleColor(2);
+
+                // Button section
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                float buttonWidth = 60 * scale; // Smaller buttons
+                float totalButtonWidth = buttonWidth * 2 + (10 * scale); // 2 buttons + spacing
+                float windowWidth = ImGui.GetWindowWidth();
+                ImGui.SetCursorPosX((windowWidth - totalButtonWidth) / 2); // Center buttons
+
+                // Save button (green) - just saves advanced mode changes
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.2f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.7f, 0.3f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.1f, 0.5f, 0.1f, 1.0f));
+                
+                if (ImGui.Button("Save", new Vector2(buttonWidth, buttonHeight)))
+                {
+                    // Save the advanced macro changes to the current design
+                    if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count && !isNewDesign)
+                    {
+                        var character = plugin.Characters[activeCharacterIndex];
+                        var existingDesign = character.Designs.FirstOrDefault(d => d.Name == originalDesignName);
+                        if (existingDesign != null)
+                        {
+                            // Update the design's advanced macro with the edited text
+                            existingDesign.AdvancedMacro = advancedDesignMacroText;
+                            existingDesign.IsAdvancedMode = true;
+                            // Save configuration to persist changes
+                            plugin.Configuration.Save();
+                        }
+                    }
+                    // Clear the original text since changes were saved
+                    originalAdvancedMacroText = "";
+                    // Close the advanced mode window
+                    isAdvancedModeWindowOpen = false;
+                }
+                ImGui.PopStyleColor(3);
+
+                ImGui.SameLine();
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (10 * scale)); // Add spacing
+
+                // Cancel button (red)
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.7f, 0.3f, 0.3f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.1f, 0.1f, 1.0f));
+                
+                if (ImGui.Button("Cancel", new Vector2(buttonWidth, buttonHeight)))
+                {
+                    // Restore original text
+                    advancedDesignMacroText = originalAdvancedMacroText;
+                    originalAdvancedMacroText = "";
+                    isAdvancedModeWindowOpen = false;
+                    isAdvancedModeDesign = false;
+                    // Don't save changes - return to normal editing
+                }
+                ImGui.PopStyleColor(3);
+
                 PopScaledStyles();
             }
             ImGui.End();
@@ -3579,6 +3776,210 @@ namespace CharacterSelectPlugin.Windows.Components
             snapshotHasClipboardImage = false;
             snapshotIsProcessing = false;
             snapshotStatusMessage = "";
+        }
+
+        private bool IsDesignCurrentlyActive(Character character, CharacterDesign design)
+        {
+            // Only show active design for the currently active CS+ character
+            var currentActiveCharacter = GetCurrentActiveCharacter();
+            if (currentActiveCharacter == null || currentActiveCharacter.Name != character.Name)
+                return false;
+
+            if (plugin?.Configuration?.LastUsedDesignByCharacter == null)
+                return false;
+
+            if (!plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(character.Name, out var lastUsedDesignName))
+                return false;
+
+            return design.Name.Equals(lastUsedDesignName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private Character? GetCurrentActiveCharacter()
+        {
+            // Use the same logic as the plugin uses to determine current character
+            Character? currentCharacter = null;
+
+            // Try player-specific mapping first
+            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            {
+                string localName = player.Name.TextValue;
+                string worldName = player.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                
+                if (plugin.Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedCharacterName))
+                {
+                    // lastUsedCharacterName is in format "CharacterName@WorldName", extract just the character name
+                    var characterName = lastUsedCharacterName.Contains("@") ? lastUsedCharacterName.Split('@')[0] : lastUsedCharacterName;
+                    currentCharacter = plugin.Characters.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+
+            // Fallback to global last used
+            if (currentCharacter == null && !string.IsNullOrEmpty(plugin.Configuration.LastUsedCharacterKey))
+            {
+                currentCharacter = plugin.Characters.FirstOrDefault(c => c.Name.Equals(plugin.Configuration.LastUsedCharacterKey, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return currentCharacter;
+        }
+
+        /// <summary>
+        /// Performs quick update of gear and hair mods for the current design
+        /// </summary>
+        private void PerformQuickGearHairUpdate(Character character)
+        {
+            try
+            {
+                Plugin.Log.Information("Starting quick gear/hair update...");
+                
+                // Get all currently affecting mods using the existing method
+                var allAffectingMods = plugin.PenumbraIntegration.GetCurrentlyAffectingMods();
+                Plugin.Log.Information($"Found {allAffectingMods.Count} total affecting mods");
+                
+                if (!allAffectingMods.Any())
+                {
+                    Plugin.Log.Warning("No affecting mods detected for quick update");
+                    return;
+                }
+                
+                // Filter for gear and hair mods only
+                var gearHairMods = new HashSet<string>();
+                var modList = plugin.PenumbraIntegration.GetModList();
+                
+                foreach (var modDir in allAffectingMods)
+                {
+                    // Check if mod is in categorization cache
+                    if (plugin.modCategorizationCache?.TryGetValue(modDir, out var modType) == true)
+                    {
+                        if (modType == CharacterSelectPlugin.Windows.ModType.Gear || 
+                            modType == CharacterSelectPlugin.Windows.ModType.Hair)
+                        {
+                            gearHairMods.Add(modDir);
+                            Plugin.Log.Debug($"✓ Included {modType} mod: {modDir}");
+                        }
+                        else
+                        {
+                            Plugin.Log.Debug($"✗ Excluded {modType} mod: {modDir}");
+                        }
+                    }
+                    else if (modList.TryGetValue(modDir, out var modName))
+                    {
+                        // Not in cache, check by changed items
+                        var changedItems = plugin.PenumbraIntegration.GetModChangedItems(modDir, modName);
+                        if (IsGearMod(changedItems.Keys) || IsHairMod(changedItems.Keys))
+                        {
+                            gearHairMods.Add(modDir);
+                            Plugin.Log.Debug($"✓ Included gear/hair mod by analysis: {modDir}");
+                        }
+                    }
+                }
+                
+                Plugin.Log.Information($"Filtered to {gearHairMods.Count} gear/hair mods");
+                
+                if (!gearHairMods.Any())
+                {
+                    Plugin.Log.Information("No gear/hair mods currently affecting - nothing to update");
+                    return;
+                }
+                
+                // Create new mod state with only gear/hair mods enabled
+                var newModState = new Dictionary<string, bool>();
+                
+                // Get existing mod state to preserve non-gear/hair selections
+                Dictionary<string, bool> existingState = null;
+                if (isNewDesign)
+                {
+                    existingState = temporaryDesignSecretModState ?? new Dictionary<string, bool>();
+                }
+                else if (!string.IsNullOrEmpty(originalDesignName))
+                {
+                    var currentDesign = character.Designs.FirstOrDefault(d => d.Name == originalDesignName);
+                    existingState = currentDesign?.SecretModState ?? new Dictionary<string, bool>();
+                }
+                
+                // Preserve existing non-gear/hair mod selections
+                if (existingState != null)
+                {
+                    foreach (var (modDir, enabled) in existingState)
+                    {
+                        if (!gearHairMods.Contains(modDir))
+                        {
+                            newModState[modDir] = enabled; // Keep existing state for non-gear/hair mods
+                        }
+                    }
+                }
+                
+                // Add the new gear/hair mods as enabled
+                foreach (var modDir in gearHairMods)
+                {
+                    newModState[modDir] = true;
+                }
+                
+                // Update the design's mod state
+                if (isNewDesign)
+                {
+                    temporaryDesignSecretModState = newModState;
+                    Plugin.Log.Information($"Updated temporary design state with {gearHairMods.Count} gear/hair mods");
+                }
+                else if (!string.IsNullOrEmpty(originalDesignName))
+                {
+                    var design = character.Designs.FirstOrDefault(d => d.Name == originalDesignName);
+                    if (design != null)
+                    {
+                        design.SecretModState = newModState;
+                        temporaryDesignSecretModState = newModState; // Keep temp state in sync
+                        plugin.SaveConfiguration();
+                        Plugin.Log.Information($"Updated design '{design.Name}' with {gearHairMods.Count} gear/hair mods");
+                    }
+                }
+                
+                Plugin.Log.Information("Quick gear/hair update completed successfully");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Error during quick gear/hair update: {ex}");
+            }
+        }
+        
+        /// <summary>
+        /// Check if a mod is a gear mod based on its changed items
+        /// </summary>
+        private bool IsGearMod(IEnumerable<string> changedItems)
+        {
+            foreach (var item in changedItems)
+            {
+                // Check for equipment-related items
+                if (item.Contains("Equipment:", StringComparison.OrdinalIgnoreCase) ||
+                    item.Contains("/equipment/", StringComparison.OrdinalIgnoreCase) ||
+                    item.Contains("gear", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        /// <summary>
+        /// Check if a mod is a hair mod based on its changed items
+        /// </summary>
+        private bool IsHairMod(IEnumerable<string> changedItems)
+        {
+            foreach (var item in changedItems)
+            {
+                // Check for hair-related customization items
+                if (item.Contains("Hair", StringComparison.OrdinalIgnoreCase) && 
+                    item.Contains("Customization:", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+                
+                // Check for hair file paths
+                if (item.Contains("/hair/", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

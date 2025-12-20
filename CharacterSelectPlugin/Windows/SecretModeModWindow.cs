@@ -89,7 +89,8 @@ namespace CharacterSelectPlugin.Windows
         private UIStyles uiStyles;
         private List<ModEntry> availableMods = new();
         private Dictionary<string, bool> selectedMods = new();
-        private string searchFilter = "";
+        private string searchFilter = ""; // Category-specific search
+        private string globalSearchFilter = ""; // Global search across all categories
         private bool isLoading = true;
         private int? editingCharacterIndex = null;
         private CharacterDesign? editingDesign = null;
@@ -849,7 +850,14 @@ namespace CharacterSelectPlugin.Windows
         // Helper methods for new UI
         private int GetModCountForCategory(int categoryIndex)
         {
-            if (categoryIndex == 0) return availableMods.Count(m => m.IsCurrentlyAffecting);
+            if (categoryIndex == 0) // Currently Affecting You
+            {
+                // Count must match the filtering logic in GetFilteredModsForSelectedCategory
+                return availableMods.Count(m => m.IsCurrentlyAffecting && 
+                    (m.ModType == ModType.Gear || m.ModType == ModType.Hair || 
+                     m.ModType == ModType.Eyes || m.ModType == ModType.Tattoos || 
+                     m.ModType == ModType.EarsTails || m.ModType == ModType.FacePaint));
+            }
             
             var categoryType = categoryTypes[categoryIndex];
             return GetModsForCategory(categoryType).Count();
@@ -1170,6 +1178,22 @@ namespace CharacterSelectPlugin.Windows
             }
             
             ImGui.Separator();
+            
+            // Global search bar (full width)
+            ImGui.Spacing();
+            
+            ImGui.SetNextItemWidth(-1); // Full width
+            if (ImGui.InputTextWithHint("##GlobalSearch", "Global search across all mods...", ref globalSearchFilter, 200))
+            {
+                // Clear category-specific search when using global search
+                if (!string.IsNullOrEmpty(globalSearchFilter))
+                {
+                    searchFilter = "";
+                    currentPage = 0; // Reset pagination when searching
+                }
+            }
+            
+            ImGui.Spacing();
         }
         
         private void DrawMainContent()
@@ -1218,6 +1242,8 @@ namespace CharacterSelectPlugin.Windows
                     currentPage = 0;
                     // Clear search when switching categories
                     searchFilter = "";
+                    // Clear global search when switching categories
+                    globalSearchFilter = "";
                 }
                 
                 if (isSelected)
@@ -1237,7 +1263,15 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BeginChild("SearchHeader", new Vector2(-1, searchBarHeight), true, ImGuiWindowFlags.NoScrollbar);
             
             ImGui.SetNextItemWidth(-1);
-            ImGui.InputTextWithHint("##Search", "Search mods...", ref searchFilter, 100);
+            if (ImGui.InputTextWithHint("##Search", "Search mods...", ref searchFilter, 100))
+            {
+                // Clear global search when using category search
+                if (!string.IsNullOrEmpty(searchFilter))
+                {
+                    globalSearchFilter = "";
+                    currentPage = 0; // Reset pagination when searching
+                }
+            }
             
             ImGui.EndChild();
             
@@ -1272,9 +1306,74 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Separator();
             }
             
+            // Draw mod entries with divider between Gear/Hair and other types for "Currently Affecting You"
+            bool hasDrawnDivider = false;
+            bool hasPreviousGearHair = false;
+            
             foreach (var mod in pagedMods)
             {
-                DrawModEntry(mod);
+                // Check if we need to draw a divider (only for "Currently Affecting You" tab)
+                if (selectedCategory == 0 && !hasDrawnDivider && hasPreviousGearHair)
+                {
+                    bool isCurrentGearHair = mod.ModType == ModType.Gear || mod.ModType == ModType.Hair;
+                    
+                    // If we transition from Gear/Hair to other types, draw divider
+                    if (!isCurrentGearHair)
+                    {
+                        ImGui.Spacing();
+                        ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.5f, 0.5f, 0.5f, 0.3f));
+                        ImGui.Separator();
+                        ImGui.PopStyleColor();
+                        
+                        // Add small text label for the divider with warning
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.7f, 0.8f));
+                        ImGui.Text("└─ Other Affecting Mods (Eyes, Tattoos, etc.)");
+                        ImGui.PopStyleColor();
+                        
+                        // Warning icon with tooltip
+                        ImGui.SameLine();
+                        ImGui.PushFont(UiBuilder.IconFont);
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.8f, 0.2f, 0.9f)); // Orange warning color
+                        ImGui.Text("\uf071"); // Warning triangle icon
+                        ImGui.PopStyleColor();
+                        ImGui.PopFont();
+                        
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.BeginTooltip();
+                            ImGui.PushTextWrapPos(350f);
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.9f, 0.8f, 1.0f)); // Warm white
+                            ImGui.Text("Design Selection Warning");
+                            ImGui.PopStyleColor();
+                            ImGui.Separator();
+                            ImGui.TextUnformatted("Selecting these mods will tie them to this specific design:");
+                            ImGui.Bullet(); ImGui.SameLine(); ImGui.TextUnformatted("They will be DISABLED when switching to other designs");
+                            ImGui.Bullet(); ImGui.SameLine(); ImGui.TextUnformatted("They will be ENABLED when switching back to this design");
+                            ImGui.Spacing();
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 1.0f, 0.9f, 1.0f)); // Light green
+                            ImGui.TextUnformatted("Tip: Only select mods that should be specific to this character/outfit. Leave general customization mods (like ears/tails or tattoos) unselected so they stay active across all designs.");
+                            ImGui.PopStyleColor();
+                            ImGui.PopTextWrapPos();
+                            ImGui.EndTooltip();
+                        }
+                        
+                        ImGui.Spacing();
+                        hasDrawnDivider = true;
+                    }
+                }
+                
+                // Check if this mod requires Ctrl+click (other mods after divider in Currently Affecting You tab)
+                bool requiresCtrlClick = selectedCategory == 0 && hasDrawnDivider && 
+                                        mod.ModType != ModType.Gear && mod.ModType != ModType.Hair;
+                DrawModEntry(mod, requiresCtrlClick);
+                
+                // Track if this mod is Gear/Hair for next iteration
+                if (selectedCategory == 0)
+                {
+                    bool isGearHair = mod.ModType == ModType.Gear || mod.ModType == ModType.Hair;
+                    if (isGearHair)
+                        hasPreviousGearHair = true;
+                }
             }
             
             ImGui.EndChild();
@@ -1356,49 +1455,79 @@ namespace CharacterSelectPlugin.Windows
         {
             List<ModEntry> categoryMods;
             
-            if (selectedCategory == 0) // Currently Affecting You
+            // Check if global search is active
+            if (!string.IsNullOrEmpty(globalSearchFilter))
             {
-                // Show only Gear and Hair mods that are currently affecting
-                categoryMods = availableMods.Where(m => m.IsCurrentlyAffecting && 
-                    (m.ModType == ModType.Gear || m.ModType == ModType.Hair)).ToList();
+                // Global search: search across ALL mods regardless of category
+                categoryMods = availableMods.Where(m => 
+                    m.Name.Contains(globalSearchFilter, StringComparison.OrdinalIgnoreCase) ||
+                    m.Directory.Contains(globalSearchFilter, StringComparison.OrdinalIgnoreCase)
+                ).ToList();
             }
             else
             {
-                // Get mods for this specific category
-                var targetType = categoryTypes[selectedCategory];
-                
-                // Special case for Mounts/Minions category (includes both Mount and Minion types)
-                if (targetType == ModType.Mount)
+                // Category-specific filtering (existing logic)
+                if (selectedCategory == 0) // Currently Affecting You
                 {
-                    categoryMods = availableMods.Where(m => m.ModType == ModType.Mount || m.ModType == ModType.Minion).ToList();
-                }
-                else if (targetType == ModType.Other)
-                {
-                    // Include both Other and Unknown mods in 'Other' category
-                    categoryMods = availableMods.Where(m => m.ModType == ModType.Other || m.ModType == ModType.Unknown).ToList();
+                    // Display: Show all currently affecting customization mods for visibility
+                    // Note: Snapshot feature still only includes Gear/Hair for safety
+                    categoryMods = availableMods.Where(m => m.IsCurrentlyAffecting && 
+                        (m.ModType == ModType.Gear || m.ModType == ModType.Hair || 
+                         m.ModType == ModType.Eyes || m.ModType == ModType.Tattoos || 
+                         m.ModType == ModType.EarsTails || m.ModType == ModType.FacePaint)).ToList();
                 }
                 else
                 {
-                    categoryMods = availableMods.Where(m => m.ModType == targetType).ToList();
+                    // Get mods for this specific category
+                    var targetType = categoryTypes[selectedCategory];
+                    
+                    // Special case for Mounts/Minions category (includes both Mount and Minion types)
+                    if (targetType == ModType.Mount)
+                    {
+                        categoryMods = availableMods.Where(m => m.ModType == ModType.Mount || m.ModType == ModType.Minion).ToList();
+                    }
+                    else if (targetType == ModType.Other)
+                    {
+                        // Include both Other and Unknown mods in 'Other' category
+                        categoryMods = availableMods.Where(m => m.ModType == ModType.Other || m.ModType == ModType.Unknown).ToList();
+                    }
+                    else
+                    {
+                        categoryMods = availableMods.Where(m => m.ModType == targetType).ToList();
+                    }
+                }
+                
+                // Apply category-specific search filter if present
+                if (!string.IsNullOrEmpty(searchFilter))
+                {
+                    categoryMods = categoryMods.Where(m => 
+                        m.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
+                        m.Directory.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
+                    ).ToList();
                 }
             }
             
-            if (!string.IsNullOrEmpty(searchFilter))
-            {
-                categoryMods = categoryMods.Where(m => 
-                    m.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
-                    m.Directory.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
-                ).ToList();
-            }
-            
             // Sort with currently affecting mods at the top
-            return categoryMods
-                .OrderByDescending(m => m.IsCurrentlyAffecting)
-                .ThenBy(m => m.Name)
-                .ToList();
+            // For "Currently Affecting You" category, prioritize Gear/Hair over other mod types
+            if (selectedCategory == 0) // Currently Affecting You
+            {
+                return categoryMods
+                    .OrderByDescending(m => m.IsCurrentlyAffecting)
+                    .ThenByDescending(m => m.ModType == ModType.Gear || m.ModType == ModType.Hair) // Gear/Hair first
+                    .ThenBy(m => m.ModType.ToString()) // Group other types together
+                    .ThenBy(m => m.Name)
+                    .ToList();
+            }
+            else
+            {
+                return categoryMods
+                    .OrderByDescending(m => m.IsCurrentlyAffecting)
+                    .ThenBy(m => m.Name)
+                    .ToList();
+            }
         }
         
-        private void DrawModEntry(ModEntry mod)
+        private void DrawModEntry(ModEntry mod, bool requiresCtrlClick = false)
         {
             // Store the cursor position at the start of the row for context menu
             var rowStartPos = ImGui.GetCursorScreenPos();
@@ -1409,9 +1538,23 @@ namespace CharacterSelectPlugin.Windows
             var isPinned = pinnedMods.Contains(mod.Directory);
             
             // Checkbox for selection
-            if (ImGui.Checkbox($"##sel{mod.Directory}", ref isSelected))
+            bool checkboxClicked = ImGui.Checkbox($"##sel{mod.Directory}", ref isSelected);
+            
+            // Check for Ctrl+click requirement for "other" mods in Currently Affecting You tab
+            if (checkboxClicked)
             {
-                selectedMods[mod.Directory] = isSelected;
+                bool allowAction = true;
+                
+                if (requiresCtrlClick && !ImGui.GetIO().KeyCtrl)
+                {
+                    // Prevent the action and reset checkbox state
+                    isSelected = !isSelected; // Revert the change
+                    allowAction = false;
+                }
+                
+                if (allowAction)
+                {
+                    selectedMods[mod.Directory] = isSelected;
                 
                 // If mod is being selected, analyze for dependencies and conflicts
                 if (isSelected)
@@ -1447,6 +1590,13 @@ namespace CharacterSelectPlugin.Windows
                     mod.HasConflicts = false;
                     mod.ConflictingMods = new List<string>();
                 }
+                }
+            }
+            
+            // Add tooltip for Ctrl+click requirement on "other" mods
+            if (requiresCtrlClick && ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Hold Ctrl while clicking to select this mod");
             }
             
             ImGui.SameLine();

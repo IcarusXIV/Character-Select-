@@ -102,7 +102,7 @@ namespace CharacterSelectPlugin.Windows
             {
                 string pluginDirectory = Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? "";
                 string assetsPath = Path.Combine(pluginDirectory, "Assets");
-                string imagePath = Path.Combine(assetsPath, "halloweenbanner.png");
+                string imagePath = Path.Combine(assetsPath, "winterbanner.png");
 
                 if (File.Exists(imagePath))
                 {
@@ -145,8 +145,9 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SetCursorPosY((windowPadding.Y * 0.5f) + headerHeight - 10);
 
-            // Halloween Special Announcement Box
-            DrawHalloweenAnnouncementBox(totalScale);
+            // Winter/Christmas Special Announcement Box - positioned in header above "New in v..." text
+            DrawWinterAnnouncementBox(totalScale);
+
 
             // Version badge
             ImGui.SetCursorPosX(9);
@@ -161,7 +162,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Halloween UI Theme, Conflict Resolution, IPC, Apply to Target (GPose)");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "7.4 Compatibility, Mod Manager, Character Assignments");
 
             ImGui.Separator();
             ImGui.Spacing();
@@ -192,7 +193,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor();
 
             ImGui.SetCursorPos(new Vector2(20, 55));
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Character Gallery, Visual Overhaul & Interactive Tutorial");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "7.4 Compatibility, Mod Manager, Character Assignments");
         }
 
         private void DrawPatchNotes(float totalScale)
@@ -212,10 +213,10 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.PushTextWrapPos();
 
-            // Latest Patch Notes - v2.0.1.0
-            if (DrawModernCollapsingHeader("v2.0.1.0 – Conflict Resolution, IPC, Apply to Target (GPose)", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
+            // Latest Patch Notes - v2.0.1.4
+            if (DrawModernCollapsingHeader("v2.0.1.4 – 7.4 Compatibility, Mod Manager, Character Assignments", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
             {
-                Draw201Notes();
+                Draw214Notes();
 
                 // Show scroll indicator if haven't scrolled enough
                 if (!hasScrolledToEnd)
@@ -227,6 +228,12 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.PopStyleColor();
                     ImGui.Spacing();
                 }
+            }
+
+            // Previous Patch Notes - v2.0.1.0  
+            if (DrawModernCollapsingHeader("v2.0.1.0 – Conflict Resolution, IPC, Apply to Target (GPose)", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
+            {
+                Draw201Notes();
             }
 
             // Previous Patch Notes - v2.0.0.0
@@ -280,6 +287,48 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopFont();
             ImGui.SameLine();
             ImGui.TextColored(accentColor, title);
+            ImGui.Spacing();
+        }
+
+        private void Draw214Notes()
+        {
+            // 7.4 Compatibility Update
+            DrawFeatureSection("\uf021", "7.4 Compatibility Update", new Vector4(0.6f, 0.8f, 1.0f, 1.0f));
+            ImGui.BulletText("Updated for Final Fantasy XIV patch 7.4");
+            ImGui.Spacing();
+
+            // Design Panel Enhancements
+            DrawFeatureSection("\uf1fc", "Design Panel Enhancements", new Vector4(0.9f, 0.7f, 0.9f, 1.0f));
+            ImGui.BulletText("Design Previews now show in Quick Character Switch for easier design selection");
+            ImGui.BulletText("Active design is now highlighted in green in the design list");
+            ImGui.BulletText("Added save button to Design's Advanced Mode window for easier workflow");
+            ImGui.BulletText("Update CR for Existing Designs feature for hair/gear changes (other changes still need manual editing)");
+            ImGui.Spacing();
+
+            // Mod Manager Improvements
+            DrawFeatureSection("\uf085", "Mod Manager Improvements", new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
+            ImGui.BulletText("Standalone Mod Manager window for better organization (use '/select mods' command)");
+            ImGui.BulletText("Global Search functionality to search across all mod categories simultaneously");
+            ImGui.BulletText("'Currently Affecting You' section now shows: Tattoos, Eyes, Ears/Tail/Horns, Makeup/Face Paint");
+            ImGui.Spacing();
+
+            // Auto-Apply Last Used Design on Login
+            DrawFeatureSection("\uf4fc", "Auto-Apply Last Used Design on Login", new Vector4(0.6f, 0.9f, 0.8f, 1.0f));
+            ImGui.BulletText("New setting that works with 'Auto-Apply Last Used Character on Login'");
+            ImGui.BulletText("When enabled, also automatically applies the last design you used for that character");
+            ImGui.BulletText("Perfect for maintaining your complete look when logging back in");
+            ImGui.BulletText("Appears as a sub-option when character auto-apply is enabled");
+            ImGui.Spacing();
+
+            // Winter/Christmas Theme
+            DrawFeatureSection("\uf2dc", "Winter/Christmas Theme & Holiday Update", new Vector4(0.9f, 0.95f, 1.0f, 1.0f));
+            ImGui.BulletText("Winter and Christmas themes added");
+            ImGui.BulletText("Users can now freely choose which theme from the available list");
+            ImGui.Spacing();
+
+            // Bug Fixes
+            DrawFeatureSection("\uf188", "Bug Fixes", new Vector4(0.9f, 0.4f, 0.4f, 1.0f));
+            ImGui.BulletText("Fixed Character Assignments not working properly (hopefully)");
             ImGui.Spacing();
         }
 
@@ -731,14 +780,14 @@ namespace CharacterSelectPlugin.Windows
                 MaxLife = 6f + (float)particleRandom.NextDouble() * 4f,
                 Size = 1.5f + (float)particleRandom.NextDouble() * 2.5f,
 
-                // More visible colors - brighter and more opaque
+                // Winter/Christmas themed colors - whites, blues, silvers
                 Color = particleRandom.Next(5) switch
                 {
-                    0 => new Vector4(0.7f, 0.9f, 1.0f, 0.8f),  // Bright blue
-                    1 => new Vector4(1.0f, 0.7f, 1.0f, 0.7f),  // Bright purple  
-                    2 => new Vector4(1.0f, 1.0f, 1.0f, 0.6f),  // Bright white
-                    3 => new Vector4(0.8f, 1.0f, 1.0f, 0.7f),  // Bright cyan
-                    _ => new Vector4(0.9f, 0.8f, 1.0f, 0.6f)   // Light lavender
+                    0 => new Vector4(1.0f, 1.0f, 1.0f, 0.8f),  // Pure white (snowflake)
+                    1 => new Vector4(0.9f, 0.95f, 1.0f, 0.7f), // Soft white-blue
+                    2 => new Vector4(0.8f, 0.9f, 1.0f, 0.6f),  // Light blue
+                    3 => new Vector4(0.95f, 0.95f, 0.95f, 0.7f), // Silver-white
+                    _ => new Vector4(0.85f, 0.92f, 1.0f, 0.6f)   // Icy blue
                 }
             };
 
@@ -746,35 +795,36 @@ namespace CharacterSelectPlugin.Windows
             particles.Add(particle);
         }
 
-        private void DrawHalloweenAnnouncementBox(float totalScale)
+        private void DrawWinterAnnouncementBox(float totalScale)
         {
-            // Halloween announcement as a child window/scrollable area
-            ImGui.BeginChild("HalloweenAnnouncement", new Vector2(0, 120 * totalScale), true, ImGuiWindowFlags.None);
+            // Winter/Christmas announcement as a child window/scrollable area
+            ImGui.BeginChild("WinterAnnouncement", new Vector2(0, 120 * totalScale), true, ImGuiWindowFlags.None);
             
-            // Title with ghost icons and date
+            // Title with snowflake icons and date
             ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), "\uf6e2"); // FontAwesome ghost
+            ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), "\uf2dc"); // FontAwesome snowflake
             ImGui.PopFont();
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(1.0f, 0.6f, 0.1f, 1.0f), " Special Halloween Update! (Oct 15 2025) ");
+            ImGui.TextColored(new Vector4(0.2f, 0.8f, 1.0f, 1.0f), " Happy Holidays from Character Select+ ");
             ImGui.SameLine();
             ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), "\uf6e2"); // FontAwesome ghost
+            ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), "\uf2dc"); // FontAwesome snowflake
             ImGui.PopFont();
             
             ImGui.Spacing();
             
-            // Announcement content - conversational style
+            // Holiday message and thank you - conversational style
             ImGui.PushTextWrapPos();
-            ImGui.TextColored(new Vector4(0.9f, 0.8f, 0.9f, 1.0f),
-                "Hi hi! I've got some spooky surprises for you this Halloween season. You can now enable seasonal themes in your settings (Visual Settings) -- changes your UI in Real-Time so you can easily toggle it on or off. Consider this a sneak peek into providing more options with the UI! " +
-                "I've also fixed a bug where the Character Assignment 'None' option wasn't working properly, and added a new command '/select random CHARACTERNAME' that lets you randomize which design you get for a specific character. " +
-                "Happy Halloween, and enjoy the new features!");
+            ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), 
+                "Season's greetings, adventurers! As we wrap up an amazing year, I wanted to take a moment to say thank you to everyone who has been enjoying Character Select+. " +
+                "Your feedback, suggestions, and support have made this plugin what it is today. Whether you're creating new characters, perfecting your designs, or exploring the latest features, " +
+                "you're the reason I love working on this project. Wishing you all a wonderful holiday season filled with joy, creativity, and fantastic adventures in FFXIV!");
             ImGui.PopTextWrapPos();
             
             ImGui.EndChild();
             
             ImGui.Spacing();
         }
+
     }
 }

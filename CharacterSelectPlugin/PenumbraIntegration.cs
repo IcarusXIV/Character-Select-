@@ -356,17 +356,19 @@ namespace CharacterSelectPlugin
                 
                 // Use the correct SetCollection API signature
                 // Only set "Current" to update the Penumbra UI display (collection assignment already works)
-                var setCollectionIpc = pluginInterface.GetIpcSubscriber<ApiCollectionType, Guid?, bool, bool, (PenumbraApiEc, (Guid, string)?)>("Penumbra.SetCollection");
+                var setCollectionIpc = pluginInterface.GetIpcSubscriber<byte, Guid?, bool, bool, (int, (Guid Id, string Name)?)>("Penumbra.SetCollection");
                 
                 log.Debug($"Setting Penumbra UI current collection - Name: {collectionName}, GUID: {targetCollection.Key}");
                 
                 // Set the current/UI collection for display only
-                var (result, oldCollection) = setCollectionIpc.InvokeFunc(
-                    ApiCollectionType.Current,  // Set as current collection (controls UI display only)
+                var (resultInt, oldCollection) = setCollectionIpc.InvokeFunc(
+                    (byte)ApiCollectionType.Current,  // Set as current collection (controls UI display only)
                     targetCollection.Key,       // Collection GUID
                     false,                      // Don't allow creation
                     false                       // Don't allow deletion
                 );
+                
+                var result = (PenumbraApiEc)resultInt;
                 
                 log.Debug($"SetCollection(Current) result: {result}");
                 
@@ -419,7 +421,7 @@ namespace CharacterSelectPlugin
             try
             {
                 // Use GetCollectionForObject with object ID 0 (player) - most accurate method
-                var ipc = pluginInterface.GetIpcSubscriber<uint, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5");
+                var ipc = pluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5");
                 var (objectValid, individualSet, (id, name)) = ipc.InvokeFunc(0); // 0 = player object
                 
                 if (objectValid)

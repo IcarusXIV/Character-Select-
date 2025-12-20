@@ -20,6 +20,10 @@ namespace CharacterSelectPlugin.Windows
         private ReorderWindow reorderWindow;
         private UIStyles uiStyles;
         private FavoriteSparkEffect diceEffect = new();
+        private WinterBackgroundSnow winterBackgroundSnow = new();
+        private WinterBackgroundSnow winterBackgroundSnowUI = new(); // Second snow effect for character grid area
+        private float giftBoxShakeTimer = 0f;
+        private const float GIFT_BOX_SHAKE_DURATION = 0.3f;
         public bool IsDesignPanelOpen => designPanel?.IsOpen ?? false;
         public bool IsEditCharacterWindowOpen => characterForm?.IsEditWindowOpen ?? false;
         public bool IsReorderWindowOpen => reorderWindow?.IsOpen ?? false;
@@ -57,6 +61,26 @@ namespace CharacterSelectPlugin.Windows
             settingsPanel?.Dispose();
             reorderWindow?.Dispose();
         }
+        
+        private void DrawSeasonalBackgroundEffects(float deltaTime)
+        {
+            if (!SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+                return;
+                
+            var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+            
+            if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+            {
+                // Set effect area to current window size for background snow
+                var windowSize = ImGui.GetWindowSize();
+                winterBackgroundSnow.SetEffectArea(windowSize);
+                
+                // Update and draw winter background snow
+                winterBackgroundSnow.Update(deltaTime);
+                winterBackgroundSnow.Draw();
+            }
+        }
+
 
         public override void Draw()
         {
@@ -64,13 +88,23 @@ namespace CharacterSelectPlugin.Windows
             plugin.MainWindowPos = ImGui.GetWindowPos();
             plugin.MainWindowSize = ImGui.GetWindowSize();
 
+            // Get deltaTime for use throughout draw cycle
+            float deltaTime = ImGui.GetIO().DeltaTime;
+            
+            // Update gift box shake timer
+            if (giftBoxShakeTimer > 0f)
+            {
+                giftBoxShakeTimer -= deltaTime;
+                if (giftBoxShakeTimer < 0f) giftBoxShakeTimer = 0f;
+            }
+
             // UI styling
             uiStyles.PushMainWindowStyle();
 
             try
             {
                 DrawHeader();
-                DrawMainContent();
+                DrawMainContent(deltaTime);
                 DrawBottomBar();
                 DrawSupportButton();
 
@@ -82,9 +116,13 @@ namespace CharacterSelectPlugin.Windows
             {
                 uiStyles.PopMainWindowStyle();
             }
-            float deltaTime = ImGui.GetIO().DeltaTime;
+            
+            // Draw dice effect on top of everything and original snow
             diceEffect.Update(deltaTime);
             diceEffect.Draw();
+            
+            // Draw seasonal background effects in original location
+            DrawSeasonalBackgroundEffects(deltaTime);
         }
 
         private void DrawHeader()
@@ -138,7 +176,7 @@ namespace CharacterSelectPlugin.Windows
             characterGrid.SetSortType((Plugin.SortType)plugin.Configuration.CurrentSortIndex);
         }
 
-        private void DrawMainContent()
+        private void DrawMainContent(float deltaTime)
         {
             // Calculate scale once for the entire method
             var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
@@ -159,6 +197,25 @@ namespace CharacterSelectPlugin.Windows
             // Main area - reserve space for bottom bar based on scaled button height
             float bottomBarHeight = ImGui.GetFrameHeight() + (10 * totalScale); // Button height + minimal padding
             ImGui.BeginChild("CharacterGrid", new Vector2(characterGridWidth, -bottomBarHeight), true);
+            
+            // Draw snow behind character grid content
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+            {
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+                if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                {
+                    // Configure for fainter, smaller snow
+                    winterBackgroundSnowUI.ConfigureSnowEffect(alpha: 0.5f, size: 0.7f, spawnRate: 0.8f);
+                    
+                    // Use absolute coordinates to handle scrolling properly
+                    var childWindowPos = ImGui.GetCursorScreenPos();
+                    var childWindowSize = ImGui.GetContentRegionAvail();
+                    winterBackgroundSnowUI.SetEffectAreaAbsolute(childWindowPos, childWindowSize);
+                    winterBackgroundSnowUI.Update(deltaTime);
+                    winterBackgroundSnowUI.DrawAbsolute();
+                }
+            }
+            
             characterGrid.Draw();
             ImGui.EndChild();
 
@@ -284,23 +341,63 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
 
-            // Random Button - use vial icon during Halloween
+            // Random Button - use seasonal icons  
             bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
-            string randomIcon = isHalloween ? "\uf492" : "\uf522"; // Vial for Halloween, dice for normal
+                              SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Halloween;
+            bool isWinterChristmas = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                                    (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
+                                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas);
+            
+            string randomIcon;
+            Vector4? iconColor = null;
+            
+            if (isHalloween)
+            {
+                randomIcon = "\uf492"; // Vial for Halloween
+                iconColor = new Vector4(0.2f, 0.8f, 0.3f, 1.0f); // Bright green for Halloween
+            }
+            else if (isWinterChristmas)
+            {
+                randomIcon = "\uf06b"; // Gift box for Winter/Christmas
+                iconColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f); // White for gift box
+            }
+            else
+            {
+                randomIcon = "\uf522"; // Default dice for normal
+            }
             
             string randomTooltip = plugin.Configuration.RandomSelectionFavoritesOnly 
                 ? "Randomly selects from favourited characters and designs only"
                 : "Randomly selects from all characters and designs";
             
-            // Use green color for Halloween vial icon
-            Vector4? iconColor = isHalloween ? new Vector4(0.2f, 0.8f, 0.3f, 1.0f) : null; // Bright green for Halloween
+            // Apply shake effect if gift box is being used
+            Vector2 shakeOffset = Vector2.Zero;
+            if (isWinterChristmas && giftBoxShakeTimer > 0f)
+            {
+                float shakeIntensity = 2.0f;
+                float shakeProgress = 1.0f - (giftBoxShakeTimer / GIFT_BOX_SHAKE_DURATION);
+                float shakeAmount = shakeIntensity * (1.0f - shakeProgress); // Fade out shake
+                
+                // Create random shake offset
+                float time = giftBoxShakeTimer * 20f; // Fast oscillation
+                shakeOffset.X = MathF.Sin(time * 1.7f) * shakeAmount;
+                shakeOffset.Y = MathF.Cos(time * 2.3f) * shakeAmount;
+                
+                // Apply shake offset
+                ImGui.SetCursorPos(ImGui.GetCursorPos() + shakeOffset);
+            }
             
             if (uiStyles.IconButtonWithColor(randomIcon, randomTooltip, null, 1.0f, iconColor))
             {
+                // Start shake effect if gift box was clicked
+                if (isWinterChristmas)
+                {
+                    giftBoxShakeTimer = GIFT_BOX_SHAKE_DURATION;
+                }
+                
                 // Trigger dice effect
                 Vector2 effectPos = ImGui.GetItemRectMin() + ImGui.GetItemRectSize() / 2;
-                diceEffect.Trigger(effectPos, true);
+                diceEffect.Trigger(effectPos, true, plugin.Configuration);
 
                 plugin.SelectRandomCharacterAndDesign();
             }

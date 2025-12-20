@@ -23,11 +23,11 @@ namespace CharacterSelectPlugin.Windows.Styles
         {
             float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
-            // Check for Halloween theme
-            bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
-
-            if (isHalloween)
+            // Check for seasonal themes
+            bool isSeasonalThemed = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration);
+            var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+            
+            if (isSeasonalThemed && effectiveTheme == SeasonalTheme.Halloween)
             {
                 // Halloween themed styling with dark gradient background
                 ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.08f, 0.04f, 0.02f, 0.98f)); // Dark orange-brown
@@ -53,6 +53,60 @@ namespace CharacterSelectPlugin.Windows.Styles
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.10f, 0.05f, 0.9f)); // Dark orange buttons
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.15f, 0.08f, 0.9f)); // Hover orange
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.20f, 0.10f, 0.9f)); // Active orange
+            }
+            else if (isSeasonalThemed && effectiveTheme == SeasonalTheme.Winter)
+            {
+                // Winter themed styling with bright icy blue/white theme
+                ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.12f, 0.16f, 0.22f, 0.98f)); // Bright cool blue
+                ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.15f, 0.20f, 0.28f, 0.95f)); // Lighter cool blue
+                ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.12f, 0.16f, 0.22f, 0.98f)); // Bright cool blue
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.20f, 0.25f, 0.35f, 0.9f)); // Bright blue frames
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.25f, 0.32f, 0.45f, 0.9f)); // Lighter blue hover
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.30f, 0.40f, 0.55f, 0.9f)); // Active bright blue
+                ImGui.PushStyleColor(ImGuiCol.TitleBg, new Vector4(0.08f, 0.12f, 0.18f, 1.0f)); // Medium blue
+                ImGui.PushStyleColor(ImGuiCol.TitleBgActive, new Vector4(0.12f, 0.16f, 0.22f, 1.0f)); // Bright blue active
+                ImGui.PushStyleColor(ImGuiCol.MenuBarBg, new Vector4(0.12f, 0.16f, 0.22f, 0.98f)); // Bright blue menu
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0.08f, 0.12f, 0.18f, 0.8f)); // Medium scrollbar
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, new Vector4(0.30f, 0.40f, 0.55f, 0.8f)); // Bright blue scrollbar
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, new Vector4(0.40f, 0.50f, 0.70f, 0.9f)); // Hover bright blue
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, new Vector4(0.50f, 0.65f, 0.85f, 1.0f)); // Active very bright blue
+                ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.35f, 0.45f, 0.60f, 0.6f)); // Bright blue separator
+                ImGui.PushStyleColor(ImGuiCol.SeparatorHovered, new Vector4(0.45f, 0.55f, 0.75f, 0.8f)); // Hover separator
+                ImGui.PushStyleColor(ImGuiCol.SeparatorActive, new Vector4(0.55f, 0.70f, 0.90f, 1.0f)); // Active separator
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.98f, 1.0f, 1.0f)); // Bright white text
+                ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.60f, 0.70f, 0.85f, 0.8f)); // Cool light gray disabled
+                
+                // Winter button styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.30f, 0.45f, 0.9f)); // Bright blue buttons
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.40f, 0.60f, 0.9f)); // Hover bright blue
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.55f, 0.75f, 0.9f)); // Active very bright blue
+            }
+            else if (isSeasonalThemed && effectiveTheme == SeasonalTheme.Christmas)
+            {
+                // Christmas themed styling with vibrant saturated red/green theme
+                ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.25f, 0.05f, 0.05f, 0.98f)); // Vibrant saturated red
+                ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.30f, 0.08f, 0.05f, 0.95f)); // Saturated red-brown
+                ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.25f, 0.05f, 0.05f, 0.98f)); // Vibrant saturated red
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.40f, 0.12f, 0.08f, 0.9f)); // Vibrant red frames
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.50f, 0.18f, 0.12f, 0.9f)); // Saturated red hover
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.65f, 0.22f, 0.15f, 0.9f)); // Active saturated red
+                ImGui.PushStyleColor(ImGuiCol.TitleBg, new Vector4(0.18f, 0.03f, 0.03f, 1.0f)); // Deep saturated red
+                ImGui.PushStyleColor(ImGuiCol.TitleBgActive, new Vector4(0.25f, 0.05f, 0.05f, 1.0f)); // Saturated red active
+                ImGui.PushStyleColor(ImGuiCol.MenuBarBg, new Vector4(0.25f, 0.05f, 0.05f, 0.98f)); // Saturated red menu
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0.18f, 0.03f, 0.03f, 0.8f)); // Deep scrollbar
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, new Vector4(0.60f, 0.20f, 0.15f, 0.8f)); // Saturated red scrollbar
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, new Vector4(0.75f, 0.25f, 0.18f, 0.9f)); // Hover saturated red
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, new Vector4(0.90f, 0.30f, 0.22f, 1.0f)); // Active very saturated red
+                ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.70f, 0.25f, 0.18f, 0.6f)); // Saturated red separator
+                ImGui.PushStyleColor(ImGuiCol.SeparatorHovered, new Vector4(0.80f, 0.30f, 0.22f, 0.8f)); // Hover separator
+                ImGui.PushStyleColor(ImGuiCol.SeparatorActive, new Vector4(0.95f, 0.35f, 0.25f, 1.0f)); // Active separator
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.98f, 0.95f, 1.0f)); // Bright warm white text
+                ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.80f, 0.70f, 0.60f, 0.8f)); // Warm light gray disabled
+                
+                // Christmas button styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.60f, 0.18f, 0.12f, 0.9f)); // Saturated red buttons
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.25f, 0.18f, 0.9f)); // Hover saturated red
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.90f, 0.32f, 0.22f, 0.9f)); // Active very saturated red
             }
             else
             {

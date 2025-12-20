@@ -302,7 +302,7 @@ namespace CharacterSelectPlugin.Effects
         {
             if (!isInitialized || webStrands.Count == 0) return;
             if (!SeasonalThemeManager.IsSeasonalThemeEnabled(config)) return;
-            if (SeasonalThemeManager.GetCurrentSeasonalTheme() != SeasonalTheme.Halloween) return;
+            if (SeasonalThemeManager.GetEffectiveTheme(config) != SeasonalTheme.Halloween) return;
 
             var drawList = ImGui.GetWindowDrawList();
             var themeColors = SeasonalThemeManager.GetCurrentThemeColors(config);
@@ -321,6 +321,364 @@ namespace CharacterSelectPlugin.Effects
                     }
                 }
             }
+        }
+    }
+
+    public class WinterSnowEffect
+    {
+        private List<Vector2[]> icicleShapes = new();
+        private List<Vector2[]> snowPileShapes = new();
+        private Random random = new();
+        private bool isInitialized = false;
+        private Vector2[] corners = new Vector2[4];
+        private float effectSize = 25f;
+
+        public void Initialize(Vector2[] cardCorners, float size = 25f)
+        {
+            if (cardCorners.Length >= 4)
+            {
+                corners = new Vector2[4];
+                Array.Copy(cardCorners, corners, 4);
+                effectSize = size;
+                GenerateSnowEffects();
+                isInitialized = true;
+            }
+        }
+
+        public void Initialize(Vector2 min, Vector2 max, float size = 25f)
+        {
+            // Convert min/max to corner array for compatibility
+            corners = new Vector2[]
+            {
+                new Vector2(min.X, min.Y), // Top-left
+                new Vector2(max.X, min.Y), // Top-right  
+                new Vector2(min.X, max.Y), // Bottom-left
+                new Vector2(max.X, max.Y)  // Bottom-right
+            };
+            effectSize = size;
+            GenerateSnowEffects();
+            isInitialized = true;
+        }
+
+        private void GenerateSnowEffects()
+        {
+            icicleShapes.Clear();
+            snowPileShapes.Clear();
+
+            float cardWidth = corners[1].X - corners[0].X; // Top-right X - Top-left X
+            float cardHeight = corners[2].Y - corners[0].Y; // Bottom-left Y - Top-left Y
+
+            // Generate icicles hanging from the top edge
+            int icicleCount = 4 + random.Next(3); // 4-6 icicles for better distribution
+            for (int i = 0; i < icicleCount; i++)
+            {
+                float x = corners[0].X + (cardWidth * 0.15f) + (cardWidth * 0.7f * ((float)i / (icicleCount - 1)));
+                float length = 8f + random.NextSingle() * 12f;
+                float width = 1.5f + random.NextSingle() * 2f;
+
+                // Create icicle as triangle shape (store final positions)
+                Vector2 top = new Vector2(x, corners[0].Y); // Top of card
+                Vector2 bottom = new Vector2(x, corners[0].Y + length); // Hanging down
+                Vector2 left = new Vector2(x - width, corners[0].Y);
+                Vector2 right = new Vector2(x + width, corners[0].Y);
+
+                // Store icicle as triangle vertices
+                var icicleTriangle = new Vector2[] { left, right, bottom };
+                icicleShapes.Add(icicleTriangle);
+            }
+
+            // Generate snow piles along the bottom edge  
+            int snowPileCount = 3 + random.Next(2); // 3-4 snow piles
+            for (int i = 0; i < snowPileCount; i++)
+            {
+                float x = corners[2].X + (cardWidth * 0.1f) + (cardWidth * 0.8f * ((float)i / (snowPileCount - 1)));
+                float pileWidth = 8f + random.NextSingle() * 6f;
+                float pileHeight = 3f + random.NextSingle() * 3f;
+
+                // Create snow pile as curved mound (store points for natural pile shape)
+                var pilePoints = new List<Vector2>();
+                for (float j = -pileWidth; j <= pileWidth; j += 1.5f)
+                {
+                    float normalizedPos = Math.Abs(j / pileWidth);
+                    float height = pileHeight * (1f - normalizedPos * normalizedPos);
+                    pilePoints.Add(new Vector2(x + j, corners[2].Y - height));
+                }
+                snowPileShapes.Add(pilePoints.ToArray());
+            }
+        }
+
+        public void Draw(Configuration config)
+        {
+            if (!isInitialized) return;
+            if (!SeasonalThemeManager.IsSeasonalThemeEnabled(config)) return;
+
+            var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(config);
+            if (effectiveTheme != SeasonalTheme.Winter && effectiveTheme != SeasonalTheme.Christmas) return;
+
+            var drawList = ImGui.GetWindowDrawList();
+            var themeColors = SeasonalThemeManager.GetCurrentThemeColors(config);
+
+            // Snow color - bright white with slight blue tint
+            var snowColor = new Vector4(0.95f, 0.98f, 1.0f, 0.9f);
+            var iceColor = new Vector4(0.85f, 0.95f, 1.0f, 0.7f);
+            uint snowColorU32 = ImGui.GetColorU32(snowColor);
+            uint iceColorU32 = ImGui.GetColorU32(iceColor);
+
+            // Draw icicles - same pattern as spider webs
+            foreach (var icicleTriangle in icicleShapes)
+            {
+                if (icicleTriangle.Length >= 3)
+                {
+                    // Draw icicle triangle
+                    drawList.AddTriangleFilled(icicleTriangle[0], icicleTriangle[1], icicleTriangle[2], iceColorU32);
+                    
+                    // Add highlight line on one side
+                    Vector2 highlight1 = icicleTriangle[0] + new Vector2(0.3f, 0);
+                    Vector2 highlight2 = icicleTriangle[2] + new Vector2(-0.3f, 0);
+                    drawList.AddLine(highlight1, highlight2, ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, 0.6f)), 0.8f);
+                }
+            }
+
+            // Draw snow piles - natural curved shapes
+            foreach (var snowPile in snowPileShapes)
+            {
+                if (snowPile.Length >= 2)
+                {
+                    // Draw snow pile as connected points creating a natural mound
+                    foreach (var point in snowPile)
+                    {
+                        drawList.AddCircleFilled(point, 1.2f, snowColorU32, 8);
+                        
+                        // Add subtle highlight
+                        drawList.AddCircleFilled(point + new Vector2(0, -0.5f), 0.7f, 
+                            ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, 0.4f)), 6);
+                    }
+                }
+            }
+        }
+    }
+
+    public class WinterBackgroundSnow
+    {
+        private List<SnowFlake> snowFlakes = new();
+        private Random random = new();
+        private float spawnTimer = 0;
+        private float spawnInterval = 0.1f; // Spawn snow flakes regularly
+        private Vector2 effectArea = Vector2.Zero;
+        private Vector2 absoluteOffset = Vector2.Zero;
+        private bool isActive = false;
+        private bool useAbsoluteCoordinates = false;
+        
+        // Configuration for different snow types
+        private float alphaMultiplier = 1.0f;
+        private float sizeMultiplier = 1.0f;
+        private float spawnRateMultiplier = 1.0f;
+
+        public void SetEffectArea(Vector2 area)
+        {
+            effectArea = area;
+            isActive = area.X > 0 && area.Y > 0;
+            useAbsoluteCoordinates = false;
+        }
+
+        public void SetEffectAreaAbsolute(Vector2 windowPos, Vector2 windowSize)
+        {
+            effectArea = windowSize;
+            absoluteOffset = windowPos;
+            isActive = windowSize.X > 0 && windowSize.Y > 0;
+            useAbsoluteCoordinates = true;
+        }
+
+        public void ConfigureSnowEffect(float alpha = 1.0f, float size = 1.0f, float spawnRate = 1.0f)
+        {
+            alphaMultiplier = alpha;
+            sizeMultiplier = size;
+            spawnRateMultiplier = spawnRate;
+        }
+
+        public void Update(float deltaTime)
+        {
+            if (!isActive) return;
+
+            spawnTimer += deltaTime;
+
+            // Spawn new snow flakes
+            if (spawnTimer >= spawnInterval)
+            {
+                SpawnSnowFlakes();
+                spawnTimer = 0;
+            }
+
+            // Update existing snow flakes
+            for (int i = snowFlakes.Count - 1; i >= 0; i--)
+            {
+                snowFlakes[i].Update(deltaTime);
+                
+                // Remove snow flakes that have fallen off screen
+                if (useAbsoluteCoordinates)
+                {
+                    // For absolute coordinates, allow snow to fall much further down
+                    float leftBound = absoluteOffset.X - 50;
+                    float rightBound = absoluteOffset.X + effectArea.X + 50;
+                    float bottomBound = absoluteOffset.Y + effectArea.Y + 500; // Allow snow to fall way past the bottom
+                    
+                    if (!snowFlakes[i].IsAlive || 
+                        snowFlakes[i].Position.X < leftBound || snowFlakes[i].Position.X > rightBound ||
+                        snowFlakes[i].Position.Y > bottomBound)
+                    {
+                        snowFlakes.RemoveAt(i);
+                    }
+                }
+                else
+                {
+                    // Original bounds checking for relative coordinates
+                    if (!snowFlakes[i].IsAlive || 
+                        snowFlakes[i].Position.X < -50 || snowFlakes[i].Position.X > effectArea.X + 50 ||
+                        snowFlakes[i].Position.Y > effectArea.Y + 50)
+                    {
+                        snowFlakes.RemoveAt(i);
+                    }
+                }
+            }
+
+            // Limit particle count for performance
+            if (snowFlakes.Count > 100)
+            {
+                snowFlakes.RemoveRange(0, snowFlakes.Count - 100);
+            }
+        }
+
+        private void SpawnSnowFlakes()
+        {
+            // Spawn snow flakes with configurable rate
+            int baseMin = Math.Max(1, (int)(3 * spawnRateMultiplier));
+            int baseMax = Math.Max(2, (int)(7 * spawnRateMultiplier));
+            int count = random.Next(baseMin, baseMax);
+            
+            for (int i = 0; i < count; i++)
+            {
+                // Start snowflakes from top, random X position
+                Vector2 startPos = new Vector2(random.NextSingle() * effectArea.X, -20);
+                
+                // For absolute coordinates, add the window offset to spawn position
+                if (useAbsoluteCoordinates)
+                {
+                    startPos += absoluteOffset;
+                }
+                
+                Vector2 velocity = new Vector2(
+                    (random.NextSingle() - 0.5f) * 15f, // Gentle sideways drift
+                    20f + random.NextSingle() * 15f     // Slower downward fall speed
+                );
+
+                // Much longer life for absolute coordinate snow to traverse full character grid height
+                float baseLife = useAbsoluteCoordinates ? 60.0f : 12.0f;
+                float extraLife = useAbsoluteCoordinates ? 30.0f : 8.0f;
+                
+                var snowFlake = new SnowFlake
+                {
+                    Position = startPos,
+                    Velocity = velocity,
+                    Color = new Vector4(0.95f, 0.98f, 1.0f, (0.6f + random.NextSingle() * 0.3f) * alphaMultiplier), // Configurable alpha
+                    Life = baseLife + random.NextSingle() * extraLife, // Longer-lived for absolute coordinates
+                    MaxLife = baseLife + random.NextSingle() * extraLife,
+                    Size = (2.0f + random.NextSingle() * 2.0f) * sizeMultiplier, // Configurable size
+                    NoiseOffset = random.NextSingle() * MathF.PI * 2,
+                    SwayAmount = 3f + random.NextSingle() * 7f // Less aggressive sway
+                };
+
+                snowFlakes.Add(snowFlake);
+            }
+        }
+
+        public void Draw()
+        {
+            Draw(false);
+        }
+
+        public void DrawAbsolute()
+        {
+            Draw(true);
+        }
+
+        private void Draw(bool useAbsolutePositions)
+        {
+            if (!isActive) return;
+            
+            var drawList = ImGui.GetWindowDrawList();
+            var windowPos = ImGui.GetWindowPos();
+
+            foreach (var snowFlake in snowFlakes)
+            {
+                if (snowFlake.IsAlive && snowFlake.Color.W > 0.01f)
+                {
+                    uint snowColor = ImGui.GetColorU32(snowFlake.Color);
+
+                    // Draw snowflake at appropriate position
+                    Vector2 pos = useAbsolutePositions 
+                        ? snowFlake.Position  // Absolute position for background effects
+                        : snowFlake.Position + windowPos; // Window-relative position for normal effects
+                    float size = snowFlake.Size;
+                    
+                    // Draw a small cross/plus shape with thicker lines
+                    drawList.AddLine(
+                        new Vector2(pos.X - size, pos.Y), 
+                        new Vector2(pos.X + size, pos.Y), 
+                        snowColor, 1.5f);
+                    drawList.AddLine(
+                        new Vector2(pos.X, pos.Y - size), 
+                        new Vector2(pos.X, pos.Y + size), 
+                        snowColor, 1.5f);
+                    
+                    // Add diagonal lines for star effect (smaller)
+                    float diagonalSize = size * 0.6f;
+                    drawList.AddLine(
+                        new Vector2(pos.X - diagonalSize, pos.Y - diagonalSize), 
+                        new Vector2(pos.X + diagonalSize, pos.Y + diagonalSize), 
+                        snowColor, 1.2f);
+                    drawList.AddLine(
+                        new Vector2(pos.X - diagonalSize, pos.Y + diagonalSize), 
+                        new Vector2(pos.X + diagonalSize, pos.Y - diagonalSize), 
+                        snowColor, 1.2f);
+                }
+            }
+        }
+
+        public void Reset()
+        {
+            snowFlakes.Clear();
+            spawnTimer = 0;
+        }
+    }
+
+    public class SnowFlake
+    {
+        public Vector2 Position { get; set; }
+        public Vector2 Velocity { get; set; }
+        public Vector4 Color { get; set; }
+        public float Life { get; set; }
+        public float MaxLife { get; set; }
+        public float Size { get; set; }
+        public float NoiseOffset { get; set; }
+        public float SwayAmount { get; set; }
+
+        public bool IsAlive => Life > 0;
+
+        public void Update(float deltaTime)
+        {
+            Life -= deltaTime;
+            
+            // Add gentle swaying motion
+            float swayX = MathF.Sin(Life * 1.5f + NoiseOffset) * SwayAmount * deltaTime;
+            Vector2 sway = new Vector2(swayX, 0);
+            
+            Position += (Velocity + sway) * deltaTime;
+
+            // Gentle fade as it ages (but keep mostly visible)
+            float lifeFraction = Life / MaxLife;
+            // Keep snowflakes more visible for longer - only fade in the last 20% of their life
+            float alpha = lifeFraction < 0.2f ? (lifeFraction / 0.2f) * 0.9f : 0.9f;
+            Color = new Vector4(Color.X, Color.Y, Color.Z, alpha);
         }
     }
 

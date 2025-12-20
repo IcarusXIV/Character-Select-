@@ -39,6 +39,7 @@ namespace CharacterSelectPlugin
         public Dictionary<string, string> LastUsedCharacterByPlayer { get; set; } = new();
         public Dictionary<string, string> CharacterAssignments { get; set; } = new();
         public bool EnableLastUsedCharacterAutoload { get; set; } = false;
+        public bool EnableLastUsedDesignAutoload { get; set; } = false;
         public string? LastSessionId { get; set; } = null;
         public string? PreviousSessionId { get; set; }
         [JsonProperty]
@@ -74,7 +75,11 @@ namespace CharacterSelectPlugin
         public bool QuickSwitchCompact { get; set; } = false;
         public bool EnableCharacterHoverEffects { get; set; } = false;
         
-        // Seasonal Theme Settings
+        // Theme Settings
+        public ThemeSelection SelectedTheme { get; set; } = ThemeSelection.Current;
+        
+        // Legacy setting - kept for backward compatibility during migration
+        [Obsolete("Use SelectedTheme instead")]
         public bool UseSeasonalTheme { get; set; } = false;
         
         public HashSet<string> FavoriteGalleryProfiles { get; set; } = new();

@@ -40,7 +40,7 @@ namespace CharacterSelectPlugin.Effects
 
         public bool IsActive => isActive && elapsed < duration;
 
-        public void Trigger(Vector2 position, bool isFavorited)
+        public void Trigger(Vector2 position, bool isFavorited, Configuration? config = null)
         {
             particles.Clear();
             origin = position;
@@ -50,9 +50,31 @@ namespace CharacterSelectPlugin.Effects
             var random = new Random();
             int particleCount = isFavorited ? 12 : 8; // Favouriting
 
-            Vector4 baseColor = isFavorited
-                ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favourited
-                : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Gray for unfavourited
+            Vector4 baseColor;
+            
+            // Check for seasonal themes
+            if (config != null && SeasonalThemeManager.IsSeasonalThemeEnabled(config))
+            {
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(config);
+                if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                {
+                    baseColor = isFavorited
+                        ? new Vector4(1f, 1f, 1f, 1f) // Pure white for winter/Christmas favorites
+                        : new Vector4(0.7f, 0.7f, 0.8f, 1f); // Light gray for unfavorited
+                }
+                else
+                {
+                    baseColor = isFavorited
+                        ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favorited (default/other themes)
+                        : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Gray for unfavorited
+                }
+            }
+            else
+            {
+                baseColor = isFavorited
+                    ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favorited (default)
+                    : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Gray for unfavorited
+            }
 
             for (int i = 0; i < particleCount; i++)
             {

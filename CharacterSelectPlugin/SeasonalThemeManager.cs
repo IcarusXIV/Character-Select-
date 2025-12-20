@@ -7,7 +7,17 @@ namespace CharacterSelectPlugin
     {
         Default,
         Halloween,
-        Christmas
+        Christmas,
+        Winter
+    }
+
+    public enum ThemeSelection
+    {
+        Current,      // Auto-seasonal based on date
+        Default,      // Always use default theme
+        Halloween,    // Always use Halloween theme
+        Christmas,    // Always use Christmas theme
+        Winter        // Always use Winter theme
     }
 
     public class SeasonalThemeColors
@@ -32,9 +42,15 @@ namespace CharacterSelectPlugin
             if (month == 10)
                 return SeasonalTheme.Halloween;
             
-            // Christmas/Winter: November - December (when winter theme is ready)
-            if (month == 11 || month == 12)
+            // Christmas: December 24th and 25th only
+            if (month == 12 && (day == 24 || day == 25))
                 return SeasonalTheme.Christmas;
+            
+            // Winter: November through March (excluding Christmas days)
+            if (month == 11 || 
+                (month == 12 && day != 24 && day != 25) || 
+                month == 1 || month == 2 || month == 3)
+                return SeasonalTheme.Winter;
 
             return SeasonalTheme.Default;
         }
@@ -54,12 +70,21 @@ namespace CharacterSelectPlugin
                 },
                 SeasonalTheme.Christmas => new SeasonalThemeColors
                 {
-                    PrimaryAccent = new Vector4(0.8f, 0.2f, 0.2f, 1.0f),        // Red
-                    SecondaryAccent = new Vector4(0.2f, 0.7f, 0.3f, 1.0f),      // Green
-                    IconTint = new Vector4(1.0f, 0.84f, 0.0f, 1.0f),            // Gold
-                    GlowColor = new Vector4(1.0f, 0.84f, 0.0f, 0.6f),           // Gold Glow
+                    PrimaryAccent = new Vector4(0.95f, 0.15f, 0.15f, 1.0f),     // Vibrant saturated red
+                    SecondaryAccent = new Vector4(0.15f, 0.85f, 0.25f, 1.0f),   // Vibrant saturated green
+                    IconTint = new Vector4(1.0f, 0.85f, 0.0f, 1.0f),            // Bright gold
+                    GlowColor = new Vector4(1.0f, 0.85f, 0.0f, 0.6f),           // Bright gold glow
                     ParticleColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f),        // Snow white
-                    BackgroundTint = new Vector4(0.05f, 0.1f, 0.15f, 0.3f)      // Cool blue tint
+                    BackgroundTint = new Vector4(0.08f, 0.05f, 0.05f, 0.3f)     // Warm red tint
+                },
+                SeasonalTheme.Winter => new SeasonalThemeColors
+                {
+                    PrimaryAccent = new Vector4(0.6f, 0.8f, 1.0f, 1.0f),        // Icy blue
+                    SecondaryAccent = new Vector4(0.9f, 0.95f, 1.0f, 1.0f),     // Pale white
+                    IconTint = new Vector4(0.8f, 0.9f, 1.0f, 1.0f),             // Cool silver
+                    GlowColor = new Vector4(0.6f, 0.8f, 1.0f, 0.6f),            // Icy blue glow
+                    ParticleColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f),        // Snow white
+                    BackgroundTint = new Vector4(0.05f, 0.08f, 0.15f, 0.3f)     // Cool blue-gray tint
                 },
                 _ => new SeasonalThemeColors
                 {
@@ -75,24 +100,39 @@ namespace CharacterSelectPlugin
 
         public static bool IsSeasonalThemeEnabled(Configuration config)
         {
-            return config.UseSeasonalTheme;
+            // Legacy support: if old setting was true and no new selection made, default to Current
+            if (config.UseSeasonalTheme && config.SelectedTheme == ThemeSelection.Current)
+                return true;
+            
+            return config.SelectedTheme != ThemeSelection.Default;
+        }
+
+        public static SeasonalTheme GetEffectiveTheme(Configuration config)
+        {
+            return config.SelectedTheme switch
+            {
+                ThemeSelection.Current => GetCurrentSeasonalTheme(),
+                ThemeSelection.Default => SeasonalTheme.Default,
+                ThemeSelection.Halloween => SeasonalTheme.Halloween,
+                ThemeSelection.Christmas => SeasonalTheme.Christmas,
+                ThemeSelection.Winter => SeasonalTheme.Winter,
+                _ => SeasonalTheme.Default
+            };
         }
 
         public static SeasonalThemeColors GetCurrentThemeColors(Configuration config)
         {
-            if (!IsSeasonalThemeEnabled(config))
-                return GetThemeColors(SeasonalTheme.Default);
-
-            var currentTheme = GetCurrentSeasonalTheme();
-            return GetThemeColors(currentTheme);
+            var effectiveTheme = GetEffectiveTheme(config);
+            return GetThemeColors(effectiveTheme);
         }
 
         public static string GetThemeDisplayName(SeasonalTheme theme)
         {
             return theme switch
             {
-                SeasonalTheme.Halloween => "🎃 Halloween",
-                SeasonalTheme.Christmas => "🎄 Winter/Christmas",
+                SeasonalTheme.Halloween => "Halloween",
+                SeasonalTheme.Christmas => "Christmas",
+                SeasonalTheme.Winter => "Winter",
                 _ => "Default"
             };
         }
@@ -102,8 +142,36 @@ namespace CharacterSelectPlugin
             return theme switch
             {
                 SeasonalTheme.Halloween => "Halloween",
-                SeasonalTheme.Christmas => "Winter/Christmas",
+                SeasonalTheme.Christmas => "Christmas",
+                SeasonalTheme.Winter => "Winter",
                 _ => "Default"
+            };
+        }
+
+        public static string GetThemeSelectionDisplayName(ThemeSelection selection)
+        {
+            return selection switch
+            {
+                ThemeSelection.Current => "Current Season",
+                ThemeSelection.Default => "Default",
+                ThemeSelection.Halloween => "Halloween",
+                ThemeSelection.Christmas => "Christmas",
+                ThemeSelection.Winter => "Winter",
+                _ => "Default"
+            };
+        }
+
+        public static string GetThemeSelectionDescription(ThemeSelection selection)
+        {
+            var currentSeason = GetThemeDisplayName(GetCurrentSeasonalTheme());
+            return selection switch
+            {
+                ThemeSelection.Current => $"Auto-seasonal theme (currently: {currentSeason})",
+                ThemeSelection.Default => "Standard blue theme",
+                ThemeSelection.Halloween => "Orange and purple Halloween theme",
+                ThemeSelection.Christmas => "Red, green, and gold Christmas theme",
+                ThemeSelection.Winter => "Icy blue and white winter theme",
+                _ => "Standard theme"
             };
         }
     }

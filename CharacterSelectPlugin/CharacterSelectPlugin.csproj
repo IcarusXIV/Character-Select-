@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="Dalamud.NET.Sdk/13.0.0">
+<Project Sdk="Dalamud.NET.Sdk/14.0.1">
     <PropertyGroup>
-        <TargetFramework>net9.0-windows</TargetFramework>
+        <TargetFramework>net10.0-windows</TargetFramework>
         <!-- Windows-specific target framework -->
-        <Version>2.0.1.3</Version>
-        <Description>Character Select+.</Description>
+        <Version>2.0.1.4</Version>
+        <Description>Instant Character Switching Made Simple. Create and save character profiles, then switch between them instantly. Applies Penumbra Collections, Glamourer Designs, Customize+ Profiles, Honorifics, Moodles, and Idles. Perfect for roleplayers, gposers, and anyone who loves seamless character customization.</Description>
         <PackageProjectUrl>https://github.com/USBTURTLECUP/Character-Select-</PackageProjectUrl>
         <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
         <IsPackable>false</IsPackable>
@@ -25,7 +25,4 @@
         </Content>
     </ItemGroup>
 
-    <ItemGroup>
-        <Folder Include="Header Files\" />
-    </ItemGroup>
 </Project>

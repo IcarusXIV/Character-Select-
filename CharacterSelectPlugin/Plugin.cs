@@ -51,7 +51,8 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
 
-        public static readonly string CurrentPluginVersion = "2.0.1.3"; // Match repo.json and .csproj version
+        private static readonly string Version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "(Unknown Version)";
+        public static readonly string CurrentPluginVersion = Version; // Match repo.json and .csproj version
 
 
         private const string CommandName = "/select";
@@ -434,7 +435,7 @@ namespace CharacterSelectPlugin
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
             {
-                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, /select random for random selection, /select jobchange on|off to toggle reapply on job change, or /select save [CR] to save current look as design."
+                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, /select random for random selection, /select jobchange on|off to toggle reapply on job change, /select mods to open Mod Manager, or /select save [CR] to save current look as design."
             });
             // Idles
             CommandManager.AddHandler("/sidle", new CommandInfo((_, args) =>
@@ -507,6 +508,7 @@ namespace CharacterSelectPlugin
             });
             ClientState.Login += () =>
             {
+                lastAppliedCharacter = null;
                 Plugin.Log.Debug($"[Character Select+] Local character name: {ClientState.LocalPlayer?.Name.TextValue}");
             };
 
@@ -577,6 +579,20 @@ namespace CharacterSelectPlugin
         {
             if (ClientState.LocalPlayer?.Address is not nint address || address == IntPtr.Zero)
                 return;
+
+            // Check if current character is assigned "None" - skip pose application
+            if (ClientState.LocalPlayer != null && ClientState.LocalPlayer.HomeWorld.IsValid)
+            {
+                string world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{ClientState.LocalPlayer.Name.TextValue}@{world}";
+                
+                if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName) && 
+                    assignedCharacterName == "None")
+                {
+                    Plugin.Log.Debug($"[ApplyStoredPoses] Character {fullKey} assigned 'None' - skipping pose application");
+                    return;
+                }
+            }
 
             var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
             if (character == null)
@@ -838,7 +854,12 @@ namespace CharacterSelectPlugin
                 
                 // Apply the design's macro (use advanced macro for CR mode)
                 string macroText = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
-                ExecuteMacro(macroText);
+                ExecuteMacro(macroText, character, design.Name);
+                
+                // Track last used design for auto-reapplication (only for auto-reapplication and commands, not UI)
+                Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
+                Configuration.LastUsedDesignCharacterKey = character.Name;
+                Configuration.Save();
             }
             else
             {
@@ -1015,7 +1036,7 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random [Character Name], /select jobchange on|off, or /select save [CR]");
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random [Character Name], /select jobchange on|off, /select mods, or /select save [CR]");
                 return;
             }
 
@@ -1074,6 +1095,36 @@ namespace CharacterSelectPlugin
                 return;
             }
 
+            // Handle mods subcommand
+            if (args.Trim().Equals("mods", StringComparison.OrdinalIgnoreCase))
+            {
+                if (SecretModeModWindow != null)
+                {
+                    if (SecretModeModWindow.IsOpen)
+                    {
+                        SecretModeModWindow.IsOpen = false;
+                    }
+                    else
+                    {
+                        // Open the mod manager in standalone mode (no specific character/design context)
+                        SecretModeModWindow.Open(
+                            characterIndex: null,
+                            existingSelection: null,
+                            existingPins: null,
+                            saveCallback: null,
+                            savePinsCallback: null,
+                            design: null,
+                            characterName: "Standalone Browser"
+                        );
+                    }
+                }
+                else
+                {
+                    ChatGui.PrintError("[Character Select+] Mod Manager is not available");
+                }
+                return;
+            }
+
             // Rest of the existing method remains the same...
             var matches = Regex.Matches(args, "\"([^\"]+)\"|\\S+")
                 .Cast<Match>()
@@ -1082,7 +1133,7 @@ namespace CharacterSelectPlugin
 
             if (matches.Length < 1)
             {
-                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, or /select save [CR]");
+                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, /select mods, or /select save [CR]");
                 return;
             }
 
@@ -1475,6 +1526,21 @@ namespace CharacterSelectPlugin
                         Configuration.EnableAutomations
                     );
 
+                    // If this is a CR Character, make the auto-design inherit the CR mod state
+                    if (Configuration.EnableConflictResolution && NewSecretModState != null && NewSecretModState.Any())
+                    {
+                        // Copy the character's mod state to the design
+                        defaultDesign.SecretModState = new Dictionary<string, bool>(NewSecretModState);
+                        
+                        // Copy pin overrides if any exist
+                        if (NewSecretModPins != null && NewSecretModPins.Any())
+                        {
+                            // Design pin overrides would unpin character pins, but for auto-generated design,
+                            // we want to keep the same pins, so we don't set SecretModPinOverrides
+                        }
+                        
+                        Log.Information($"Auto-generated design '{defaultDesignName}' inherited CR mod state with {NewSecretModState.Count} mod selections");
+                    }
 
                     newCharacter.Designs.Add(defaultDesign); // Automatically add the default design
                 }
@@ -2846,6 +2912,19 @@ namespace CharacterSelectPlugin
 
                 if (!Configuration.EnableAutomations)
                 {
+                    // Check if current character has any assignment - skip job change reapplication to let assignment logic handle it
+                    if (player.HomeWorld.IsValid)
+                    {
+                        string world = player.HomeWorld.Value.Name.ToString();
+                        string fullKey = $"{player.Name.TextValue}@{world}";
+                        
+                        if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName))
+                        {
+                            Plugin.Log.Debug($"[JobSwitch] Character {fullKey} has assignment '{assignedCharacterName}' - skipping job change reapplication to let assignment logic handle it");
+                            return;
+                        }
+                    }
+
                     Plugin.Log.Debug($"[JobSwitch] Detected job change: {oldJob} → {currentJobId}");
                     var reapplied = false;
 
@@ -3120,7 +3199,9 @@ namespace CharacterSelectPlugin
                 if (assignedCharacter != null)
                 {
                     Plugin.Log.Debug($"[AutoLoad-Assignment] ✅ Applying assigned character {assignedCharacter.Name} for {fullKey}");
-                    ApplyProfile(assignedCharacter, -1);
+                    int designIndex = GetLastUsedDesignIndex(assignedCharacter);
+                    Plugin.Log.Debug($"[AutoLoad-Assignment] Design index for {assignedCharacter.Name}: {designIndex}");
+                    ApplyProfile(assignedCharacter, designIndex);
                     lastAppliedCharacter = fullKey;
                     characterAlreadyAppliedOnStartup = true; // Mark as handled
                     return;
@@ -3146,7 +3227,9 @@ namespace CharacterSelectPlugin
                 if (character != null)
                 {
                     Plugin.Log.Debug($"[AutoLoad-LastUsed] ✅ Applying {character.Name} for {fullKey}");
-                    ApplyProfile(character, -1);
+                    int designIndex = GetLastUsedDesignIndex(character);
+                    Plugin.Log.Debug($"[AutoLoad-LastUsed] Design index for {character.Name}: {designIndex}");
+                    ApplyProfile(character, designIndex);
                     lastAppliedCharacter = fullKey;
                     characterAlreadyAppliedOnStartup = true; // Mark as handled
                 }
@@ -3161,6 +3244,42 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug($"[AutoLoad] ❌ No assignment or previous character stored for {fullKey}");
             }
         }
+        
+        private int GetLastUsedDesignIndex(Character character)
+        {
+            // Return -1 (no design) if design auto-reapplication is disabled
+            if (!Configuration.EnableLastUsedDesignAutoload)
+            {
+                Plugin.Log.Debug($"[AutoLoad-Design] Design auto-reapplication is disabled");
+                return -1;
+            }
+            
+            Plugin.Log.Debug($"[AutoLoad-Design] Design auto-reapplication is ENABLED for {character.Name}");
+            
+            // Try to get the last used design for this character
+            if (Configuration.LastUsedDesignByCharacter.TryGetValue(character.Name, out var lastDesignName))
+            {
+                // Find the design with the matching name
+                var design = character.Designs.FirstOrDefault(d => d.Name.Equals(lastDesignName, StringComparison.OrdinalIgnoreCase));
+                if (design != null)
+                {
+                    int designIndex = character.Designs.IndexOf(design);
+                    Plugin.Log.Debug($"[AutoLoad-Design] ✅ Found last used design '{lastDesignName}' at index {designIndex} for {character.Name}");
+                    return designIndex;
+                }
+                else
+                {
+                    Plugin.Log.Debug($"[AutoLoad-Design] ❌ Last used design '{lastDesignName}' not found for {character.Name}");
+                }
+            }
+            else
+            {
+                Plugin.Log.Debug($"[AutoLoad-Design] ❌ No last used design stored for {character.Name}");
+            }
+            
+            return -1; // No design or not found
+        }
+        
         public string FilterJobChangeCommands(string macro)
         {
             if (string.IsNullOrWhiteSpace(macro))
@@ -3272,7 +3391,6 @@ namespace CharacterSelectPlugin
 
             // Apply character first
             ExecuteMacro(selectedCharacter.Macros, selectedCharacter, null);
-            SetActiveCharacter(selectedCharacter);
 
             // Switch Penumbra UI collection to match the character's collection
             if (!string.IsNullOrEmpty(selectedCharacter.PenumbraCollection))
@@ -3332,6 +3450,16 @@ namespace CharacterSelectPlugin
                 activeCharacter = selectedCharacter;
                 shouldApplyPoses = true;
             }
+
+            // Update character tracking for job change and quick switch features
+            if (ClientState.LocalPlayer != null)
+            {
+                string playerKey = ClientState.LocalPlayer.Name.ToString();
+                Configuration.LastUsedCharacterByPlayer[playerKey] = selectedCharacter.Name;
+            }
+
+            // Update Quick Switch window to reflect the new selection (same as normal character click)
+            QuickSwitchWindow.UpdateSelectionFromCharacter(selectedCharacter);
 
             // Send themed chat message if enabled
             if (Configuration.ShowRandomSelectionChatMessages)
@@ -3404,7 +3532,12 @@ namespace CharacterSelectPlugin
             
             // Check if Halloween theme is active
             bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(Configuration) && 
-                              SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween;
+                              SeasonalThemeManager.GetEffectiveTheme(Configuration) == SeasonalTheme.Halloween;
+            
+            // Check if Winter/Christmas theme is active
+            bool isWinterChristmas = SeasonalThemeManager.IsSeasonalThemeEnabled(Configuration) &&
+                                    (SeasonalThemeManager.GetEffectiveTheme(Configuration) == SeasonalTheme.Winter ||
+                                     SeasonalThemeManager.GetEffectiveTheme(Configuration) == SeasonalTheme.Christmas);
             
             if (isHalloween)
             {
@@ -3435,6 +3568,50 @@ namespace CharacterSelectPlugin
                 };
                 
                 var selectedMessage = halloweenMessages[random.Next(halloweenMessages.Length)];
+                selectedMessage(builder, characterName);
+            }
+            else if (isWinterChristmas)
+            {
+                // Add silver/white plugin prefix for Winter/Christmas
+                builder.AddText("[").AddWhite("Character Select+", true).AddText("] ");
+                
+                // Winter/Christmas themed messages with blue text and white character names
+                var winterMessages = new System.Action<SeStringBuilder, string>[]
+                {
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was touched by winter magic...", false),
+                    (b, name) => b.AddBlue("Crystalline frost transformed ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was blessed by snowfall...", false),
+                    (b, name) => b.AddBlue("The spirit of winter embraced ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" received a frosty makeover...", false),
+                    (b, name) => b.AddBlue("Icicle magic reshaped ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was gifted by winter winds...", false),
+                    (b, name) => b.AddBlue("A Christmas miracle changed ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was wrapped in holiday cheer...", false),
+                    (b, name) => b.AddBlue("Seasonal enchantment visited ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" received festive inspiration...", false),
+                    (b, name) => b.AddBlue("The magic of the season touched ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was blessed with winter wonder...", false),
+                    (b, name) => b.AddBlue("Holiday spirit transformed ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was kissed by snowflakes...", false),
+                    (b, name) => b.AddBlue("A winter's dream reshaped ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" was touched by frost magic...", false),
+                    (b, name) => b.AddBlue("Festive energy flowed through ", false).AddWhite(name, true).AddBlue("...", false),
+                    // Gift-opening themed messages
+                    (b, name) => b.AddWhite(name, true).AddBlue(" unwrapped a magical transformation...", false),
+                    (b, name) => b.AddBlue("A festive surprise awaited ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" discovered holiday magic in their gift box...", false),
+                    (b, name) => b.AddBlue("A wrapped present transformed ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" opened a winter wonderland makeover...", false),
+                    (b, name) => b.AddBlue("Surprise gift magic changed ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" revealed a Christmas surprise transformation...", false),
+                    (b, name) => b.AddBlue("A magical holiday package blessed ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" unwrapped their festive destiny...", false),
+                    (b, name) => b.AddBlue("Gift box magic flowed through ", false).AddWhite(name, true).AddBlue("...", false),
+                    (b, name) => b.AddWhite(name, true).AddBlue(" found seasonal enchantment in a wrapped box...", false),
+                    (b, name) => b.AddBlue("A surprise gift revealed ", false).AddWhite(name, true).AddBlue("'s new form...", false)
+                };
+                
+                var selectedMessage = winterMessages[random.Next(winterMessages.Length)];
                 selectedMessage(builder, characterName);
             }
             else

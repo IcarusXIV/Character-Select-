@@ -355,17 +355,45 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             DrawTooltip("Characters grow slightly when hovered over for visual feedback.");
 
-            // Use Seasonal Theme
-            bool useSeasonalTheme = plugin.Configuration.UseSeasonalTheme;
-            if (ImGui.Checkbox("Use Seasonal Theme", ref useSeasonalTheme))
+            // Theme Selection
+            DrawFixedSetting("Theme:", labelWidth, inputWidth, () =>
             {
-                plugin.Configuration.UseSeasonalTheme = useSeasonalTheme;
-                plugin.SaveConfiguration();
-            }
-            
-            var currentTheme = SeasonalThemeManager.GetCurrentSeasonalTheme();
-            var themeName = SeasonalThemeManager.GetThemeDisplayNameSafe(currentTheme);
-            DrawTooltip($"Apply seasonal visual themes to the interface. Current season: {themeName}");
+                var currentSelection = plugin.Configuration.SelectedTheme;
+                var displayName = SeasonalThemeManager.GetThemeSelectionDisplayName(currentSelection);
+                
+                if (ImGui.BeginCombo("##ThemeDropdown", displayName))
+                {
+                    foreach (ThemeSelection theme in Enum.GetValues<ThemeSelection>())
+                    {
+                        var themeDisplayName = SeasonalThemeManager.GetThemeSelectionDisplayName(theme);
+                        var description = SeasonalThemeManager.GetThemeSelectionDescription(theme);
+                        
+                        if (ImGui.Selectable(themeDisplayName, currentSelection == theme))
+                        {
+                            plugin.Configuration.SelectedTheme = theme;
+                            plugin.Configuration.Save();
+                            
+                            // Legacy migration: sync with old setting for compatibility
+                            plugin.Configuration.UseSeasonalTheme = (theme == ThemeSelection.Current);
+                        }
+                        
+                        // Only show tooltip for Current Season option
+                        if (ImGui.IsItemHovered() && theme == ThemeSelection.Current)
+                        {
+                            ImGui.SetTooltip(description);
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+                
+                // Only show tooltip for the Theme dropdown if Current Season is selected
+                if (currentSelection == ThemeSelection.Current)
+                {
+                    var currentTheme = SeasonalThemeManager.GetCurrentSeasonalTheme();
+                    var seasonDescription = $"Currently auto-applying: {SeasonalThemeManager.GetThemeDisplayNameSafe(currentTheme)}";
+                    DrawTooltip(seasonDescription);
+                }
+            });
 
             ImGui.Spacing();
         }
@@ -406,6 +434,20 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.Configuration.Save();
             }
             DrawTooltip("Automatically applies the last character you used when logging into the game.");
+
+            // Design auto-reapplication setting - only show if character auto-reapplication is enabled
+            if (enableAutoload)
+            {
+                ImGui.Indent(20f);
+                bool enableDesignAutoload = plugin.Configuration.EnableLastUsedDesignAutoload;
+                if (ImGui.Checkbox("Also Apply Last Used Design", ref enableDesignAutoload))
+                {
+                    plugin.Configuration.EnableLastUsedDesignAutoload = enableDesignAutoload;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("When enabled, also automatically applies the last design you used for that character when logging in.\nRequires 'Auto-Apply Last Used Character on Login' to be enabled.");
+                ImGui.Unindent(20f);
+            }
 
             bool applyIdle = plugin.Configuration.ApplyIdleOnLogin;
             if (ImGui.Checkbox("Apply idle pose on login", ref applyIdle))

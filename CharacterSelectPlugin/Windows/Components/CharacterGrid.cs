@@ -21,6 +21,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string selectedTag = "All";
         private bool showTagFilter = false;
         private Dictionary<int, FavoriteSparkEffect> characterFavoriteEffects = new();
+        private Dictionary<int, WinterSnowEffect> characterSnowEffects = new();
         private FogSequenceEffect fogEffect;
 
         // Drag and drop state
@@ -107,17 +108,24 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Apply the flags to window
             
-            // Draw Halloween spider webs and fog behind everything (before toolbar)
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            // Draw seasonal background effects behind everything (before toolbar)
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
-                DrawHalloweenSpiderWebs();
-                
-                // Set fog area right before drawing
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 Vector2 windowSize = ImGui.GetWindowSize();
-                fogEffect?.SetEffectArea(windowSize);
                 
-                fogEffect?.Draw(); // Draw fog on same layer as spider webs
+                if (effectiveTheme == SeasonalTheme.Halloween)
+                {
+                    DrawHalloweenSpiderWebs();
+                    
+                    // Set fog area right before drawing
+                    fogEffect?.SetEffectArea(windowSize);
+                    fogEffect?.Draw(); // Draw fog on same layer as spider webs
+                }
+                else if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                {
+                    // Corner line decorations removed per user request
+                }
             }
             
             DrawToolbar(totalScale);
@@ -145,17 +153,21 @@ namespace CharacterSelectPlugin.Windows.Components
                 effect.Update(deltaTime);
             }
             
-            // Update fog effect for Halloween theme
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            // Update seasonal background effects
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
-                // Set fog effect area to current window content region
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 Vector2 contentSize = ImGui.GetContentRegionAvail();
-                if (contentSize.X > 0 && contentSize.Y > 0)
+                
+                if (effectiveTheme == SeasonalTheme.Halloween)
                 {
-                    fogEffect.SetEffectArea(contentSize);
+                    // Update fog effect for Halloween theme
+                    if (contentSize.X > 0 && contentSize.Y > 0)
+                    {
+                        fogEffect.SetEffectArea(contentSize);
+                    }
+                    fogEffect.Update(deltaTime);
                 }
-                fogEffect.Update(deltaTime);
             }
         }
 
@@ -353,6 +365,162 @@ namespace CharacterSelectPlugin.Windows.Components
                     Vector2 point2 = corner + new Vector2((float)Math.Cos(angle2), (float)Math.Sin(angle2)) * ringSize;
                     
                     drawList.AddLine(point1, point2, color, 0.6f);
+                }
+            }
+        }
+
+        private void DrawWinterSnowDecorations()
+        {
+            // Simple window corner decorations - just like Halloween spider webs
+            var drawList = ImGui.GetWindowDrawList();
+            var windowPos = ImGui.GetWindowPos();
+            var windowSize = ImGui.GetWindowSize();
+            
+            var snowColor = new Vector4(0.95f, 0.98f, 1.0f, 0.6f);
+            uint color = ImGui.GetColorU32(snowColor);
+            
+            float snowSize = 50f;
+            
+            // Draw simple snow decorations at window corners - same as Halloween
+            Vector2 cornerTL = windowPos;
+            Vector2 cornerTR = windowPos + new Vector2(windowSize.X, 0);
+            Vector2 cornerBR = windowPos + new Vector2(windowSize.X, windowSize.Y);
+            
+            // Simple icicle lines at corners
+            for (int i = 0; i < 3; i++)
+            {
+                float offset = (i + 1) * snowSize / 4;
+                
+                // Top-left icicles
+                drawList.AddLine(
+                    cornerTL + new Vector2(offset, 0),
+                    cornerTL + new Vector2(offset, snowSize * 0.6f + i * 3f),
+                    color, 1.5f);
+                    
+                // Top-right icicles  
+                drawList.AddLine(
+                    cornerTR + new Vector2(-offset, 0),
+                    cornerTR + new Vector2(-offset, snowSize * 0.6f + i * 3f),
+                    color, 1.5f);
+            }
+        }
+
+
+        private void DrawCharacterCardIcicles(ImDrawListPtr drawList, Vector2 cardMin, float cardWidth, float imageHeight, float scale)
+        {
+            // Draw icicle triangles hanging from bottom of character card
+            var iceColor = new Vector4(0.85f, 0.95f, 1.0f, 1.0f); // More opaque for visibility
+            uint iceColorU32 = ImGui.GetColorU32(iceColor);
+            
+            var random = new Random(42); // Fixed seed for consistent icicles per card
+            
+            // Generate 4-6 icicles distributed along the bottom edge 
+            int icicleCount = 4 + random.Next(3);
+            for (int i = 0; i < icicleCount; i++)
+            {
+                // Position icicles across the bottom edge - keep them away from edges
+                float edgeMargin = cardWidth * 0.1f; // 10% margin from each edge
+                float availableWidth = cardWidth - (2 * edgeMargin);
+                float x = cardMin.X + edgeMargin + (availableWidth * ((float)i / (icicleCount - 1)));
+                float length = 15f + random.NextSingle() * 10f; // Longer icicles
+                float width = 3f + random.NextSingle() * 2f; // Wider icicles
+                
+                // Create icicle triangle hanging down from bottom border of the card
+                float cardBottom = cardMin.Y + imageHeight + (65f * scale); // Move up slightly
+                Vector2 topLeft = new Vector2(x - width, cardBottom);
+                Vector2 topRight = new Vector2(x + width, cardBottom);
+                Vector2 bottom = new Vector2(x, cardBottom + length);
+                
+                // Draw icicle triangle with bright color for testing
+                drawList.AddTriangleFilled(topLeft, topRight, bottom, iceColorU32);
+                
+                // Add highlight line
+                Vector2 highlight1 = topLeft + new Vector2(0.3f, 0);
+                Vector2 highlight2 = bottom + new Vector2(-0.3f, 0);
+                drawList.AddLine(highlight1, highlight2, ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, 0.8f)), 1.5f);
+            }
+            
+            // Add gentle snow particles falling from character card edges
+            DrawCharacterCardSnowParticles(drawList, cardMin, cardWidth, imageHeight, scale);
+        }
+
+        private void DrawCharacterCardSnowParticles(ImDrawListPtr drawList, Vector2 cardMin, float cardWidth, float imageHeight, float scale)
+        {
+            var snowColor = new Vector4(0.95f, 0.98f, 1.0f, 0.6f);
+            uint snowColorU32 = ImGui.GetColorU32(snowColor);
+            
+            var random = new Random(123); // Different seed for particles
+            
+            // Snow particles falling from bottom edge
+            int bottomParticles = 8 + random.Next(5); // 8-12 particles
+            float cardBottom = cardMin.Y + imageHeight + (65f * scale);
+            for (int i = 0; i < bottomParticles; i++)
+            {
+                float x = cardMin.X + (cardWidth * random.NextSingle());
+                float fallDistance = 20f + (random.NextSingle() * 30f);
+                float particleSize = 0.8f + (random.NextSingle() * 1.2f);
+                
+                Vector2 particlePos = new Vector2(x, cardBottom + fallDistance);
+                drawList.AddCircleFilled(particlePos, particleSize, snowColorU32);
+            }
+            
+            // Snow particles falling from left side - more particles
+            int leftParticles = 8 + random.Next(5); // 8-12 particles
+            for (int i = 0; i < leftParticles; i++)
+            {
+                float y = cardMin.Y + (imageHeight * random.NextSingle());
+                float fallDistance = 8f + (random.NextSingle() * 25f); // Slightly wider spread
+                float particleSize = 0.6f + (random.NextSingle() * 1.0f);
+                
+                Vector2 particlePos = new Vector2(cardMin.X - fallDistance, y);
+                drawList.AddCircleFilled(particlePos, particleSize, snowColorU32);
+            }
+            
+            // Snow particles falling from right side - more particles
+            int rightParticles = 8 + random.Next(5); // 8-12 particles
+            for (int i = 0; i < rightParticles; i++)
+            {
+                float y = cardMin.Y + (imageHeight * random.NextSingle());
+                float fallDistance = 8f + (random.NextSingle() * 25f); // Slightly wider spread
+                float particleSize = 0.6f + (random.NextSingle() * 1.0f);
+                
+                Vector2 particlePos = new Vector2(cardMin.X + cardWidth + fallDistance, y);
+                drawList.AddCircleFilled(particlePos, particleSize, snowColorU32);
+            }
+        }
+
+        private void DrawCharacterCardSnowOverlay(ImDrawListPtr drawList, Vector2 cardMin, float cardWidth, float imageHeight, float scale, float hoverAmount)
+        {
+            // Load snow.png from Assets folder
+            string pluginDirectory = plugin.PluginDirectory;
+            string snowImagePath = Path.Combine(pluginDirectory, "Assets", "snow.png");
+            
+            if (File.Exists(snowImagePath))
+            {
+                var snowTexture = Plugin.TextureProvider.GetFromFile(snowImagePath).GetWrapOrDefault();
+                
+                if (snowTexture != null)
+                {
+                    // Calculate snow overlay size and position for top left corner
+                    float snowSize = 50f * scale; // Slightly smaller size
+                    // Position over the glowing border at top-left corner, with extra offset
+                    var borderMargin = (4f + (hoverAmount * 2f)) * scale;
+                    float extraOffsetUp = 19f * scale; // Additional offset to move further up (reduced by 1px)
+                    float extraOffsetLeft = 4f * scale; // Even less offset to the left to move more right (reduced by 1px)
+                    Vector2 snowPos = cardMin - new Vector2(borderMargin + extraOffsetLeft, borderMargin + extraOffsetUp); // Position over the border
+                    Vector2 snowPosMax = snowPos + new Vector2(snowSize, snowSize);
+                    
+                    // Draw snow overlay with no transparency
+                    drawList.AddImageRounded(
+                        (ImTextureID)snowTexture.Handle,
+                        snowPos,
+                        snowPosMax,
+                        new Vector2(0, 0),
+                        new Vector2(1, 1),
+                        ImGui.GetColorU32(new Vector4(1, 1, 1, 1.0f)), // No transparency
+                        4f * scale, // Small rounded corners
+                        ImDrawFlags.RoundCornersAll
+                    );
                 }
             }
         }
@@ -615,15 +783,35 @@ namespace CharacterSelectPlugin.Windows.Components
 
             Vector3 borderColor = character.NameplateColor;
             
-            // Override border color for Halloween theme with alternating pattern
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            // Override border color for seasonal themes with alternating patterns
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
-                // Alternate between orange and purple based on character index
-                borderColor = index % 2 == 0 
-                    ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)    // Orange
-                    : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Purple
+                
+                switch (effectiveTheme)
+                {
+                    case SeasonalTheme.Halloween:
+                        // Alternate between orange and purple based on character index
+                        borderColor = index % 2 == 0 
+                            ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)    // Orange
+                            : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Purple
+                        break;
+                        
+                    case SeasonalTheme.Winter:
+                        // Alternate between icy blue and pale white based on character index
+                        borderColor = index % 2 == 0 
+                            ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)     // Icy blue
+                            : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Pale white
+                        break;
+                        
+                    case SeasonalTheme.Christmas:
+                        // Alternate between red and green based on character index
+                        borderColor = index % 2 == 0 
+                            ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)     // Red
+                            : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Green
+                        break;
+                }
             }
             
             float borderIntensity = 0.6f + hoverAmount * 0.4f;
@@ -647,6 +835,18 @@ namespace CharacterSelectPlugin.Windows.Components
             );
 
             var drawList = ImGui.GetWindowDrawList();
+            
+            // Draw winter icicles BEHIND character cards - before background is drawn
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+            {
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+                if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                {
+                    // Draw icicles behind the character card
+                    DrawCharacterCardIcicles(drawList, wiggleCardMin, cardWidth, imageHeight, scale);
+                }
+            }
+            
             uint cardBgColor = ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.12f, 0.95f));
             drawList.AddRectFilled(wiggleCardMin, wiggleCardMax, cardBgColor, 12f * scale);
 
@@ -741,10 +941,20 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Draw Halloween spider webs on character cards
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+                SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Halloween)
             {
                 // Add spider webs to all character cards with hover animation
                 DrawCharacterCardSpiderWebs(drawList, wiggleCardMin, cardWidth, imageHeight, scale, hoverAmount);
+            }
+            
+            // Winter icicles now drawn behind cards earlier in the draw order
+            
+            // Draw snow.png overlay in top left corner for Winter/Christmas themes
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+                (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter || 
+                 SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
+            {
+                DrawCharacterCardSnowOverlay(drawList, wiggleCardMin, cardWidth, imageHeight, scale, hoverAmount);
             }
 
             DrawIntegratedNameplate(character, wiggleCardMin, cardWidth, imageHeight, nameplateHeight, index, hoverAmount, scale);
@@ -840,15 +1050,28 @@ namespace CharacterSelectPlugin.Windows.Components
 
             float topRowY = nameplateMin.Y + (12 * scale);
 
-            // Favourite Star/Ghost
+            // Favourite Star/Ghost/Snowflake
             string starSymbol;
             bool usesFontAwesome = false;
             
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
-                starSymbol = "\uf6e2"; // Ghost icon (same icon, different colors for favorite/unfavorite)
-                usesFontAwesome = true;
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+                if (effectiveTheme == SeasonalTheme.Halloween)
+                {
+                    starSymbol = "\uf6e2"; // Ghost icon (same icon, different colors for favorite/unfavorite)
+                    usesFontAwesome = true;
+                }
+                else if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                {
+                    starSymbol = "\uf2dc"; // Snowflake icon (same icon, different colors for favorite/unfavorite)
+                    usesFontAwesome = true;
+                }
+                else
+                {
+                    starSymbol = character.IsFavorite ? "★" : "☆"; // Default stars
+                    usesFontAwesome = false;
+                }
             }
             else
             {
@@ -868,19 +1091,49 @@ namespace CharacterSelectPlugin.Windows.Components
             // Get star colors based on seasonal theme
             Vector4 starMainColor, starGlowColor;
             
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
-                var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
-                if (character.IsFavorite)
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+                if (effectiveTheme == SeasonalTheme.Halloween)
                 {
-                    starMainColor = themeColors.PrimaryAccent; // Orange
-                    starGlowColor = new Vector4(themeColors.GlowColor.X, themeColors.GlowColor.Y, themeColors.GlowColor.Z, 0.5f + hoverAmount * 0.3f);
+                    var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
+                    if (character.IsFavorite)
+                    {
+                        starMainColor = themeColors.PrimaryAccent; // Orange
+                        starGlowColor = new Vector4(themeColors.GlowColor.X, themeColors.GlowColor.Y, themeColors.GlowColor.Z, 0.5f + hoverAmount * 0.3f);
+                    }
+                    else
+                    {
+                        starMainColor = new Vector4(1.0f, 1.0f, 1.0f, 0.7f + hoverAmount * 0.3f); // White
+                        starGlowColor = starMainColor;
+                    }
+                }
+                else if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                {
+                    if (character.IsFavorite)
+                    {
+                        starMainColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f); // Pure white for favorited snowflake
+                        starGlowColor = new Vector4(0.8f, 0.9f, 1.0f, 0.6f + hoverAmount * 0.4f); // Icy blue glow
+                    }
+                    else
+                    {
+                        starMainColor = new Vector4(0.7f, 0.7f, 0.8f, 0.6f + hoverAmount * 0.3f); // Light gray for unfavorited
+                        starGlowColor = starMainColor;
+                    }
                 }
                 else
                 {
-                    starMainColor = new Vector4(1.0f, 1.0f, 1.0f, 0.7f + hoverAmount * 0.3f); // White
-                    starGlowColor = starMainColor;
+                    // Default colors for other seasonal themes
+                    if (character.IsFavorite)
+                    {
+                        starMainColor = new Vector4(1f, 0.9f, 0.2f, 1f); // Gold
+                        starGlowColor = new Vector4(1f, 0.8f, 0f, 0.5f + hoverAmount * 0.3f);
+                    }
+                    else
+                    {
+                        starMainColor = new Vector4(0.5f, 0.5f, 0.5f, 0.7f + hoverAmount * 0.3f); // Gray
+                        starGlowColor = starMainColor;
+                    }
                 }
             }
             else
@@ -927,7 +1180,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     Vector2 effectPos = starPos + starSize / 2;
                     if (!characterFavoriteEffects.ContainsKey(characterIndex))
                         characterFavoriteEffects[characterIndex] = new FavoriteSparkEffect();
-                    characterFavoriteEffects[characterIndex].Trigger(effectPos, actualCharacter.IsFavorite);
+                    characterFavoriteEffects[characterIndex].Trigger(effectPos, actualCharacter.IsFavorite, plugin.Configuration);
 
                     plugin.SaveConfiguration();
                     SortCharacters();
@@ -1009,15 +1262,45 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SetCursorScreenPos(new Vector2(nameplateMin.X + (8 * scale), bottomRowY));
 
-            // Halloween themed button styling or default
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() == SeasonalTheme.Halloween)
+            // Seasonal themed button styling or default
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
-                // Halloween button styling - dark orange theme
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.10f, 0.05f, 0.9f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.15f, 0.08f, 0.9f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.20f, 0.10f, 0.9f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.87f, 0.70f, 1.0f)); // Warm white text
+                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+                
+                switch (effectiveTheme)
+                {
+                    case SeasonalTheme.Halloween:
+                        // Halloween button styling - dark orange theme
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.10f, 0.05f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.15f, 0.08f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.20f, 0.10f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.87f, 0.70f, 1.0f)); // Warm white text
+                        break;
+                        
+                    case SeasonalTheme.Winter:
+                        // Winter button styling - bright blue theme
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.30f, 0.45f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.40f, 0.60f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.55f, 0.75f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.98f, 1.0f, 1.0f)); // Bright white text
+                        break;
+                        
+                    case SeasonalTheme.Christmas:
+                        // Christmas button styling - vibrant saturated red theme
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.65f, 0.15f, 0.10f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.80f, 0.22f, 0.15f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.28f, 0.20f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.98f, 0.95f, 1.0f)); // Bright warm white text
+                        break;
+                        
+                    default:
+                        // Default button styling
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+                        break;
+                }
             }
             else
             {
@@ -1799,7 +2082,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private Vector2 UpdateHalloweenWiggle(int characterIndex, int totalCharacters)
         {
             if (!SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) || 
-                SeasonalThemeManager.GetCurrentSeasonalTheme() != SeasonalTheme.Halloween)
+                SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) != SeasonalTheme.Halloween)
             {
                 return Vector2.Zero;
             }
