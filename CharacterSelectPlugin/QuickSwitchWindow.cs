@@ -200,8 +200,8 @@ namespace CharacterSelectPlugin.Windows
                 }
                 else
                 {
-                    // Dropdown is closed but don't reset flag immediately
-                    // Only reset when we detect an actual external change
+                    // Dropdown is closed but don't reset flag immediately if user just made a selection
+                    // Only reset when we detect an actual external change or after applying
                 }
 
                 selectedDesignIndex = tempDesignIndex;
@@ -223,6 +223,24 @@ namespace CharacterSelectPlugin.Windows
                 {
                     userIsInteracting = false; // Reset after applying
                     ApplySelection();
+                }
+                
+                // Check for right-click on the Apply button
+                if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                {
+                    userIsInteracting = false; // Reset after applying
+                    
+                    var io = ImGui.GetIO();
+                    if (io.KeyCtrl)
+                    {
+                        // Ctrl+Right-click: Revert to current player character
+                        RevertToCurrentPlayerCharacter();
+                    }
+                    else
+                    {
+                        // Right-click: Apply to target
+                        ApplyToTarget();
+                    }
                 }
             }
             else
@@ -519,30 +537,11 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
 
-            // Always apply the design if selected
+            // Apply character + design using the same method as chat commands
             if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
             {
-                var design = character.Designs[selectedDesignIndex];
-                
-                // Check if this is a Conflict Resolution design
-                if (design.SecretModState != null && design.SecretModState.Any())
-                {
-                    // Apply mod state asynchronously first, then execute macro with proper threading
-                    _ = Task.Run(async () =>
-                    {
-                        await plugin.ApplyDesignModState(character, design);
-                        Plugin.Framework.RunOnFrameworkThread(() => plugin.ExecuteMacro(design.Macro, character, design.Name));
-                    });
-                }
-                else
-                {
-                    // Regular design - just execute the macro
-                    plugin.ExecuteMacro(design.Macro, character, design.Name);
-                }
-                
-                plugin.Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
-                plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
-                plugin.Configuration.Save();
+                // Use the main ApplyProfile method that chat commands use
+                plugin.ApplyProfile(character, selectedDesignIndex);
             }
 
             // Apply idle pose if a valid one is set, unless design has its own idle
@@ -568,6 +567,85 @@ namespace CharacterSelectPlugin.Windows
                 plugin.PoseRestorer.RestorePosesFor(character);
             else if (character.IdlePoseIndex >= 7)
                 Plugin.Log.Debug("[QuickSwitch] Skipping idle pose restore — IdlePoseIndex is None.");
+        }
+
+        private void ApplyToTarget()
+        {
+            if (selectedCharacterIndex < 0 || selectedCharacterIndex >= plugin.Characters.Count)
+                return;
+
+            var character = plugin.Characters[selectedCharacterIndex];
+            
+            // Get target on main thread, then apply in background
+            var target = plugin.GetCurrentTarget();
+            if (target == null)
+            {
+                Plugin.ChatGui.PrintError("[Character Select+] No target selected.");
+                return;
+            }
+            
+            var targetInfo = new { ObjectIndex = target.ObjectIndex, ObjectKind = target.ObjectKind, Name = target.Name?.ToString() ?? "Unknown" };
+            var designIndex = selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count ? selectedDesignIndex : -1;
+            
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Always apply the character first (base state)
+                    await plugin.ApplyToTarget(character, -1);
+                    Plugin.Log.Information($"[QuickSwitch] Applied character {character.Name} to target: {targetInfo.Name}");
+                    
+                    // If a design is selected, apply it on top of the character
+                    if (designIndex >= 0)
+                    {
+                        await plugin.ApplyToTarget(character, designIndex);
+                        Plugin.Log.Information($"[QuickSwitch] Applied design '{character.Designs[designIndex].Name}' to target: {targetInfo.Name}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error($"[QuickSwitch] Error applying to target: {ex}");
+                }
+            });
+        }
+
+        private void RevertToCurrentPlayerCharacter()
+        {
+            // Use the currently active character from the plugin
+            if (plugin.activeCharacter != null)
+            {
+                var matchingCharacterIndex = plugin.Characters.FindIndex(c => c.Name == plugin.activeCharacter.Name);
+                if (matchingCharacterIndex >= 0)
+                {
+                    selectedCharacterIndex = matchingCharacterIndex;
+                    
+                    // Get the last used design for this character
+                    if (plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(plugin.activeCharacter.Name, out var lastDesignName))
+                    {
+                        var character = plugin.Characters[matchingCharacterIndex];
+                        var designIndex = character.Designs.FindIndex(d => d.Name.Equals(lastDesignName, StringComparison.OrdinalIgnoreCase));
+                        selectedDesignIndex = designIndex >= 0 ? designIndex : -1;
+                        Plugin.Log.Information($"[QuickSwitch] Reverted to active character: {plugin.activeCharacter.Name} with design: {(designIndex >= 0 ? lastDesignName : "None")}");
+                    }
+                    else
+                    {
+                        selectedDesignIndex = -1; // No design found
+                        Plugin.Log.Information($"[QuickSwitch] Reverted to active character: {plugin.activeCharacter.Name} (no design)");
+                    }
+                    
+                    userIsInteracting = false;
+                    return;
+                }
+            }
+            
+            // Fallback to first character if no active character found
+            if (plugin.Characters.Count > 0)
+            {
+                selectedCharacterIndex = 0;
+                selectedDesignIndex = -1;
+                userIsInteracting = false;
+                Plugin.Log.Information($"[QuickSwitch] No active character found, reverted to first character: {plugin.Characters[0].Name}");
+            }
         }
 
         private bool ShouldUploadToGallery(Character character, string currentPhysicalCharacter)

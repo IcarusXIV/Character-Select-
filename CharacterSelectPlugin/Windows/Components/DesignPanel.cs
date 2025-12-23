@@ -13,6 +13,7 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using CharacterSelectPlugin.Windows.Styles;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
 using Dalamud.Interface.Textures.TextureWraps;
 using CharacterSelectPlugin.Effects;
 
@@ -1823,16 +1824,12 @@ namespace CharacterSelectPlugin.Windows.Components
 
                             if (ImGui.Selectable($"\uf067##import_{character.Name}_{design.Name}", false, ImGuiSelectableFlags.None, new Vector2(buttonSize, buttonSize)))
                             {
-                                var clone = new CharacterDesign(
-                                    name: $"{design.Name} (Copy)",
-                                    macro: design.Macro,
-                                    isAdvancedMode: design.IsAdvancedMode,
-                                    advancedMacro: design.AdvancedMacro,
-                                    glamourerDesign: design.GlamourerDesign ?? "",
-                                    automation: design.Automation ?? "",
-                                    customizePlusProfile: design.CustomizePlusProfile ?? "",
-                                    previewImagePath: design.PreviewImagePath ?? ""
-                                );
+                                // Clone the entire design using JSON serialization (exact copy like copy-paste in config)
+                                var json = JsonConvert.SerializeObject(design);
+                                var clone = JsonConvert.DeserializeObject<CharacterDesign>(json);
+                                clone.Name = design.Name + " (Copy)";
+                                clone.Id = Guid.NewGuid();
+                                clone.DateAdded = DateTime.UtcNow;
 
                                 targetForDesignImport.Designs.Add(clone);
                                 plugin.SaveConfiguration();
@@ -2194,11 +2191,16 @@ namespace CharacterSelectPlugin.Windows.Components
             advancedDesignMacroText = design.AdvancedMacro ?? "";
             
             // Check if this is a Secret Mode (Conflict Resolution) design
-            if (design.SecretModState != null && design.SecretModState.Any())
+            if ((design.SecretModState != null && design.SecretModState.Any()) ||
+                (design.ModOptionSettings != null && design.ModOptionSettings.Any()) ||
+                (design.SecretModPinOverrides != null && design.SecretModPinOverrides.Any()))
             {
                 isSecretDesignMode = true;
                 // Load the existing mod state into temporary storage for editing
-                temporaryDesignSecretModState = new Dictionary<string, bool>(design.SecretModState);
+                if (design.SecretModState != null)
+                {
+                    temporaryDesignSecretModState = new Dictionary<string, bool>(design.SecretModState);
+                }
                 if (design.SecretModPinOverrides != null)
                 {
                     temporaryDesignSecretModPinOverrides = new HashSet<string>(design.SecretModPinOverrides);

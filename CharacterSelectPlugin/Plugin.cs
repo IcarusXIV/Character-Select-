@@ -111,6 +111,9 @@ namespace CharacterSelectPlugin
         private bool characterAlreadyAppliedOnStartup = false;
         private bool autoLoadAlreadyRanThisStartup = false;
         
+        // Track when we've applied an assignment for this specific character
+        private string? assignmentAppliedForCharacter = null;
+        
         
         // Target application IPC subscribers with correct signatures
         private ICallGateSubscriber<Dictionary<Guid, string>>? penumbraGetCollectionsIpc;
@@ -560,6 +563,7 @@ namespace CharacterSelectPlugin
                 return;
             }
 
+            autoLoadAlreadyRanThisStartup = false; // Reset assignment flag for new login
             loginTime = DateTime.Now;
             shouldApplyPoses = true;
             suppressIdleSaveForFrames = 60;
@@ -697,6 +701,7 @@ namespace CharacterSelectPlugin
                 character.LastInGameName = $"{localName}@{worldName}";        // who is currently logged in
 
                 Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+                Configuration.LastUsedCharacterKey = character.Name;
                 Configuration.Save();
 
                 Plugin.Log.Debug($"[ApplyProfile] Saved: {fullKey} → {pluginCharacterKey}");
@@ -859,6 +864,7 @@ namespace CharacterSelectPlugin
                 // Track last used design for auto-reapplication (only for auto-reapplication and commands, not UI)
                 Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
                 Configuration.LastUsedDesignCharacterKey = character.Name;
+                Configuration.LastUsedCharacterKey = character.Name;
                 Configuration.Save();
             }
             else
@@ -1201,11 +1207,20 @@ namespace CharacterSelectPlugin
             Character? currentCharacter = null;
             
             // Try to get the last used character for this player first
-            var currentPlayerName = ClientState.LocalPlayer?.Name.TextValue;
-            if (!string.IsNullOrEmpty(currentPlayerName) && Configuration.LastUsedCharacterByPlayer.ContainsKey(currentPlayerName))
+            var currentPlayer = ClientState.LocalPlayer;
+            if (currentPlayer != null)
             {
-                var lastUsedCharacterName = Configuration.LastUsedCharacterByPlayer[currentPlayerName];
-                currentCharacter = Characters.FirstOrDefault(c => c.Name.Equals(lastUsedCharacterName, StringComparison.OrdinalIgnoreCase));
+                string localName = currentPlayer.Name.ToString();
+                string worldName = currentPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                
+                if (Configuration.LastUsedCharacterByPlayer.ContainsKey(fullKey))
+                {
+                    var lastUsedCharacterKey = Configuration.LastUsedCharacterByPlayer[fullKey];
+                    // lastUsedCharacterKey is in format "CharacterName@WorldName", extract just the character name
+                    var characterName = lastUsedCharacterKey.Split('@')[0];
+                    currentCharacter = Characters.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+                }
             }
             
             // Fallback to the last used character key
@@ -2512,6 +2527,7 @@ namespace CharacterSelectPlugin
 
                 // This is the key logic: player -> selected plugin character
                 Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+                Configuration.LastUsedCharacterKey = character.Name;
 
                 // Write the session info file so the plugin remembers the last applied character name
                 File.WriteAllText(SessionInfoPath, character.Name);
@@ -2918,9 +2934,18 @@ namespace CharacterSelectPlugin
                         string world = player.HomeWorld.Value.Name.ToString();
                         string fullKey = $"{player.Name.TextValue}@{world}";
                         
-                        if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName))
+                        // Skip job change detection during login period to let Character Assignments work first
+                        if (DateTime.Now - loginTime < TimeSpan.FromSeconds(10))
                         {
-                            Plugin.Log.Debug($"[JobSwitch] Character {fullKey} has assignment '{assignedCharacterName}' - skipping job change reapplication to let assignment logic handle it");
+                            Plugin.Log.Debug($"[JobSwitch] Within login grace period - skipping job change detection to let assignments work");
+                            return;
+                        }
+                        
+                        // Skip job change reapplication for characters explicitly assigned "None"
+                        if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName) &&
+                            assignedCharacterName == "None")
+                        {
+                            Plugin.Log.Debug($"[JobSwitch] Character {fullKey} has assignment 'None' - skipping job change reapplication");
                             return;
                         }
                     }
@@ -2960,6 +2985,7 @@ namespace CharacterSelectPlugin
                 secondsSinceLogin = 0;
                 isLoginComplete = false;
                 randomDesignCRAppliedThisSession = false; // Reset for new session
+                assignmentAppliedForCharacter = null; // Reset assignment tracking
             }
             else if (!isLoginComplete)
             {
@@ -3081,6 +3107,7 @@ namespace CharacterSelectPlugin
                     return;
                 if (Configuration.EnableLastUsedCharacterAutoload &&
                     lastAppliedCharacter != fullKey &&
+                    assignmentAppliedForCharacter != fullKey &&
                     ClientState.TerritoryType != 0 &&
                     (Configuration.EnableLoginDelay ? DateTime.Now - loginTime > TimeSpan.FromSeconds(3) : true))
                 {
@@ -3192,6 +3219,7 @@ namespace CharacterSelectPlugin
                 {
                     Plugin.Log.Debug($"[AutoLoad-Assignment] ⚠ Assignment set to 'None' for {fullKey} - skipping all auto-application");
                     lastAppliedCharacter = fullKey;
+                    assignmentAppliedForCharacter = fullKey;
                     return;
                 }
 
@@ -3203,6 +3231,7 @@ namespace CharacterSelectPlugin
                     Plugin.Log.Debug($"[AutoLoad-Assignment] Design index for {assignedCharacter.Name}: {designIndex}");
                     ApplyProfile(assignedCharacter, designIndex);
                     lastAppliedCharacter = fullKey;
+                    assignmentAppliedForCharacter = fullKey;
                     characterAlreadyAppliedOnStartup = true; // Mark as handled
                     return;
                 }
@@ -3454,8 +3483,13 @@ namespace CharacterSelectPlugin
             // Update character tracking for job change and quick switch features
             if (ClientState.LocalPlayer != null)
             {
-                string playerKey = ClientState.LocalPlayer.Name.ToString();
-                Configuration.LastUsedCharacterByPlayer[playerKey] = selectedCharacter.Name;
+                var player = ClientState.LocalPlayer;
+                string localName = player.Name.ToString();
+                string worldName = player.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                string pluginCharacterKey = $"{selectedCharacter.Name}@{worldName}";
+                Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
+                Configuration.LastUsedCharacterKey = selectedCharacter.Name;
             }
 
             // Update Quick Switch window to reflect the new selection (same as normal character click)

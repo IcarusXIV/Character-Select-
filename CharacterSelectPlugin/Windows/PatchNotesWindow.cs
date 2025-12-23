@@ -326,9 +326,16 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("Users can now freely choose which theme from the available list");
             ImGui.Spacing();
 
+            // Apply to Target - GPose Support
+            DrawFeatureSection("\uf140", "Apply to Target QoL", new Vector4(0.6f, 1.0f, 0.8f, 1.0f));
+            ImGui.BulletText("You can now use the Quick Character Switch window to Apply to Target by Right Clicking the Apply button");
+            ImGui.BulletText("You can now also CTRL+Right Click Apply to restore dropdowns back to your current Character + Design");
+            ImGui.Spacing();
+
             // Bug Fixes
             DrawFeatureSection("\uf188", "Bug Fixes", new Vector4(0.9f, 0.4f, 0.4f, 1.0f));
-            ImGui.BulletText("Fixed Character Assignments not working properly (hopefully)");
+            ImGui.BulletText("Fixed Character Assignments not working properly (for real this time)");
+            ImGui.BulletText("Fixed Reapply on Job Change not working when using Character Assignments");
             ImGui.Spacing();
         }
 
