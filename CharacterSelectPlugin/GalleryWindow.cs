@@ -13,6 +13,7 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Textures.TextureWraps;
 using System.Threading;
 using CharacterSelectPlugin.Effects;
+using CharacterSelectPlugin.Windows.Styles;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using Dalamud.Plugin.Services;
@@ -100,7 +101,6 @@ namespace CharacterSelectPlugin.Windows
         private enum GalleryTab { Gallery, Friends, Favourites, Blocked, Announcements, Settings }
         private GalleryTab currentTab = GalleryTab.Gallery;
 
-        // Gallery data
         private List<GalleryProfile> allProfiles = new();
         private List<GalleryProfile> filteredProfiles = new();
         private bool isLoading = false;
@@ -134,7 +134,6 @@ namespace CharacterSelectPlugin.Windows
         private string lastErrorMessage = "";
         private DateTime lastErrorTime = DateTime.MinValue;
 
-        // Report dialog state
         private bool showReportDialog = false;
         private string reportTargetCharacterId = "";
         private string reportTargetCharacterName = "";
@@ -143,6 +142,7 @@ namespace CharacterSelectPlugin.Windows
         private string reportDetails = "";
         private bool showReportConfirmation = false;
         private string reportConfirmationMessage = "";
+
         private void ClearPerformanceCaches()
         {
             cachedCharacterColors.Clear();
@@ -165,7 +165,6 @@ namespace CharacterSelectPlugin.Windows
         private DateTime lastMutualFriendsUpdate = DateTime.MinValue;
         private readonly TimeSpan mutualFriendsUpdateInterval = TimeSpan.FromMinutes(2);
 
-        // UI state
         private float scrollPosition = 0f;
         private Dictionary<string, bool> likedProfiles = new();
         private Dictionary<string, RPProfile> downloadedProfiles = new();
@@ -201,12 +200,11 @@ namespace CharacterSelectPlugin.Windows
 
             Plugin.Log.Debug($"[Gallery] Restored {currentFavoritedProfiles.Count} favourites for {ownerKey}");
         }
-        // TOS Modal state
+
         private const int CURRENT_TOS_VERSION = 1;
         private bool showTOSModal = false;
         private bool hasAcceptedCurrentTOS = false;
 
-        // Image preview
         private string? imagePreviewUrl = null;
         private bool showImagePreview = false;
         private const float RpProfileFrameSize = 140f;
@@ -260,28 +258,21 @@ namespace CharacterSelectPlugin.Windows
         {
             var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
-            // Main window dark styling
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
-            ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.25f, 0.25f, 0.25f, 0.6f));
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.5f, 0.5f, 0.5f, 0.8f));
+            int themeColorCount = ThemeHelper.PushThemeColors(plugin.Configuration);
 
             ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * totalScale);
             ImGui.PushStyleVar(ImGuiStyleVar.TabRounding, 6.0f * totalScale);
 
             try
             {
-                // **NEW: Check if TOS modal should be shown**
                 if (showTOSModal)
                 {
                     DrawTOSModal(totalScale);
-                    return; // Don't draw the rest of the gallery
+                    return;
                 }
 
-                // **EXISTING: All your current Draw() method content below this line**
                 bool isWindowFocused = ImGui.IsWindowFocused();
 
-                // Deadlock detection and recovery
                 var timeSinceRefreshStarted = DateTime.Now - lastAutoRefresh;
                 if (isAutoRefreshing && timeSinceRefreshStarted.TotalSeconds > 30)
                 {
@@ -289,7 +280,6 @@ namespace CharacterSelectPlugin.Windows
                     isAutoRefreshing = false;
                 }
 
-                // Auto-refresh logic
                 if (IsOpen && !isAutoRefreshing &&
                     DateTime.Now - lastAutoRefresh > autoRefreshInterval &&
                     lastSuccessfulRefresh != DateTime.MinValue)
@@ -355,14 +345,12 @@ namespace CharacterSelectPlugin.Windows
 
                 wasWindowFocused = isWindowFocused;
 
-                // Cache cleanup
                 if (DateTime.Now - lastCacheCleanup > cacheCleanupInterval)
                 {
                     Task.Run(() => CleanupImageCache());
                     lastCacheCleanup = DateTime.Now;
                 }
 
-                // Character change detection
                 if (HasCharacterChanged())
                 {
                     Plugin.Log.Info("[Gallery] Character changed, freezing current button states until refresh");
@@ -385,17 +373,15 @@ namespace CharacterSelectPlugin.Windows
                 new Vector4(1.0f, 0.8f, 0.2f, 1.0f), // Yellow - Favourites
                 new Vector4(1.0f, 0.4f, 0.4f, 1.0f), // Red - Blocked
                 new Vector4(0.8f, 0.4f, 1.0f, 1.0f), // Purple - Announcements
-                new Vector4(1.0f, 1.0f, 1.0f, 1.0f)  // White - Settings
+                new Vector4(1.0f, 1.0f, 1.0f, 1.0f)
                     };
 
-                    // Dark tab backgrounds
                     ImGui.PushStyleColor(ImGuiCol.Tab, new Vector4(0.12f, 0.12f, 0.12f, 0.8f));
                     ImGui.PushStyleColor(ImGuiCol.TabHovered, new Vector4(0.18f, 0.18f, 0.18f, 0.9f));
                     ImGui.PushStyleColor(ImGuiCol.TabActive, new Vector4(0.22f, 0.22f, 0.22f, 1.0f));
                     ImGui.PushStyleColor(ImGuiCol.TabUnfocused, new Vector4(0.08f, 0.08f, 0.08f, 0.8f));
                     ImGui.PushStyleColor(ImGuiCol.TabUnfocusedActive, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
 
-                    // Gallery Tab
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Gallery ? tabTextColors[0] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
                     if (ImGui.BeginTabItem("Gallery"))
                     {
@@ -406,7 +392,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                     else ImGui.PopStyleColor(1);
 
-                    // Friends Tab
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Friends ? tabTextColors[1] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
                     if (ImGui.BeginTabItem("Friends"))
                     {
@@ -423,7 +408,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                     else ImGui.PopStyleColor(1);
 
-                    // Favourites Tab
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Favourites ? tabTextColors[2] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
                     if (ImGui.BeginTabItem("Favourites"))
                     {
@@ -434,7 +418,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                     else ImGui.PopStyleColor(1);
 
-                    // Blocked Tab
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Blocked ? tabTextColors[3] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
                     if (ImGui.BeginTabItem("Blocked"))
                     {
@@ -445,7 +428,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                     else ImGui.PopStyleColor(1);
 
-                    // Announcements Tab with notification badge
                     bool hasNewAnnouncements = announcements.Any() && announcements.Any(a => a.CreatedAt > lastSeenAnnouncements.ToUniversalTime());
 
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Announcements ? tabTextColors[4] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
@@ -455,7 +437,6 @@ namespace CharacterSelectPlugin.Windows
                         newActiveTab = GalleryTab.Announcements;
                         ImGui.PopStyleColor(1);
 
-                        // Draw notification dot AFTER the tab is created
                         if (hasNewAnnouncements && currentTab != GalleryTab.Announcements)
                         {
                             var drawList = ImGui.GetWindowDrawList();
@@ -465,7 +446,6 @@ namespace CharacterSelectPlugin.Windows
                             drawList.AddCircleFilled(dotCenter, 3 * totalScale, ImGui.GetColorU32(new Vector4(1.0f, 0.3f, 0.3f, 1.0f)));
                         }
 
-                        // Mark as seen when entering the tab
                         if (hasNewAnnouncements)
                         {
                             lastSeenAnnouncements = DateTime.UtcNow;
@@ -480,7 +460,6 @@ namespace CharacterSelectPlugin.Windows
                     {
                         ImGui.PopStyleColor(1);
 
-                        // Draw notification dot when NOT on the tab
                         if (hasNewAnnouncements)
                         {
                             var drawList = ImGui.GetWindowDrawList();
@@ -491,7 +470,6 @@ namespace CharacterSelectPlugin.Windows
                         }
                     }
 
-                    // Settings Tab
                     ImGui.PushStyleColor(ImGuiCol.Text, currentTab == GalleryTab.Settings ? tabTextColors[5] : new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
                     if (ImGui.BeginTabItem("Settings"))
                     {
@@ -514,7 +492,6 @@ namespace CharacterSelectPlugin.Windows
                 DrawReportConfirmation(totalScale);
                 DrawErrorMessage();
 
-                // Draw gallery effects
                 float deltaTime = ImGui.GetIO().DeltaTime;
 
                 foreach (var effect in galleryLikeEffects.Values)
@@ -544,12 +521,11 @@ namespace CharacterSelectPlugin.Windows
             finally
             {
                 ImGui.PopStyleVar(2);
-                ImGui.PopStyleColor(4);
+                ThemeHelper.PopThemeColors(themeColorCount);
             }
         }
         private void DrawTOSModal(float scale)
         {
-            // Center the modal
             var viewport = ImGui.GetMainViewport();
             var modalSize = new Vector2(650 * scale, 550 * scale);
             var modalPos = viewport.Pos + (viewport.Size - modalSize) * 0.5f;
@@ -557,7 +533,6 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetNextWindowPos(modalPos, ImGuiCond.Always);
             ImGui.SetNextWindowSize(modalSize, ImGuiCond.Always);
 
-            // Match patch notes styling
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.08f, 0.95f));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
@@ -574,10 +549,9 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.Begin("Character Select+ Gallery - Terms & Rules", ref modalOpen,
                 ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking))
             {
-                // Header with warning
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.6f, 0.2f, 1.0f));
                 ImGui.PushFont(UiBuilder.IconFont);
-                ImGui.Text("\uf071"); // Warning triangle
+                ImGui.Text("\uf071");
                 ImGui.PopFont();
                 ImGui.SameLine();
                 ImGui.Text("IMPORTANT: Gallery Terms & Community Rules");
@@ -586,17 +560,14 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Separator();
                 ImGui.Spacing();
 
-                // Scrollable content
                 ImGui.BeginChild("TOSContent", new Vector2(0, -70 * scale), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
                 ImGui.PushTextWrapPos();
 
-                // Age verification
                 DrawTOSSection("AGE VERIFICATION REQUIRED", new Vector4(1.0f, 0.4f, 0.4f, 1.0f), scale);
                 ImGui.TextWrapped("You must be 18 years or older to use the Character Select+ Gallery. This gallery may contain user-generated content marked as NSFW (Not Safe For Work).");
                 ImGui.Spacing();
 
-                // Community rules
                 DrawTOSSection("COMMUNITY RULES", new Vector4(0.4f, 0.8f, 1.0f, 1.0f), scale);
                 ImGui.BulletText("Respect other users and their characters");
                 ImGui.BulletText("No harassment, hate speech, or discriminatory content");
@@ -605,7 +576,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.BulletText("Set your profile sharing to 'Showcase Public' to appear in the gallery");
                 ImGui.Spacing();
 
-                // Content warning
                 DrawTOSSection("CONTENT WARNING", new Vector4(1.0f, 0.8f, 0.2f, 1.0f), scale);
                 ImGui.TextWrapped("The gallery contains user-generated content. While moderated, you may encounter:");
                 ImGui.BulletText("Adult themes and mature content (when NSFW is enabled)");
@@ -613,7 +583,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.BulletText("Fan-created characters and stories");
                 ImGui.Spacing();
 
-                // Privacy notice
                 DrawTOSSection("PRIVACY & DATA", new Vector4(0.6f, 1.0f, 0.6f, 1.0f), scale);
                 ImGui.BulletText("Your profiles are only visible based on your sharing settings");
                 ImGui.BulletText("You can block users and report inappropriate content");
@@ -621,14 +590,12 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.BulletText("Your interaction data (likes, favorites) is stored locally");
                 ImGui.Spacing();
 
-                // Moderation
                 DrawTOSSection("MODERATION", new Vector4(0.8f, 0.4f, 1.0f, 1.0f), scale);
                 ImGui.BulletText("Violations may result in profile removal or gallery bans");
                 ImGui.BulletText("Appeals can be made through official Character Select+ channels");
                 ImGui.BulletText("Moderators reserve the right to remove any content");
                 ImGui.Spacing();
 
-                // Agreement text
                 ImGui.Separator();
                 ImGui.Spacing();
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
@@ -638,7 +605,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PopTextWrapPos();
                 ImGui.EndChild();
 
-                // Bottom buttons
                 ImGui.Separator();
                 ImGui.Spacing();
 
@@ -649,21 +615,18 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.SetCursorPosX(buttonStartX);
 
-                // Accept button
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.2f, 0.8f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.7f, 0.3f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.8f, 0.4f, 1.0f));
 
                 if (ImGui.Button("I Accept (18+)", new Vector2(buttonWidth, 35 * scale)))
                 {
-                    // User accepted TOS
                     plugin.Configuration.LastAcceptedGalleryTOSVersion = CURRENT_TOS_VERSION;
                     plugin.Configuration.Save();
 
                     hasAcceptedCurrentTOS = true;
                     showTOSModal = false;
 
-                    // Now load the gallery data
                     _ = LoadGalleryData();
 
                     Plugin.Log.Info($"[Gallery] User accepted TOS version {CURRENT_TOS_VERSION}");
@@ -673,14 +636,12 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.SameLine();
 
-                // Decline button
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 0.8f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.7f, 0.3f, 0.3f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.8f, 0.4f, 0.4f, 1.0f));
 
                 if (ImGui.Button("Decline", new Vector2(buttonWidth, 35 * scale)))
                 {
-                    // User declined - close the gallery window
                     IsOpen = false;
                     Plugin.Log.Info("[Gallery] User declined TOS - gallery closed");
                 }
@@ -697,25 +658,20 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleVar(3);
             ImGui.PopStyleColor(7);
 
-            // If user closed modal without accepting, close gallery
             if (!modalOpen)
             {
                 IsOpen = false;
             }
         }
 
-        // Simplified section header
         private void DrawTOSSection(string title, Vector4 accentColor, float scale)
         {
             var drawList = ImGui.GetWindowDrawList();
             var startPos = ImGui.GetCursorScreenPos();
 
-            // Simple background bar
             var bgMin = startPos + new Vector2(-8 * scale, -3 * scale);
             var bgMax = startPos + new Vector2(ImGui.GetContentRegionAvail().X + 8 * scale, 22 * scale);
             drawList.AddRectFilled(bgMin, bgMax, ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.15f, 0.6f)), 4f * scale);
-
-            // Left accent line
             drawList.AddRectFilled(bgMin, bgMin + new Vector2(3 * scale, bgMax.Y - bgMin.Y), ImGui.GetColorU32(accentColor), 2f * scale);
 
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 5 * scale);

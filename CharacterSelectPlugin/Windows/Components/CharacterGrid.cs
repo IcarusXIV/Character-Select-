@@ -7,6 +7,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using CharacterSelectPlugin.Windows.Styles;
+using CharacterSelectPlugin.Windows.Utils;
 using CharacterSelectPlugin.Effects;
 
 namespace CharacterSelectPlugin.Windows.Components
@@ -782,9 +783,22 @@ namespace CharacterSelectPlugin.Windows.Components
             Vector2 wiggleOffset = UpdateHalloweenWiggle(index, plugin.Characters.Count);
 
             Vector3 borderColor = character.NameplateColor;
-            
+
+            // Check for Custom theme card glow override first
+            if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
+            {
+                var customTheme = plugin.Configuration.CustomTheme;
+                // Only use custom color if toggle is OFF (UseNameplateColorForCardGlow = false)
+                if (!customTheme.UseNameplateColorForCardGlow &&
+                    customTheme.ColorOverrides.TryGetValue("custom.cardGlow", out var packedGlowColor) && packedGlowColor.HasValue)
+                {
+                    var glowColor = CustomThemeDefinitions.UnpackColor(packedGlowColor.Value);
+                    borderColor = new Vector3(glowColor.X, glowColor.Y, glowColor.Z);
+                }
+                // Otherwise, keep the character's nameplate color (already set above)
+            }
             // Override border color for seasonal themes with alternating patterns
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
@@ -1053,18 +1067,36 @@ namespace CharacterSelectPlugin.Windows.Components
             // Favourite Star/Ghost/Snowflake
             string starSymbol;
             bool usesFontAwesome = false;
-            
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+
+            // Check for Custom theme first - it uses user-selected icon
+            if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
+            {
+                var customIconId = plugin.Configuration.CustomTheme.FavoriteIconId;
+                if (customIconId == 0)
+                {
+                    // Default star
+                    starSymbol = character.IsFavorite ? "★" : "☆";
+                    usesFontAwesome = false;
+                }
+                else
+                {
+                    // Custom FontAwesome icon
+                    var customIcon = (FontAwesomeIcon)customIconId;
+                    starSymbol = customIcon.ToIconString();
+                    usesFontAwesome = true;
+                }
+            }
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 if (effectiveTheme == SeasonalTheme.Halloween)
                 {
-                    starSymbol = "\uf6e2"; // Ghost icon (same icon, different colors for favorite/unfavorite)
+                    starSymbol = "\uf6e2"; // Ghost icon (different colours for favourite/unfavourite)
                     usesFontAwesome = true;
                 }
                 else if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
                 {
-                    starSymbol = "\uf2dc"; // Snowflake icon (same icon, different colors for favorite/unfavorite)
+                    starSymbol = "\uf2dc"; // Snowflake icon (different colours for favourite/unfavourite)
                     usesFontAwesome = true;
                 }
                 else
@@ -1090,8 +1122,32 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Get star colors based on seasonal theme
             Vector4 starMainColor, starGlowColor;
-            
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+
+            // Check for Custom theme first
+            if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
+            {
+                // Custom theme reads from custom colour overrides
+                var customTheme = plugin.Configuration.CustomTheme;
+                Vector4 customFavoriteColor = new Vector4(1f, 0.85f, 0f, 1f); // Default gold
+
+                // Check if user has a custom favourite icon colour
+                if (customTheme.ColorOverrides.TryGetValue("custom.favoriteIcon", out var packedFavColor) && packedFavColor.HasValue)
+                {
+                    customFavoriteColor = CustomThemeDefinitions.UnpackColor(packedFavColor.Value);
+                }
+
+                if (character.IsFavorite)
+                {
+                    starMainColor = customFavoriteColor;
+                    starGlowColor = new Vector4(customFavoriteColor.X, customFavoriteColor.Y, customFavoriteColor.Z, 0.5f + hoverAmount * 0.3f);
+                }
+                else
+                {
+                    starMainColor = new Vector4(0.5f, 0.5f, 0.5f, 0.7f + hoverAmount * 0.3f); // Gray
+                    starGlowColor = starMainColor;
+                }
+            }
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 if (effectiveTheme == SeasonalTheme.Halloween)
@@ -1112,18 +1168,18 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     if (character.IsFavorite)
                     {
-                        starMainColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f); // Pure white for favorited snowflake
+                        starMainColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f); // Pure white for favourited snowflake
                         starGlowColor = new Vector4(0.8f, 0.9f, 1.0f, 0.6f + hoverAmount * 0.4f); // Icy blue glow
                     }
                     else
                     {
-                        starMainColor = new Vector4(0.7f, 0.7f, 0.8f, 0.6f + hoverAmount * 0.3f); // Light gray for unfavorited
+                        starMainColor = new Vector4(0.7f, 0.7f, 0.8f, 0.6f + hoverAmount * 0.3f); // Light grey for unfavourited
                         starGlowColor = starMainColor;
                     }
                 }
                 else
                 {
-                    // Default colors for other seasonal themes
+                    // Default colours for other seasonal themes
                     if (character.IsFavorite)
                     {
                         starMainColor = new Vector4(1f, 0.9f, 0.2f, 1f); // Gold
@@ -1138,7 +1194,7 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             else
             {
-                // Default colors
+                // Default colours
                 if (character.IsFavorite)
                 {
                     starMainColor = new Vector4(1f, 0.9f, 0.2f, 1f); // Gold
@@ -1146,7 +1202,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 else
                 {
-                    starMainColor = new Vector4(0.5f, 0.5f, 0.5f, 0.7f + hoverAmount * 0.3f); // Gray
+                    starMainColor = new Vector4(0.5f, 0.5f, 0.5f, 0.7f + hoverAmount * 0.3f); // Grey
                     starGlowColor = starMainColor;
                 }
             }
@@ -1187,8 +1243,12 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
 
-            // Character Name
-            var textSize = GetCachedTextSize(character.Name);
+            // Character Name - with truncation for narrow cards
+            float availableNameWidth = cardWidth - (70 * scale); // Space between star and RP icon
+            string displayName = LayoutHelper.ClampText(character.Name, availableNameWidth, "...");
+            bool isNameTruncated = displayName != character.Name;
+
+            var textSize = GetCachedTextSize(displayName);
             var nameAreaMin = new Vector2(nameplateMin.X + (35 * scale), topRowY - (4 * scale));
             var nameAreaMax = new Vector2(nameplateMax.X - (35 * scale), topRowY + textSize.Y + (4 * scale));
             var textPos = new Vector2(
@@ -1210,14 +1270,22 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             bool hoveringNameArea = ImGui.IsMouseHoveringRect(nameAreaMin, nameAreaMax);
-            if (canDrag && hoveringNameArea)
+            if (hoveringNameArea)
             {
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-                ImGui.SetTooltip("Drag to reorder characters\n(Manual sort mode only)");
+                if (isNameTruncated)
+                {
+                    // Show full name tooltip when truncated
+                    ImGui.SetTooltip(character.Name);
+                }
+                else if (canDrag)
+                {
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                    ImGui.SetTooltip("Drag to reorder characters\n(Manual sort mode only)");
+                }
             }
 
-            drawList.AddText(textPos + new Vector2(1 * scale, 1 * scale), ImGui.GetColorU32(new Vector4(0, 0, 0, 0.8f)), character.Name);
-            drawList.AddText(textPos, ImGui.GetColorU32(new Vector4(0.95f, 0.95f, 0.95f, 1f)), character.Name);
+            drawList.AddText(textPos + new Vector2(1 * scale, 1 * scale), ImGui.GetColorU32(new Vector4(0, 0, 0, 0.8f)), displayName);
+            drawList.AddText(textPos, ImGui.GetColorU32(new Vector4(0.95f, 0.95f, 0.95f, 1f)), displayName);
 
             // RP Profile Button
             ImGui.PushFont(UiBuilder.IconFont);
@@ -1235,12 +1303,41 @@ namespace CharacterSelectPlugin.Windows.Components
             drawList.AddText(iconPos, iconColor, icon);
             ImGui.PopFont();
 
+            // Draw NEW badge on RP Profile icon if user hasn't seen Expanded RP Profiles feature (only on first character)
+            bool showRPBadge = characterIndex == 0 && !plugin.Configuration.SeenFeatures.Contains(FeatureKeys.ExpandedRPProfile);
+
             var iconHitMin = iconPos - new Vector2(2 * scale, 2 * scale);
             var iconHitMax = iconPos + iconSize + new Vector2(2 * scale, 2 * scale);
 
+            if (showRPBadge)
+            {
+                // Pulsing glow effect around the icon
+                float pulse = (float)(Math.Sin(ImGui.GetTime() * 3.0) * 0.5 + 0.5);
+                var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.5f); // Green glow
+
+                for (int i = 3; i >= 1; i--)
+                {
+                    var layerPadding = i * 2 * scale;
+                    var layerAlpha = glowColor.W * (1.0f - (i * 0.25f));
+                    drawList.AddRect(
+                        iconHitMin - new Vector2(layerPadding, layerPadding),
+                        iconHitMax + new Vector2(layerPadding, layerPadding),
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(glowColor.X, glowColor.Y, glowColor.Z, layerAlpha)),
+                        4f * scale,
+                        ImDrawFlags.None,
+                        2f * scale
+                    );
+                }
+            }
+
             if (ImGui.IsMouseHoveringRect(iconHitMin, iconHitMax))
             {
-                ImGui.SetTooltip($"View RolePlay Profile for {character.Name}");
+                string tooltip = $"View RolePlay Profile for {character.Name}";
+                if (showRPBadge)
+                {
+                    tooltip += "\n\nNEW: Expanded RP Profiles with content boxes!";
+                }
+                ImGui.SetTooltip(tooltip);
 
                 if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
                 {
@@ -1257,70 +1354,114 @@ namespace CharacterSelectPlugin.Windows.Components
             // Buttons!!
             float bottomRowY = nameplateMin.Y + (35 * scale);
             float btnWidth = (cardWidth - (32 * scale)) / 3;
-            float btnHeight = 22 * scale; 
-            float btnSpacing = 8 * scale; 
+            float btnHeight = 22 * scale;
+            float btnSpacing = 8 * scale;
+
+            // Responsive button labels - switch to icons when buttons are too narrow
+            float buttonPadding = 12 * scale;
+            float designsTextWidth = ImGui.CalcTextSize("Designs").X + buttonPadding;
+            bool useIcons = btnWidth < designsTextWidth;
+
+            // FontAwesome icons for compact mode
+            string designsIcon = "\uf07c";  // folder-open
+            string editIcon = "\uf044";     // edit/pencil
+            string deleteIcon = "\uf2ed";   // trash-alt
 
             ImGui.SetCursorScreenPos(new Vector2(nameplateMin.X + (8 * scale), bottomRowY));
 
-            // Seasonal themed button styling or default
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
+            // Button styling - Custom theme uses main window colours, seasonal themes have specific colours
+            bool isCustomTheme = plugin.Configuration.SelectedTheme == ThemeSelection.Custom;
+            int buttonColorCount = 0;
+
+            if (!isCustomTheme)
             {
-                var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
-                
-                switch (effectiveTheme)
+                // Seasonal themed button styling or default
+                if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
                 {
-                    case SeasonalTheme.Halloween:
-                        // Halloween button styling - dark orange theme
-                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.10f, 0.05f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.15f, 0.08f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.20f, 0.10f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.87f, 0.70f, 1.0f)); // Warm white text
-                        break;
-                        
-                    case SeasonalTheme.Winter:
-                        // Winter button styling - bright blue theme
-                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.30f, 0.45f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.40f, 0.60f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.55f, 0.75f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.98f, 1.0f, 1.0f)); // Bright white text
-                        break;
-                        
-                    case SeasonalTheme.Christmas:
-                        // Christmas button styling - vibrant saturated red theme
-                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.65f, 0.15f, 0.10f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.80f, 0.22f, 0.15f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.28f, 0.20f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.98f, 0.95f, 1.0f)); // Bright warm white text
-                        break;
-                        
-                    default:
-                        // Default button styling
-                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
-                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
-                        break;
+                    var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
+
+                    switch (effectiveTheme)
+                    {
+                        case SeasonalTheme.Halloween:
+                            // Halloween button styling - dark orange theme
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.10f, 0.05f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.15f, 0.08f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.20f, 0.10f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.87f, 0.70f, 1.0f)); // Warm white text
+                            buttonColorCount = 4;
+                            break;
+
+                        case SeasonalTheme.Winter:
+                            // Winter button styling - bright blue theme
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.20f, 0.30f, 0.45f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.30f, 0.40f, 0.60f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.40f, 0.55f, 0.75f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.98f, 1.0f, 1.0f)); // Bright white text
+                            buttonColorCount = 4;
+                            break;
+
+                        case SeasonalTheme.Christmas:
+                            // Christmas button styling - vibrant saturated red theme
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.65f, 0.15f, 0.10f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.80f, 0.22f, 0.15f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.28f, 0.20f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.98f, 0.95f, 1.0f)); // Bright warm white text
+                            buttonColorCount = 4;
+                            break;
+
+                        default:
+                            // Default button styling
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+                            buttonColorCount = 4;
+                            break;
+                    }
+                }
+                else
+                {
+                    // Default button styling
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+                    buttonColorCount = 4;
                 }
             }
-            else
-            {
-                // Default button styling
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
-            }
+            // Custom theme: don't push any button colours - use the main window style colours
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4 * scale, 2 * scale)); // Symmetric padding for centered text
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
 
             var buttonPos = ImGui.GetCursorScreenPos();
             var buttonSize = new Vector2(btnWidth, btnHeight);
 
-            if (ImGui.Button($"Designs##{character.Name}", new Vector2(btnWidth, btnHeight)))
+            // Scale down icons to be smaller
+            float iconScale = 0.85f;
+
+            // Designs button
+            if (useIcons)
+            {
+                ImGui.SetWindowFontScale(iconScale);
+                ImGui.PushFont(UiBuilder.IconFont);
+            }
+            if (ImGui.Button(useIcons ? $"{designsIcon}##{character.Name}" : $"Designs##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
                 int realIndex = plugin.Characters.IndexOf(character);
                 if (realIndex >= 0)
                     plugin.OpenDesignPanel(realIndex);
+            }
+            if (useIcons)
+            {
+                ImGui.PopFont();
+                ImGui.SetWindowFontScale(1.0f);
+            }
+            if (useIcons && ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Designs");
+                ImGui.EndTooltip();
             }
 
             // Store for tutorial
@@ -1334,8 +1475,14 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Declare once for both Edit and Delete buttons
             bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
-            
-            if (ImGui.Button($"Edit##{character.Name}", new Vector2(btnWidth, btnHeight)))
+
+            // Edit button
+            if (useIcons)
+            {
+                ImGui.SetWindowFontScale(iconScale);
+                ImGui.PushFont(UiBuilder.IconFont);
+            }
+            if (ImGui.Button(useIcons ? $"{editIcon}##{character.Name}" : $"Edit##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
                 int realIndex = plugin.Characters.IndexOf(character);
                 if (realIndex >= 0)
@@ -1344,23 +1491,41 @@ namespace CharacterSelectPlugin.Windows.Components
                     {
                         // Enable secret mode for this character conversion
                         plugin.IsSecretMode = true;
-                        
+
                         // Ensure the character has secret mode data structure initialized
                         var targetChar = plugin.Characters[realIndex];
                         if (targetChar.SecretModState == null)
                         {
                             targetChar.SecretModState = new Dictionary<string, bool>();
                         }
-                        
+
                         Plugin.ChatGui.Print("[Character Select+] Character conversion to Secret Mode enabled. Configure mods in the Edit window.");
                     }
                     // Always open edit window (either with converted or original macro)
                     plugin.OpenEditCharacterWindow(realIndex);
                 }
             }
+            if (useIcons)
+            {
+                ImGui.PopFont();
+                ImGui.SetWindowFontScale(1.0f);
+            }
+            if (useIcons && ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Edit");
+                ImGui.EndTooltip();
+            }
 
             ImGui.SameLine(0, btnSpacing);
-            if (ImGui.Button($"Delete##{character.Name}", new Vector2(btnWidth, btnHeight)))
+
+            // Delete button
+            if (useIcons)
+            {
+                ImGui.SetWindowFontScale(iconScale);
+                ImGui.PushFont(UiBuilder.IconFont);
+            }
+            if (ImGui.Button(useIcons ? $"{deleteIcon}##{character.Name}" : $"Delete##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
                 if (isCtrlShiftPressed)
                 {
@@ -1369,16 +1534,27 @@ namespace CharacterSelectPlugin.Windows.Components
                     InvalidateCache();
                 }
             }
+            if (useIcons)
+            {
+                ImGui.PopFont();
+                ImGui.SetWindowFontScale(1.0f);
+            }
 
             if (ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
-                ImGui.Text("Hold Ctrl + Shift and click to delete.");
+                if (useIcons)
+                    ImGui.Text("Delete - Hold Ctrl + Shift and click");
+                else
+                    ImGui.Text("Hold Ctrl + Shift and click to delete.");
                 ImGui.EndTooltip();
             }
 
-            ImGui.PopStyleVar(2);
-            ImGui.PopStyleColor(4);
+            ImGui.PopStyleVar(3);
+            if (buttonColorCount > 0)
+            {
+                ImGui.PopStyleColor(buttonColorCount);
+            }
         }
 
 
@@ -1752,10 +1928,18 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SetCursorPosX(startX);
 
+            // Check if Custom theme is active - if so, use main window colours instead of pushing overrides
+            bool isPaginationCustomTheme = plugin.Configuration.SelectedTheme == ThemeSelection.Custom;
+            int paginationArrowColorCount = 0;
+
             // Previous button
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
+            if (!isPaginationCustomTheme)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
+                paginationArrowColorCount = 3;
+            }
 
             bool canGoPrev = currentPage > 0;
             if (!canGoPrev)
@@ -1787,18 +1971,23 @@ namespace CharacterSelectPlugin.Windows.Components
             for (int i = startPage; i <= endPage; i++)
             {
                 bool isCurrentPage = i == currentPage;
+                int pageButtonColorCount = 0;
 
-                if (isCurrentPage)
+                if (!isPaginationCustomTheme)
                 {
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.4f, 0.6f, 1.0f, 0.8f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.7f, 1.0f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.3f, 0.5f, 0.9f, 1.0f));
-                }
-                else
-                {
-                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.8f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                    if (isCurrentPage)
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.4f, 0.6f, 1.0f, 0.8f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.7f, 1.0f, 1.0f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.3f, 0.5f, 0.9f, 1.0f));
+                    }
+                    else
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.8f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
+                    }
+                    pageButtonColorCount = 3;
                 }
 
                 string pageLabel = (i + 1).ToString();
@@ -1814,7 +2003,10 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                 }
 
-                ImGui.PopStyleColor(3);
+                if (pageButtonColorCount > 0)
+                {
+                    ImGui.PopStyleColor(pageButtonColorCount);
+                }
 
                 if (i < endPage)
                 {
@@ -1849,7 +2041,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.SetTooltip("Next page");
             }
 
-            ImGui.PopStyleColor(3);
+            if (paginationArrowColorCount > 0)
+            {
+                ImGui.PopStyleColor(paginationArrowColorCount);
+            }
 
             // Page info text
             ImGui.Spacing();
@@ -1923,85 +2118,68 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.ExecuteMacro(character.Macros, character, null);
             plugin.SetActiveCharacter(character);
 
-            // Check if we should upload to gallery
+            // Check if we should upload to server
             if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
 
-                bool shouldUploadToGallery = ShouldUploadToGallery(character, fullKey);
-
-                if (shouldUploadToGallery)
+                if (ShouldUploadToServer(character))
                 {
+                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
                     System.Threading.Tasks.Task.Run(() =>
                     {
-                        var profileToSend = new RPProfile
-                        {
-                            Pronouns = character.RPProfile?.Pronouns,
-                            Gender = character.RPProfile?.Gender,
-                            Age = character.RPProfile?.Age,
-                            Race = character.RPProfile?.Race,
-                            Orientation = character.RPProfile?.Orientation,
-                            Relationship = character.RPProfile?.Relationship,
-                            Occupation = character.RPProfile?.Occupation,
-                            Abilities = character.RPProfile?.Abilities,
-                            Bio = character.RPProfile?.Bio,
-                            Tags = character.RPProfile?.Tags,
-                            CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-                                ? character.RPProfile.CustomImagePath
-                                : character.ImagePath,
-                            ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                            ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                            Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                            ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                            CharacterName = character.Name,
-                            NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor,
-                            BackgroundImage = character.BackgroundImage,
-                            Effects = character.Effects ?? new ProfileEffects(),
-                            GalleryStatus = character.GalleryStatus,
-                            Links = character.RPProfile?.Links,
-                            LastActiveTime = plugin.Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null
-                        };
-
-                        _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
+                        var profileToSend = plugin.BuildProfileForUpload(character);
+                        _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
                     });
-                    Plugin.Log.Info($"[CharacterGrid] ✓ Uploading profile for {character.Name}");
+                    Plugin.Log.Info($"[CharacterGrid] ✓ Uploading profile for {character.Name} (effective sharing: {effectiveSharing})");
                 }
                 else
                 {
-                    Plugin.Log.Info($"[CharacterGrid] ⚠ Skipped gallery upload for {character.Name} (not on main character or not public)");
+                    Plugin.Log.Info($"[CharacterGrid] ⚠ Skipped upload for {character.Name} (NeverShare)");
                 }
             }
             plugin.QuickSwitchWindow.UpdateSelectionFromCharacter(character);
         }
-        private bool ShouldUploadToGallery(Character character, string currentPhysicalCharacter)
+        private bool ShouldUploadToServer(Character character)
         {
-            // Is there a main character set?
-            var userMain = plugin.Configuration.GalleryMainCharacter;
-            if (string.IsNullOrEmpty(userMain))
-            {
-                Plugin.Log.Debug($"[CharacterGrid-ShouldUpload] No main character set - not uploading {character.Name}");
-                return false;
-            }
-
-            // Are we currently on the main character?
-            if (currentPhysicalCharacter != userMain)
-            {
-                Plugin.Log.Debug($"[CharacterGrid-ShouldUpload] Current character '{currentPhysicalCharacter}' != main '{userMain}' - not uploading {character.Name}");
-                return false;
-            }
-
-            // Is this CS+ character set to public sharing?
             var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
-            if (sharing != ProfileSharing.ShowcasePublic)
+
+            // NeverShare = never upload to server
+            if (sharing == ProfileSharing.NeverShare)
             {
-                Plugin.Log.Debug($"[CharacterGrid-ShouldUpload] Character '{character.Name}' sharing is '{sharing}' (not public) - not uploading");
+                Plugin.Log.Debug($"[CharacterGrid-ShouldUpload] NeverShare - not uploading {character.Name}");
                 return false;
             }
 
-            Plugin.Log.Debug($"[CharacterGrid-ShouldUpload] ✓ All checks passed - will upload {character.Name} as {currentPhysicalCharacter}");
+            // AlwaysShare and ShowcasePublic both upload to server
+            Plugin.Log.Debug($"[CharacterGrid-ShouldUpload] ✓ {sharing} - uploading {character.Name}");
             return true;
+        }
+
+        private ProfileSharing GetEffectiveSharingForUpload(Character character, string currentPhysicalCharacter)
+        {
+            var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
+
+            // NeverShare and AlwaysShare are sent as-is
+            if (sharing != ProfileSharing.ShowcasePublic)
+                return sharing;
+
+            // ShowcasePublic: Only send as ShowcasePublic (gallery listing) if on Main Character
+            var userMain = plugin.Configuration.GalleryMainCharacter;
+            bool onMainCharacter = !string.IsNullOrEmpty(userMain) && currentPhysicalCharacter == userMain;
+
+            if (onMainCharacter)
+            {
+                Plugin.Log.Debug($"[CharacterGrid-Sharing] ShowcasePublic on Main Character - will appear in Gallery");
+                return ProfileSharing.ShowcasePublic;
+            }
+            else
+            {
+                Plugin.Log.Debug($"[CharacterGrid-Sharing] ShowcasePublic but not on Main Character - sending as AlwaysShare");
+                return ProfileSharing.AlwaysShare;
+            }
         }
 
         private List<Character> GetFilteredCharacters()

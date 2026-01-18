@@ -7,6 +7,7 @@ using System;
 using System.IO;
 using System.Numerics;
 using System.Collections.Generic;
+using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -14,10 +15,10 @@ namespace CharacterSelectPlugin.Windows
     {
         private readonly Plugin plugin;
         private bool hasScrolledToEnd = false;
-        private bool wasOpen = false; // Track if window was open last frame
+        private bool hasAcknowledgedNSFW = false;
+        private bool wasOpen = false;
         public bool OpenMainMenuOnClose = false;
 
-        // Particle system for banner effects
         private struct Particle
         {
             public Vector2 Position;
@@ -31,6 +32,19 @@ namespace CharacterSelectPlugin.Windows
         private List<Particle> particles = new List<Particle>();
         private float particleTimer = 0f;
         private Random particleRandom = new Random();
+
+        // Feature spotlight (set false for minor updates)
+        private static readonly bool ShowFeatureSpotlight = true;
+
+        private struct FeatureCard
+        {
+            public FontAwesomeIcon Icon;
+            public string Title;
+            public string Description;
+            public string ActionLabel;
+            public Action OnClick;
+            public string ImagePath;
+        }
 
         public PatchNotesWindow(Plugin plugin) : base("Character Select+ – What's New?",
             ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoTitleBar)
@@ -48,26 +62,19 @@ namespace CharacterSelectPlugin.Windows
         public override void Draw()
         {
             var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
-            
-            // Reset scroll tracking if window was just opened
+
             if (IsOpen && !wasOpen)
             {
                 hasScrolledToEnd = false;
+                hasAcknowledgedNSFW = false;
             }
             wasOpen = IsOpen;
 
             ImGui.SetNextWindowSize(new Vector2(800 * totalScale, 650 * totalScale), ImGuiCond.Always);
 
-            // UI Stylin'
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.08f, 0.95f));
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.15f, 0.15f, 0.18f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.2f, 0.2f, 0.25f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.25f, 0.25f, 0.3f, 1.0f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * totalScale);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * totalScale);
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * totalScale, 8 * totalScale));
+            // Always use default theme for Patch Notes - consistent first impression
+            int themeColorCount = ThemeHelper.PushDefaultThemeColors();
+            int themeStyleVarCount = ThemeHelper.PushThemeStyleVars(plugin.Configuration.UIScaleMultiplier);
 
             try
             {
@@ -77,22 +84,19 @@ namespace CharacterSelectPlugin.Windows
             }
             finally
             {
-                ImGui.PopStyleVar(3);
-                ImGui.PopStyleColor(6);
+                ThemeHelper.PopThemeStyleVars(themeStyleVarCount);
+                ThemeHelper.PopThemeColors(themeColorCount);
             }
         }
 
         private void DrawModernHeader(float totalScale)
         {
-            // Window position
             var windowPos = ImGui.GetWindowPos();
             var windowPadding = ImGui.GetStyle().WindowPadding;
 
-            // Header area dimensions - let it start higher
             var headerWidth = (800f * totalScale) - (windowPadding.X * 2);
             var headerHeight = 180f * totalScale;
 
-            // Start the header
             var headerStart = windowPos + new Vector2(windowPadding.X, windowPadding.Y * 1.1f);
             var headerEnd = headerStart + new Vector2(headerWidth, headerHeight);
 
@@ -102,36 +106,30 @@ namespace CharacterSelectPlugin.Windows
             {
                 string pluginDirectory = Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? "";
                 string assetsPath = Path.Combine(pluginDirectory, "Assets");
-                string imagePath = Path.Combine(assetsPath, "winterbanner.png");
+                string imagePath = Path.Combine(assetsPath, "NewBanner.png");
 
                 if (File.Exists(imagePath))
                 {
                     var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
                     if (texture != null)
                     {
-                        // Calculate scaling to fill width and maintain aspect ratio
                         var imageAspect = (float)texture.Width / texture.Height;
                         var scaledWidth = headerWidth;
                         var scaledHeight = scaledWidth / imageAspect;
 
-                        // Draw the banner image starting from the header position
                         var imagePos = headerStart;
                         drawList.AddImage((ImTextureID)texture.Handle, imagePos, imagePos + new Vector2(scaledWidth, scaledHeight));
-
-                        // Draw particles
                         DrawParticleEffects(drawList, headerStart, new Vector2(scaledWidth, scaledHeight));
                     }
                     else
                     {
                         DrawGradientBackground(headerStart, headerEnd);
-                        // Add particle effects over the gradient too
                         DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, headerHeight));
                     }
                 }
                 else
                 {
                     DrawGradientBackground(headerStart, headerEnd);
-                    // Add particle effects over the gradient
                     DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, headerHeight));
                 }
             }
@@ -139,17 +137,11 @@ namespace CharacterSelectPlugin.Windows
             {
                 Plugin.Log.Error($"Failed to load banner image: {ex.Message}");
                 DrawGradientBackground(headerStart, headerEnd);
-                // Add particle effects over the gradient
                 DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, headerHeight));
             }
 
             ImGui.SetCursorPosY((windowPadding.Y * 0.5f) + headerHeight - 10);
 
-            // Winter/Christmas Special Announcement Box - positioned in header above "New in v..." text
-            DrawWinterAnnouncementBox(totalScale);
-
-
-            // Version badge
             ImGui.SetCursorPosX(9);
             ImGui.PushFont(UiBuilder.IconFont);
             ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1.0f), "\uf005"); // Green star
@@ -162,7 +154,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "7.4 Compatibility, Mod Manager, Character Assignments");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Name Sync, Expanded RP Profiles, Custom Themes, and more");
 
             ImGui.Separator();
             ImGui.Spacing();
@@ -170,13 +162,11 @@ namespace CharacterSelectPlugin.Windows
 
         private void DrawGradientBackground(Vector2 headerStart, Vector2 headerEnd)
         {
-            // Gradient background
             var drawList = ImGui.GetWindowDrawList();
             uint gradientTop = ImGui.GetColorU32(new Vector4(0.2f, 0.4f, 0.8f, 0.15f));
             uint gradientBottom = ImGui.GetColorU32(new Vector4(0.1f, 0.1f, 0.2f, 0.05f));
             drawList.AddRectFilledMultiColor(headerStart, headerEnd, gradientTop, gradientTop, gradientBottom, gradientBottom);
 
-            // Add fallback text for gradient version
             ImGui.SetCursorPos(new Vector2(20, 15));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
             ImGui.Text("Character Select+ – What's New?");
@@ -193,30 +183,238 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor();
 
             ImGui.SetCursorPos(new Vector2(20, 55));
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "7.4 Compatibility, Mod Manager, Character Assignments");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Name Sync, Expanded RP Profiles, Custom Themes, and more");
+        }
+
+        private void DrawFeatureSpotlight(float totalScale)
+        {
+            string headerText = "══════════════ FEATURE SPOTLIGHT ══════════════";
+            float headerWidth = ImGui.CalcTextSize(headerText).X;
+            float windowWidth = ImGui.GetContentRegionAvail().X;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (windowWidth - headerWidth) * 0.5f);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.85f, 0.6f, 1.0f));
+            ImGui.Text(headerText);
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+
+            float cardWidth = (ImGui.GetContentRegionAvail().X - 20) / 3;
+            float cardHeight = 200 * totalScale;
+
+            var features = new FeatureCard[]
+            {
+                new FeatureCard
+                {
+                    Icon = FontAwesomeIcon.User,
+                    Title = "Name Sync",
+                    Description = "Show your CS+ name in chat, nameplates, and party list",
+                    ActionLabel = "Open Settings",
+                    OnClick = () => plugin.OpenSettingsToSection("Name Sync"),
+                    ImagePath = "NameSync.png"
+                },
+                new FeatureCard
+                {
+                    Icon = FontAwesomeIcon.IdCard,
+                    Title = "Expanded RP Profiles",
+                    Description = "Organize your profile with custom sections and galleries",
+                    ActionLabel = "View Profile",
+                    OnClick = () => plugin.OpenRPProfileForFeatureSpotlight(),
+                    ImagePath = "ERP.png"
+                },
+                new FeatureCard
+                {
+                    Icon = FontAwesomeIcon.Palette,
+                    Title = "Custom Themes",
+                    Description = "Personalize CS+ with colours, images, and icons",
+                    ActionLabel = "Open Settings",
+                    OnClick = () => plugin.OpenSettingsToSection("Visual Settings"),
+                    ImagePath = "MainWindow.png"
+                }
+            };
+
+            float totalCardsWidth = (cardWidth * 3) + 10;
+            float startX = (windowWidth - totalCardsWidth) * 0.5f - 1;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + startX);
+
+            for (int i = 0; i < features.Length; i++)
+            {
+                DrawFeatureCard(features[i], cardWidth, cardHeight, totalScale);
+                if (i < features.Length - 1)
+                    ImGui.SameLine(0, 5);
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+        }
+
+        private void DrawFeatureCard(FeatureCard card, float width, float height, float totalScale)
+        {
+            var startPos = ImGui.GetCursorScreenPos();
+            var drawList = ImGui.GetWindowDrawList();
+
+            float padding = 8 * totalScale;
+            float imageHeight = 100 * totalScale;
+            float buttonHeight = 24 * totalScale;
+
+            drawList.AddRectFilled(
+                startPos,
+                startPos + new Vector2(width, height),
+                ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.15f, 0.9f)),
+                8f
+            );
+
+            drawList.AddRect(
+                startPos,
+                startPos + new Vector2(width, height),
+                ImGui.GetColorU32(new Vector4(0.3f, 0.3f, 0.4f, 0.6f)),
+                8f
+            );
+
+            var imageBoxPos = startPos + new Vector2(padding, padding);
+            var imageBoxSize = new Vector2(width - (padding * 2), imageHeight);
+
+            drawList.AddRectFilled(
+                imageBoxPos,
+                imageBoxPos + imageBoxSize,
+                ImGui.GetColorU32(new Vector4(0.08f, 0.08f, 0.1f, 1.0f)),
+                6f
+            );
+
+            bool imageLoaded = false;
+            if (!string.IsNullOrEmpty(card.ImagePath))
+            {
+                try
+                {
+                    string pluginDirectory = Plugin.PluginInterface.AssemblyLocation.DirectoryName ?? "";
+                    string assetsPath = Path.Combine(pluginDirectory, "Assets");
+                    string imagePath = Path.Combine(assetsPath, card.ImagePath);
+
+                    if (File.Exists(imagePath))
+                    {
+                        var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                        if (texture != null)
+                        {
+                            float imageAspect = (float)texture.Width / texture.Height;
+                            float boxAspect = imageBoxSize.X / imageBoxSize.Y;
+
+                            Vector2 imageSize;
+                            Vector2 imageOffset = Vector2.Zero;
+
+                            if (imageAspect > boxAspect)
+                            {
+                                imageSize = new Vector2(imageBoxSize.X, imageBoxSize.X / imageAspect);
+                                imageOffset.Y = (imageBoxSize.Y - imageSize.Y) * 0.5f;
+                            }
+                            else
+                            {
+                                imageSize = new Vector2(imageBoxSize.Y * imageAspect, imageBoxSize.Y);
+                                imageOffset.X = (imageBoxSize.X - imageSize.X) * 0.5f;
+                            }
+
+                            drawList.AddImage(
+                                (ImTextureID)texture.Handle,
+                                imageBoxPos + imageOffset,
+                                imageBoxPos + imageOffset + imageSize
+                            );
+                            imageLoaded = true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Debug($"Failed to load feature image {card.ImagePath}: {ex.Message}");
+                }
+            }
+
+            if (!imageLoaded)
+            {
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.SetWindowFontScale(2.5f);
+                string iconStr = card.Icon.ToIconString();
+                var iconSize = ImGui.CalcTextSize(iconStr);
+                var iconPos = imageBoxPos + (imageBoxSize - iconSize) * 0.5f;
+                drawList.AddText(iconPos, ImGui.GetColorU32(new Vector4(0.4f, 0.5f, 0.7f, 0.6f)), iconStr);
+                ImGui.SetWindowFontScale(1.0f);
+                ImGui.PopFont();
+            }
+
+            drawList.AddRect(
+                imageBoxPos,
+                imageBoxPos + imageBoxSize,
+                ImGui.GetColorU32(new Vector4(0.25f, 0.25f, 0.35f, 0.8f)),
+                6f
+            );
+
+            float textAreaY = padding + imageHeight + (padding * 0.5f);
+            float textAreaWidth = width - (padding * 2);
+            float textAreaHeight = height - textAreaY - buttonHeight - (padding * 1.5f);
+
+            ImGui.SetCursorScreenPos(startPos + new Vector2(padding, textAreaY));
+            ImGui.BeginChild($"##CardText{card.Title}", new Vector2(textAreaWidth, textAreaHeight), false, ImGuiWindowFlags.NoScrollbar);
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 1.0f, 1.0f, 1.0f));
+            var titleSize = ImGui.CalcTextSize(card.Title);
+            float titleOffsetX = (textAreaWidth - titleSize.X) * 0.5f;
+            if (titleOffsetX > 0)
+                ImGui.SetCursorPosX(titleOffsetX);
+            ImGui.Text(card.Title);
+            ImGui.PopStyleColor();
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.7f, 1.0f));
+            var descSize = ImGui.CalcTextSize(card.Description, false, textAreaWidth);
+            float descOffsetX = (textAreaWidth - Math.Min(descSize.X, textAreaWidth)) * 0.5f;
+            if (descOffsetX > 0)
+                ImGui.SetCursorPosX(descOffsetX);
+
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textAreaWidth);
+            ImGui.TextWrapped(card.Description);
+            ImGui.PopTextWrapPos();
+            ImGui.PopStyleColor();
+
+            ImGui.EndChild();
+
+            float buttonY = height - buttonHeight - padding;
+            float buttonWidth = width - (padding * 2);
+            ImGui.SetCursorScreenPos(startPos + new Vector2(padding, buttonY));
+
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.4f, 0.6f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.5f, 0.7f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.2f, 0.3f, 0.5f, 1.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4f);
+
+            if (ImGui.Button($"{card.ActionLabel}##{card.Title}", new Vector2(buttonWidth, buttonHeight)))
+            {
+                card.OnClick?.Invoke();
+            }
+
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor(3);
+
+            ImGui.SetCursorScreenPos(startPos + new Vector2(width + 5, 0));
+            ImGui.Dummy(new Vector2(0, height + 5));
         }
 
         private void DrawPatchNotes(float totalScale)
         {
-            // Scrollable content area
             ImGui.BeginChild("PatchNotesScroll", new Vector2(0, -70 * totalScale), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
-            // Track scroll position for enabling button
             float currentScrollY = ImGui.GetScrollY();
             float maxScrollY = ImGui.GetScrollMaxY();
 
-            // Check if user has scrolled at least 85% through the content
             if (maxScrollY > 0 && currentScrollY >= (maxScrollY * 0.85f))
-            {
                 hasScrolledToEnd = true;
+
+            if (ShowFeatureSpotlight)
+            {
+                DrawFeatureSpotlight(totalScale);
             }
 
             ImGui.PushTextWrapPos();
 
-            // Latest Patch Notes - v2.0.1.4
-            if (DrawModernCollapsingHeader("v2.0.1.4 – 7.4 Compatibility, Mod Manager, Character Assignments", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
+            // Latest Patch Notes - v2.1.0.0
+            if (DrawModernCollapsingHeader("v2.1.0.0 – Name Sync, Expanded RP Profiles, Custom Themes, and more", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
             {
-                Draw214Notes();
+                Draw210Notes();
 
                 // Show scroll indicator if haven't scrolled enough
                 if (!hasScrolledToEnd)
@@ -230,7 +428,13 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
 
-            // Previous Patch Notes - v2.0.1.0  
+            // Previous Patch Notes - v2.0.1.4
+            if (DrawModernCollapsingHeader("v2.0.1.4 – 7.4 Compatibility, Mod Manager, Character Assignments", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
+            {
+                Draw214Notes();
+            }
+
+            // Previous Patch Notes - v2.0.1.0
             if (DrawModernCollapsingHeader("v2.0.1.0 – Conflict Resolution, IPC, Apply to Target (GPose)", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
             {
                 Draw201Notes();
@@ -274,7 +478,6 @@ namespace CharacterSelectPlugin.Windows
             var drawList = ImGui.GetWindowDrawList();
             var startPos = ImGui.GetCursorScreenPos();
 
-            // Feature section background
             var bgMin = startPos + new Vector2(-10, -5);
             var bgMax = startPos + new Vector2(ImGui.GetContentRegionAvail().X + 10, 25);
             drawList.AddRectFilled(bgMin, bgMax, ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.15f, 0.6f)), 4f);
@@ -287,6 +490,103 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopFont();
             ImGui.SameLine();
             ImGui.TextColored(accentColor, title);
+            ImGui.Spacing();
+        }
+
+        private void Draw210Notes()
+        {
+            // Name Sync
+            DrawFeatureSection("\uf007", "Name Sync", new Vector4(0.6f, 0.9f, 1.0f, 1.0f));
+            ImGui.BulletText("Show your CS+ character's name instead of your in-game name across the UI");
+            ImGui.BulletText("Your name appears in nameplates with an animated wave glow effect in your chosen colour");
+            ImGui.BulletText("Works in chat messages -- your CS+ name shows as the sender for tells, party, FC, and more");
+            ImGui.BulletText("The party list displays your CS+ name");
+            ImGui.BulletText("Target bar shows your CS+ name, including when you're someone's target-of-target");
+            ImGui.BulletText("Optional: Hide your Free Company tag from your nameplate");
+            ImGui.BulletText("Glow colour is based on your CS+ Character's nameplate colour to make your name stand out");
+            ImGui.BulletText("Shared Name Sync: See other CS+ users' custom names");
+            ImGui.BulletText("Privacy-first: Both you AND other users must opt-in to see each other's names");
+            ImGui.Spacing();
+
+            // Expanded RP Profiles
+            DrawFeatureSection("\uf2c2", "Expanded RP Profiles", new Vector4(0.9f, 0.6f, 0.9f, 1.0f));
+            ImGui.BulletText("Expand your RP profile with custom sections tailored to your character");
+            ImGui.BulletText("Add personality traits, backstory snippets, RP hooks, likes/dislikes, and more");
+            ImGui.BulletText("10 different section layouts: lists, quotes, timelines, pros/cons, key-value pairs, and grids");
+            ImGui.BulletText("Drag and drop to rearrange your sections exactly how you want them");
+            ImGui.BulletText("Connections system: Link to your own alt characters or other players you RP with");
+            ImGui.BulletText("Image galleries: Add multiple images to your profile with a built-in viewer");
+            ImGui.BulletText("Add a title and status under your name with icon support (e.g., 'The Wandering Bard')");
+            ImGui.Spacing();
+
+            // Custom Themes
+            DrawFeatureSection("\uf53f", "Custom Themes", new Vector4(0.9f, 0.7f, 0.2f, 1.0f));
+            ImGui.BulletText("Personalize every part of your CS+ window - make it truly yours");
+            ImGui.BulletText("Customize colours for backgrounds, buttons, headers, tabs, text, scrollbars, and more");
+            ImGui.BulletText("Add a custom background image to your main window with opacity and positioning controls");
+            ImGui.BulletText("Zoom and pan your background image to frame it perfectly");
+            ImGui.BulletText("Choose a custom icon from 200+ options across 10 categories");
+            ImGui.BulletText("Card glow: Use each character's nameplate colour or set a single theme colour");
+            ImGui.BulletText("Save your favourite looks as presets and switch between them instantly");
+            ImGui.BulletText("Right-click icons to add them to your Favourites tab for quick access");
+            ImGui.Spacing();
+
+            // Job Assignments (Job → Character)
+            DrawFeatureSection("\uf0ec", "Job Assignments (Job → Character)", new Vector4(0.5f, 0.8f, 0.9f, 1.0f));
+            ImGui.BulletText("Assign a character or design to each job or role");
+            ImGui.BulletText("Automatically switches character/design when you change jobs");
+            ImGui.BulletText("Supports both individual jobs and role-based assignments");
+            ImGui.BulletText("Enable in Settings → Job Assignments");
+            ImGui.Spacing();
+
+            // Gearset Assignments (Character → Job)
+            DrawFeatureSection("\uf553", "Job Assignments (Character → Job)", new Vector4(0.9f, 0.7f, 0.4f, 1.0f));
+            ImGui.BulletText("Assign a job to any character or design");
+            ImGui.BulletText("Automatically switches to the assigned job when applying");
+            ImGui.BulletText("Design-level job overrides character-level setting");
+            ImGui.BulletText("Enable in Settings → Job Assignments → Enable Gearset Assignments");
+            ImGui.Spacing();
+
+            // Improved Immersive Dialogue
+            DrawFeatureSection("\uf075", "Improved Immersive Dialogue", new Vector4(0.6f, 0.9f, 0.8f, 1.0f));
+            ImGui.BulletText("Better detection and replacement of player pronouns in NPC dialogue");
+            ImGui.BulletText("Improved handling of gendered titles (sir/madam, lord/lady, etc.)");
+            ImGui.BulletText("Fixed edge cases where replacements would accidentally affect the chat window");
+            ImGui.BulletText("Properly uses your Character's First and Last names.");
+            ImGui.Spacing();
+
+            // Honorific Glow Support
+            DrawFeatureSection("\uf521", "Honorific Support", new Vector4(0.9f, 0.8f, 0.4f, 1.0f));
+            ImGui.BulletText("Added glow colour support for Honorific plugin titles");
+            ImGui.BulletText("Configure both title colour AND glow colour per-character");
+            ImGui.BulletText("Works with Honorific's existing gradient and animation systems");
+            ImGui.BulletText("Enable in Settings → Honorific");
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.75f, 1.0f));
+            ImGui.TextWrapped("Honorific is maintained by Caraxi - consider supporting their work!");
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+
+            // Idle Pose Validation
+            DrawFeatureSection("\uf21e", "Idle Pose Indicator", new Vector4(0.6f, 0.8f, 1.0f, 1.0f));
+            ImGui.BulletText("See your current idle pose number in the header, or use /select idle to check via command");
+            ImGui.BulletText("Added validation to prevent invalid pose numbers from causing issues");
+            ImGui.BulletText("More reliable pose restoration when logging in");
+            ImGui.BulletText("Better error handling when poses fail to apply");
+            ImGui.Spacing();
+
+            // Mod Deletion Warning
+            DrawFeatureSection("\uf071", "Mod Deletion Warning", new Vector4(1.0f, 0.7f, 0.3f, 1.0f));
+            ImGui.BulletText("CS+ now warns you when a mod is deleted that was used in a Character or Design");
+            ImGui.BulletText("Shows which characters and designs are affected so you can update them");
+            ImGui.BulletText("Helps prevent broken Conflict Resolution configurations from deleted mods");
+            ImGui.Spacing();
+
+            // Bug Fixes
+            DrawFeatureSection("\uf188", "QoL & Bug Fixes", new Vector4(0.9f, 0.4f, 0.4f, 1.0f));
+            ImGui.BulletText("Fixed duplicate chat messages appearing when using certain features");
+            ImGui.BulletText("Fixed Advanced Mode macro settings resetting unexpectedly");
+            ImGui.BulletText("Added an option to remember open/close state of the Main Window in Settings  → Behavior");
+            ImGui.BulletText("Toggles for: View RP Profile, Report CS+ Name, Block CS+ User to appear in Context Menus. Found in Settings  → Behavior");
             ImGui.Spacing();
         }
 
@@ -637,31 +937,45 @@ namespace CharacterSelectPlugin.Windows
         private void DrawBottomButton(float totalScale)
         {
             ImGui.Spacing();
+
+            float windowWidth = ImGui.GetWindowSize().X;
+
+            // NSFW acknowledgment checkbox (only shows after scrolling)
+            if (hasScrolledToEnd)
+            {
+                ImGui.Spacing();
+
+                // Center the checkbox area
+                string checkboxText = "I understand that RP Profiles and CS+ Names may contain mature content";
+                float checkboxWidth = ImGui.CalcTextSize(checkboxText).X + 30 * totalScale; // checkbox + text
+                ImGui.SetCursorPosX((windowWidth - checkboxWidth) * 0.5f);
+
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.75f, 0.5f, 1.0f)); // Warm warning colour
+                ImGui.Checkbox(checkboxText, ref hasAcknowledgedNSFW);
+                ImGui.PopStyleColor();
+
+                ImGui.Spacing();
+            }
+
             ImGui.Spacing();
 
-            // Center the button
-            float windowWidth = ImGui.GetWindowSize().X;
             float buttonWidth = 90f * totalScale;
             ImGui.SetCursorPosX((windowWidth - buttonWidth) * 0.5f);
 
-            // Button is only enabled if user has scrolled enough
-            bool buttonEnabled = hasScrolledToEnd;
+            bool buttonEnabled = hasScrolledToEnd && hasAcknowledgedNSFW;
 
             if (!buttonEnabled)
-            {
-                ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f); // Make it look disabled
-            }
+                ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f);
 
-            // Styled button - purple when enabled, gray when disabled
             if (buttonEnabled)
             {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.2f, 0.4f, 0.8f)); // Purple base
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.3f, 0.5f, 1f)); // Purple hover
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.25f, 0.15f, 0.35f, 1f)); // Purple active
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.2f, 0.4f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.3f, 0.5f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.25f, 0.15f, 0.35f, 1f));
             }
             else
             {
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f)); // Gray base
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
             }
@@ -670,10 +984,12 @@ namespace CharacterSelectPlugin.Windows
 
             bool buttonClicked = ImGui.Button("Got it!", new Vector2(buttonWidth, 30 * totalScale));
 
-            // Show tooltip when disabled
             if (!buttonEnabled && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             {
-                ImGui.SetTooltip("Read through the new features first! There's a lot!");
+                if (!hasScrolledToEnd)
+                    ImGui.SetTooltip("Read through the new features first! There's a lot!");
+                else if (!hasAcknowledgedNSFW)
+                    ImGui.SetTooltip("Please acknowledge the content warning above");
             }
 
             if (buttonClicked && buttonEnabled)
@@ -692,7 +1008,6 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor(3);
         }
 
-        // Optional debug method - temporarily call this in Draw() to see scroll values
         private void DrawDebugInfo()
         {
             ImGui.Spacing();
@@ -717,23 +1032,19 @@ namespace CharacterSelectPlugin.Windows
             float deltaTime = ImGui.GetIO().DeltaTime;
             particleTimer += deltaTime;
 
-            // Spawn new particles more frequently and across the entire banner
-            if (particleTimer > 0.15f && particles.Count < 40) // More particles, spawn faster
+            if (particleTimer > 0.15f && particles.Count < 40)
             {
                 SpawnParticle(bannerStart, bannerSize);
                 particleTimer = 0f;
             }
 
-            // Update and draw existing particles
             for (int i = particles.Count - 1; i >= 0; i--)
             {
                 var particle = particles[i];
 
-                // Update particle
                 particle.Position += particle.Velocity * deltaTime;
                 particle.Life -= deltaTime;
 
-                // Remove dead particles or ones that left the banner area
                 if (particle.Life <= 0 ||
                     particle.Position.X > bannerStart.X + bannerSize.X + 50 ||
                     particle.Position.Y < bannerStart.Y - 50 ||
@@ -743,18 +1054,15 @@ namespace CharacterSelectPlugin.Windows
                     continue;
                 }
 
-                // Calculate alpha based on life remaining
                 float alpha = Math.Min(1f, particle.Life / particle.MaxLife);
                 var color = new Vector4(particle.Color.X, particle.Color.Y, particle.Color.Z, particle.Color.W * alpha);
 
-                // Draw particle as a small circle
                 drawList.AddCircleFilled(
                     particle.Position,
                     particle.Size,
                     ImGui.GetColorU32(color)
                 );
 
-                // Subtle glow effect
                 if (alpha > 0.3f)
                 {
                     var glowColor = new Vector4(color.X, color.Y, color.Z, color.W * 0.15f);
@@ -773,7 +1081,6 @@ namespace CharacterSelectPlugin.Windows
         {
             var particle = new Particle
             {
-                // Spawn randomly across the ENTIRE banner area
                 Position = new Vector2(
                     bannerStart.X + (float)particleRandom.NextDouble() * bannerSize.X,
                     bannerStart.Y + (float)particleRandom.NextDouble() * bannerSize.Y
@@ -787,14 +1094,13 @@ namespace CharacterSelectPlugin.Windows
                 MaxLife = 6f + (float)particleRandom.NextDouble() * 4f,
                 Size = 1.5f + (float)particleRandom.NextDouble() * 2.5f,
 
-                // Winter/Christmas themed colors - whites, blues, silvers
                 Color = particleRandom.Next(5) switch
                 {
-                    0 => new Vector4(1.0f, 1.0f, 1.0f, 0.8f),  // Pure white (snowflake)
-                    1 => new Vector4(0.9f, 0.95f, 1.0f, 0.7f), // Soft white-blue
-                    2 => new Vector4(0.8f, 0.9f, 1.0f, 0.6f),  // Light blue
-                    3 => new Vector4(0.95f, 0.95f, 0.95f, 0.7f), // Silver-white
-                    _ => new Vector4(0.85f, 0.92f, 1.0f, 0.6f)   // Icy blue
+                    0 => new Vector4(1.0f, 1.0f, 1.0f, 0.8f),
+                    1 => new Vector4(0.9f, 0.95f, 1.0f, 0.7f),
+                    2 => new Vector4(0.8f, 0.9f, 1.0f, 0.6f),
+                    3 => new Vector4(0.95f, 0.95f, 0.95f, 0.7f),
+                    _ => new Vector4(0.85f, 0.92f, 1.0f, 0.6f)
                 }
             };
 
@@ -802,36 +1108,36 @@ namespace CharacterSelectPlugin.Windows
             particles.Add(particle);
         }
 
-        private void DrawWinterAnnouncementBox(float totalScale)
-        {
-            // Winter/Christmas announcement as a child window/scrollable area
-            ImGui.BeginChild("WinterAnnouncement", new Vector2(0, 120 * totalScale), true, ImGuiWindowFlags.None);
-            
-            // Title with snowflake icons and date
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), "\uf2dc"); // FontAwesome snowflake
-            ImGui.PopFont();
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.2f, 0.8f, 1.0f, 1.0f), " Happy Holidays from Character Select+ ");
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), "\uf2dc"); // FontAwesome snowflake
-            ImGui.PopFont();
-            
-            ImGui.Spacing();
-            
-            // Holiday message and thank you - conversational style
-            ImGui.PushTextWrapPos();
-            ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), 
-                "Season's greetings, adventurers! As we wrap up an amazing year, I wanted to take a moment to say thank you to everyone who has been enjoying Character Select+. " +
-                "Your feedback, suggestions, and support have made this plugin what it is today. Whether you're creating new characters, perfecting your designs, or exploring the latest features, " +
-                "you're the reason I love working on this project. Wishing you all a wonderful holiday season filled with joy, creativity, and fantastic adventures in FFXIV!");
-            ImGui.PopTextWrapPos();
-            
-            ImGui.EndChild();
-            
-            ImGui.Spacing();
-        }
+        // private void DrawWinterAnnouncementBox(float totalScale)
+        // {
+        //     // Winter/Christmas announcement as a child window/scrollable area
+        //     ImGui.BeginChild("WinterAnnouncement", new Vector2(0, 120 * totalScale), true, ImGuiWindowFlags.None);
+        //
+        //     // Title with snowflake icons and date
+        //     ImGui.PushFont(UiBuilder.IconFont);
+        //     ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), "\uf2dc"); // FontAwesome snowflake
+        //     ImGui.PopFont();
+        //     ImGui.SameLine();
+        //     ImGui.TextColored(new Vector4(0.2f, 0.8f, 1.0f, 1.0f), " Happy Holidays from Character Select+ ");
+        //     ImGui.SameLine();
+        //     ImGui.PushFont(UiBuilder.IconFont);
+        //     ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f), "\uf2dc"); // FontAwesome snowflake
+        //     ImGui.PopFont();
+        //
+        //     ImGui.Spacing();
+        //
+        //     // Holiday message and thank you - conversational style
+        //     ImGui.PushTextWrapPos();
+        //     ImGui.TextColored(new Vector4(0.9f, 0.95f, 1.0f, 1.0f),
+        //         "Season's greetings, adventurers! As we wrap up an amazing year, I wanted to take a moment to say thank you to everyone who has been enjoying Character Select+. " +
+        //         "Your feedback, suggestions, and support have made this plugin what it is today. Whether you're creating new characters, perfecting your designs, or exploring the latest features, " +
+        //         "you're the reason I love working on this project. Wishing you all a wonderful holiday season filled with joy, creativity, and fantastic adventures in FFXIV!");
+        //     ImGui.PopTextWrapPos();
+        //
+        //     ImGui.EndChild();
+        //
+        //     ImGui.Spacing();
+        // }
 
     }
 }

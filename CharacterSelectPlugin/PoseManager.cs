@@ -39,28 +39,27 @@ public class PoseManager
         {
             var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)characterAddress;
 
-            // Always apply to memory first - this is important!
+            // Apply to memory first
             PlayerState.Instance()->SelectedPoses[(int)type] = index;
 
-            // Check if we're in the correct state to apply the pose visually
+            // Check pose state
             var currentState = TranslatePoseState(charPtr->ModeParam);
             if (currentState == type)
             {
                 // We're in the correct state, now update the visual pose
                 var currentPose = charPtr->EmoteController.CPoseState;
                 
-                // Check if we should use command-based approach (default: true for compatibility)
+                // Command-based approach (default for sync compatibility)
                 if (plugin.Configuration.UseCommandBasedPoses ?? true)
                 {
-                    // Only use /cpose if we're not already at the target pose
+                    // Use /cpose to cycle if not already at target
                     if (currentPose != index)
                     {
-                        // First, try direct memory write for immediate effect
+                        // Direct memory write for immediate effect
                         charPtr->EmoteController.CPoseState = index;
                         Plugin.Log.Debug($"[ApplyPose] Set CPoseState directly to {index} for immediate effect");
                         
-                        // Then use command-based approach to ensure it's properly registered
-                        // This helps with sync plugins seeing the change
+                        // Command approach ensures sync plugins see the change
                         StartApplyPoseTask(type, index, characterAddress);
                     }
                     else
@@ -70,18 +69,18 @@ public class PoseManager
                 }
                 else
                 {
-                    // Legacy direct memory approach - always write to force update
+                    // Direct memory write (legacy)
                     charPtr->EmoteController.CPoseState = index;
                 }
             }
             else
             {
-                // We're not in the correct state, just update memory for when we enter that state
+                // Not in correct state, memory updated for later
                 Plugin.Log.Debug($"[ApplyPose] Not in correct state for {type}, only updating memory");
             }
         }
 
-        // Persist if plugin-driven
+        // Save to config
         switch (type)
         {
             case EmoteController.PoseType.Idle:
@@ -128,16 +127,16 @@ public class PoseManager
     
     private async Task ApplyPoseViaCommand(EmoteController.PoseType type, byte targetIndex, IntPtr characterAddress)
     {
-        // Small initial delay to let the direct memory write settle
+        // Brief delay for memory write to settle
         await Task.Delay(50);
         
         var maxAttempts = 8;
         var attempts = 0;
         
-        // Use /cpose to cycle through poses to ensure network sync
+        // Cycle /cpose for network sync
         while (attempts < maxAttempts)
         {
-            // Check current state on framework thread
+            // Check state on framework thread
             var (currentPose, shouldContinue) = await framework.RunOnFrameworkThread(() =>
             {
                 unsafe
@@ -161,7 +160,7 @@ public class PoseManager
             if (!shouldContinue)
                 break;
             
-            // Shorter delay for faster cycling
+            // Brief delay between cycles
             await Task.Delay(50);
             attempts++;
         }
@@ -184,7 +183,6 @@ public class PoseManager
             return;
 
         var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)clientState.LocalPlayer.Address;
-        // Framework update logic would go here
     }
 
     private EmoteController.PoseType TranslatePoseState(byte state)

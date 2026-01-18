@@ -7,6 +7,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Dalamud.Interface.Utility;
 using System.Collections.Generic;
+using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -18,8 +19,8 @@ namespace CharacterSelectPlugin.Windows
         private int lastAppliedCharacterIndex = -1;
         private bool hasAppliedMacroThisSession = false;
         private bool hasInitializedSelection = false;
-        private bool userIsInteracting = false; // Track if user is actively using dropdown
-        private string lastTrackedDesignName = ""; // Track last synced design name
+        private bool userIsInteracting = false;
+        private string lastTrackedDesignName = "";
 
         public QuickSwitchWindow(Plugin plugin)
             : base("Quick Character Switch", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoResize)
@@ -35,18 +36,19 @@ namespace CharacterSelectPlugin.Windows
         public override void Draw()
         {
             float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
-            
-            // Initialize selection on first draw or when characters are available
-            if (!hasInitializedSelection && plugin.Characters.Count > 0)
-            {
-                InitializeLastUsedSelection();
-                hasInitializedSelection = true;
-            }
 
-            // Compact Quick Switch toggle
+            int themeColorCount = ThemeHelper.PushThemeColors(plugin.Configuration);
+
+            try
+            {
+                if (!hasInitializedSelection && plugin.Characters.Count > 0)
+                {
+                    InitializeLastUsedSelection();
+                    hasInitializedSelection = true;
+                }
+
             if (plugin.Configuration.QuickSwitchCompact)
             {
-                // No title‐bar, no resize, no scrollbar, no background
                 this.Flags = ImGuiWindowFlags
                     .NoTitleBar
                     | ImGuiWindowFlags.NoResize
@@ -61,7 +63,6 @@ namespace CharacterSelectPlugin.Windows
             }
             else
             {
-                // Full window
                 this.Flags = ImGuiWindowFlags.NoResize
                            | ImGuiWindowFlags.NoScrollbar
                            | ImGuiWindowFlags.NoScrollWithMouse;
@@ -75,7 +76,6 @@ namespace CharacterSelectPlugin.Windows
             float dropdownWidth = 135 * scale;
             float spacing = 6 * scale;
 
-            // Character Dropdown
             ImGui.SetNextItemWidth(dropdownWidth);
             int tempCharacterIndex = selectedCharacterIndex;
 
@@ -114,24 +114,20 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine(0, spacing);
 
-            // Design Dropdown
             if (selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
             {
                 var selectedCharacter = plugin.Characters[selectedCharacterIndex];
-                
-                // Only update from config when not actively interacting with the dropdown
+
                 if (!userIsInteracting)
-                {
                     UpdateSelectedDesignFromConfig(selectedCharacter);
-                }
-                
+
                 int tempDesignIndex = selectedDesignIndex;
 
                 ImGui.SetNextItemWidth(dropdownWidth);
                 if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightRegular))
                 {
-                    userIsInteracting = true; // User opened the dropdown
-                    
+                    userIsInteracting = true;
+
                     var orderedDesigns = GetSortedDesigns(selectedCharacter)
                         .Select((d, index) => new { Design = d, OriginalIndex = GetOriginalIndex(selectedCharacter, d) })
                         .ToList();
@@ -143,12 +139,12 @@ namespace CharacterSelectPlugin.Windows
 
                         if (ImGui.Selectable(entry.Design.Name, isSelected))
                         {
-                            tempDesignIndex = entry.OriginalIndex; // store original index to stay consistent
-                            userIsInteracting = true; // Mark that user made a selection
-                            lastTrackedDesignName = entry.Design.Name; // Track the user's selection
+                            tempDesignIndex = entry.OriginalIndex;
+                            userIsInteracting = true;
+                            lastTrackedDesignName = entry.Design.Name;
                         }
 
-                        // Show preview tooltip on hover with actual image
+                        // Preview tooltip
                         if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(entry.Design.PreviewImagePath) && File.Exists(entry.Design.PreviewImagePath))
                         {
                             try
@@ -156,40 +152,30 @@ namespace CharacterSelectPlugin.Windows
                                 var texture = Plugin.TextureProvider.GetFromFile(entry.Design.PreviewImagePath).GetWrapOrDefault();
                                 if (texture != null)
                                 {
-                                    float maxSize = 300f * scale; // Bigger preview
+                                    float maxSize = 300f * scale;
                                     var (displayWidth, displayHeight) = CalculateImageDimensions(texture, maxSize);
-                                    
-                                    // Position tooltip to the right of the dropdown
+
                                     var mousePos = ImGui.GetMousePos();
                                     var dropdownRect = ImGui.GetItemRectMax();
                                     var viewportSize = ImGui.GetMainViewport().Size;
-                                    
-                                    // Calculate desired position (to the right of dropdown)
+
                                     var tooltipPos = new Vector2(dropdownRect.X + 10, mousePos.Y - displayHeight / 2);
-                                    
-                                    // Check if tooltip would go off screen right edge
+
                                     if (tooltipPos.X + displayWidth > viewportSize.X)
-                                    {
-                                        // Position to the left of dropdown instead
                                         tooltipPos.X = ImGui.GetItemRectMin().X - displayWidth - 10;
-                                    }
-                                    
-                                    // Ensure tooltip doesn't go off screen vertically
+
                                     if (tooltipPos.Y < 0)
                                         tooltipPos.Y = 0;
                                     else if (tooltipPos.Y + displayHeight > viewportSize.Y)
                                         tooltipPos.Y = viewportSize.Y - displayHeight;
-                                    
+
                                     ImGui.SetNextWindowPos(tooltipPos);
                                     ImGui.BeginTooltip();
                                     ImGui.Image(texture.Handle, new Vector2(displayWidth, displayHeight));
                                     ImGui.EndTooltip();
                                 }
                             }
-                            catch (Exception ex)
-                            {
-                                // Silently fail for image loading errors
-                            }
+                            catch { }
                         }
 
                         if (isSelected)
@@ -197,11 +183,6 @@ namespace CharacterSelectPlugin.Windows
                     }
 
                     ImGui.EndCombo();
-                }
-                else
-                {
-                    // Dropdown is closed but don't reset flag immediately if user just made a selection
-                    // Only reset when we detect an actual external change or after applying
                 }
 
                 selectedDesignIndex = tempDesignIndex;
@@ -216,31 +197,23 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine(0, spacing);
 
-            // Apply Button
             if (selectedCharacterIndex >= 0)
             {
                 if (ImGui.Button("Apply", new Vector2(50, ImGui.GetFrameHeight())))
                 {
-                    userIsInteracting = false; // Reset after applying
+                    userIsInteracting = false;
                     ApplySelection();
                 }
-                
-                // Check for right-click on the Apply button
+
                 if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
                 {
-                    userIsInteracting = false; // Reset after applying
-                    
+                    userIsInteracting = false;
+
                     var io = ImGui.GetIO();
                     if (io.KeyCtrl)
-                    {
-                        // Ctrl+Right-click: Revert to current player character
                         RevertToCurrentPlayerCharacter();
-                    }
                     else
-                    {
-                        // Right-click: Apply to target
                         ApplyToTarget();
-                    }
                 }
             }
             else
@@ -250,26 +223,28 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.EndDisabled();
             }
 
-            // Nameplate Colour Bar
-            if (selectedCharacterIndex >= 0)
+                if (selectedCharacterIndex >= 0)
+                {
+                    Vector4 charColor = GetNameplateColor(plugin.Characters[selectedCharacterIndex]);
+                    ImGui.PushStyleColor(ImGuiCol.ChildBg, charColor);
+                    ImGui.BeginChild("ColorBar", new Vector2(ImGui.GetContentRegionAvail().X, 3), false);
+                    ImGui.EndChild();
+                    ImGui.PopStyleColor();
+                }
+            }
+            finally
             {
-                Vector4 charColor = GetNameplateColor(plugin.Characters[selectedCharacterIndex]);
-
-                ImGui.PushStyleColor(ImGuiCol.ChildBg, charColor);
-                ImGui.BeginChild("ColorBar", new Vector2(ImGui.GetContentRegionAvail().X, 3), false);
-                ImGui.EndChild();
-                ImGui.PopStyleColor();
+                ThemeHelper.PopThemeColors(themeColorCount);
             }
         }
 
-        // Initialize the dropdown selections based on last used character
+        /// <summary>Initialises dropdown selections from last used character.</summary>
         private void InitializeLastUsedSelection()
         {
             try
             {
                 Plugin.Log.Debug("[QuickSwitch] Initializing last used selection...");
 
-                // Try to get the last used character for the current player
                 if (Plugin.ClientState.LocalPlayer?.HomeWorld.IsValid == true)
                 {
                     string localName = Plugin.ClientState.LocalPlayer.Name.TextValue;
@@ -278,7 +253,6 @@ namespace CharacterSelectPlugin.Windows
 
                     if (plugin.Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))
                     {
-                        // Find character by the stored key format
                         var character = plugin.Characters.FirstOrDefault(c =>
                             $"{c.Name}@{worldName}" == lastUsedKey);
 
@@ -287,14 +261,13 @@ namespace CharacterSelectPlugin.Windows
                             selectedCharacterIndex = plugin.Characters.IndexOf(character);
                             Plugin.Log.Debug($"[QuickSwitch] Found last used character: {character.Name} at index {selectedCharacterIndex}");
 
-                            // Try to set last used design for this character
                             if (plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(character.Name, out var lastDesignName))
                             {
                                 var design = character.Designs.FirstOrDefault(d => d.Name == lastDesignName);
                                 if (design != null)
                                 {
                                     selectedDesignIndex = character.Designs.IndexOf(design);
-                                    lastTrackedDesignName = lastDesignName; // Initialize tracking
+                                    lastTrackedDesignName = lastDesignName;
                                     Plugin.Log.Debug($"[QuickSwitch] Found last used design: {lastDesignName} at index {selectedDesignIndex}");
                                 }
                             }
@@ -303,7 +276,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
 
-                // Try the global last used character key
                 if (!string.IsNullOrEmpty(plugin.Configuration.LastUsedCharacterKey))
                 {
                     var character = plugin.Characters.FirstOrDefault(c => c.Name == plugin.Configuration.LastUsedCharacterKey);
@@ -312,14 +284,13 @@ namespace CharacterSelectPlugin.Windows
                         selectedCharacterIndex = plugin.Characters.IndexOf(character);
                         Plugin.Log.Debug($"[QuickSwitch] Found global last used character: {character.Name} at index {selectedCharacterIndex}");
 
-                        // Also try to get last design for this character
                         if (plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(character.Name, out var lastDesignName))
                         {
                             var design = character.Designs.FirstOrDefault(d => d.Name == lastDesignName);
                             if (design != null)
                             {
                                 selectedDesignIndex = character.Designs.IndexOf(design);
-                                lastTrackedDesignName = lastDesignName; // Initialize tracking
+                                lastTrackedDesignName = lastDesignName;
                                 Plugin.Log.Debug($"[QuickSwitch] Found last used design for global character: {lastDesignName} at index {selectedDesignIndex}");
                             }
                         }
@@ -327,7 +298,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
 
-                //  Try main character if set
                 if (!string.IsNullOrEmpty(plugin.Configuration.MainCharacterName))
                 {
                     var mainCharacter = plugin.Characters.FirstOrDefault(c => c.Name == plugin.Configuration.MainCharacterName);
@@ -339,7 +309,6 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
 
-                // Default to first character
                 if (plugin.Characters.Count > 0)
                 {
                     selectedCharacterIndex = 0;
@@ -351,15 +320,11 @@ namespace CharacterSelectPlugin.Windows
             catch (Exception ex)
             {
                 Plugin.Log.Error($"[QuickSwitch] Error initializing selection: {ex.Message}");
-                // Fallback to first character if anything goes wrong
                 if (plugin.Characters.Count > 0)
-                {
                     selectedCharacterIndex = 0;
-                }
             }
         }
 
-        // Public method to refresh the selection
         public void RefreshSelection()
         {
             hasInitializedSelection = false;
@@ -374,18 +339,10 @@ namespace CharacterSelectPlugin.Windows
             {
                 selectedCharacterIndex = index;
 
-                // Try to maintain the last used design for this character
                 if (plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(character.Name, out var lastDesignName))
                 {
                     var design = character.Designs.FirstOrDefault(d => d.Name == lastDesignName);
-                    if (design != null)
-                    {
-                        selectedDesignIndex = character.Designs.IndexOf(design);
-                    }
-                    else
-                    {
-                        selectedDesignIndex = -1;
-                    }
+                    selectedDesignIndex = design != null ? character.Designs.IndexOf(design) : -1;
                 }
                 else
                 {
@@ -466,103 +423,25 @@ namespace CharacterSelectPlugin.Windows
                 return;
 
             var character = plugin.Characters[selectedCharacterIndex];
+            plugin.ApplyProfile(character, selectedDesignIndex);
 
-            // Apply Secret Mode mod states if configured
-            if (character.SecretModState != null && character.SecretModState.Any())
-            {
-                _ = plugin.ApplySecretModState(character);
-            }
-
-            plugin.ExecuteMacro(character.Macros, character, null);
-            plugin.SetActiveCharacter(character);
-
-            // Switch Penumbra UI collection to match the character's collection
-            if (!string.IsNullOrEmpty(character.PenumbraCollection))
-            {
-                var success = plugin.PenumbraIntegration.SwitchCollection(character.PenumbraCollection);
-                if (success)
-                {
-                    Plugin.Log.Information($"Successfully switched Penumbra UI collection to: {character.PenumbraCollection}");
-                }
-                else
-                {
-                    Plugin.Log.Warning($"Failed to switch Penumbra UI collection to: {character.PenumbraCollection}");
-                }
-            }
-
-            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
-            {
-                string localName = player.Name.TextValue;
-                string worldName = player.HomeWorld.Value.Name.ToString();
-                string fullKey = $"{localName}@{worldName}";
-
-                bool shouldUploadToGallery = ShouldUploadToGallery(character, fullKey);
-
-                if (shouldUploadToGallery)
-                {
-                    var profileToSend = new RPProfile
-                    {
-                        Pronouns = character.RPProfile?.Pronouns,
-                        Gender = character.RPProfile?.Gender,
-                        Age = character.RPProfile?.Age,
-                        Race = character.RPProfile?.Race,
-                        Orientation = character.RPProfile?.Orientation,
-                        Relationship = character.RPProfile?.Relationship,
-                        Occupation = character.RPProfile?.Occupation,
-                        Abilities = character.RPProfile?.Abilities,
-                        Bio = character.RPProfile?.Bio,
-                        Tags = character.RPProfile?.Tags,
-                        CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-                            ? character.RPProfile.CustomImagePath
-                            : character.ImagePath,
-                        ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                        ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                        Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                        ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                        CharacterName = character.Name,
-                        NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor,
-                        BackgroundImage = character.BackgroundImage,
-                        Effects = character.Effects ?? new ProfileEffects(),
-                        GalleryStatus = character.GalleryStatus,
-                        Links = character.RPProfile?.Links,
-                        LastActiveTime = plugin.Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null
-                    };
-
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
-                    Plugin.Log.Info($"[QuickSwitch] ✓ Uploaded profile for {character.Name}");
-                }
-                else
-                {
-                    Plugin.Log.Info($"[QuickSwitch] ⚠ Skipped gallery upload for {character.Name} (not on main character or not public)");
-                }
-            }
-
-            // Apply character + design using the same method as chat commands
-            if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
-            {
-                // Use the main ApplyProfile method that chat commands use
-                plugin.ApplyProfile(character, selectedDesignIndex);
-            }
-
-            // Apply idle pose if a valid one is set, unless design has its own idle
             bool shouldRestoreCharacterIdle = character.IdlePoseIndex < 7;
-            
-            // If applying a design, check if it contains /sidle commands
+
             if (selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count)
             {
                 var design = character.Designs[selectedDesignIndex];
                 var macro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
-                
-                bool designHasSidle = !string.IsNullOrEmpty(macro) && 
+
+                bool designHasSidle = !string.IsNullOrEmpty(macro) &&
                                      macro.Split('\n').Any(line => line.Trim().StartsWith("/sidle", StringComparison.OrdinalIgnoreCase));
-                
+
                 if (designHasSidle)
                 {
-                    shouldRestoreCharacterIdle = false; // Design has idle - don't apply character idle
+                    shouldRestoreCharacterIdle = false;
                     Plugin.Log.Debug("[QuickSwitch] Skipping character idle restoration - design contains /sidle command");
                 }
             }
-            
+
             if (shouldRestoreCharacterIdle)
                 plugin.PoseRestorer.RestorePosesFor(character);
             else if (character.IdlePoseIndex >= 7)
@@ -575,27 +454,24 @@ namespace CharacterSelectPlugin.Windows
                 return;
 
             var character = plugin.Characters[selectedCharacterIndex];
-            
-            // Get target on main thread, then apply in background
+
             var target = plugin.GetCurrentTarget();
             if (target == null)
             {
                 Plugin.ChatGui.PrintError("[Character Select+] No target selected.");
                 return;
             }
-            
+
             var targetInfo = new { ObjectIndex = target.ObjectIndex, ObjectKind = target.ObjectKind, Name = target.Name?.ToString() ?? "Unknown" };
             var designIndex = selectedDesignIndex >= 0 && selectedDesignIndex < character.Designs.Count ? selectedDesignIndex : -1;
-            
+
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    // Always apply the character first (base state)
                     await plugin.ApplyToTarget(character, -1);
                     Plugin.Log.Information($"[QuickSwitch] Applied character {character.Name} to target: {targetInfo.Name}");
-                    
-                    // If a design is selected, apply it on top of the character
+
                     if (designIndex >= 0)
                     {
                         await plugin.ApplyToTarget(character, designIndex);
@@ -611,15 +487,13 @@ namespace CharacterSelectPlugin.Windows
 
         private void RevertToCurrentPlayerCharacter()
         {
-            // Use the currently active character from the plugin
             if (plugin.activeCharacter != null)
             {
                 var matchingCharacterIndex = plugin.Characters.FindIndex(c => c.Name == plugin.activeCharacter.Name);
                 if (matchingCharacterIndex >= 0)
                 {
                     selectedCharacterIndex = matchingCharacterIndex;
-                    
-                    // Get the last used design for this character
+
                     if (plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(plugin.activeCharacter.Name, out var lastDesignName))
                     {
                         var character = plugin.Characters[matchingCharacterIndex];
@@ -629,16 +503,15 @@ namespace CharacterSelectPlugin.Windows
                     }
                     else
                     {
-                        selectedDesignIndex = -1; // No design found
+                        selectedDesignIndex = -1;
                         Plugin.Log.Information($"[QuickSwitch] Reverted to active character: {plugin.activeCharacter.Name} (no design)");
                     }
-                    
+
                     userIsInteracting = false;
                     return;
                 }
             }
-            
-            // Fallback to first character if no active character found
+
             if (plugin.Characters.Count > 0)
             {
                 selectedCharacterIndex = 0;
@@ -648,33 +521,40 @@ namespace CharacterSelectPlugin.Windows
             }
         }
 
-        private bool ShouldUploadToGallery(Character character, string currentPhysicalCharacter)
+        private bool ShouldUploadToServer(Character character)
         {
-            // Is there a main character set?
-            var userMain = plugin.Configuration.GalleryMainCharacter;
-            if (string.IsNullOrEmpty(userMain))
-            {
-                Plugin.Log.Debug($"[QuickSwitch-ShouldUpload] No main character set - not uploading {character.Name}");
-                return false;
-            }
-
-            // Are we currently on the main character?
-            if (currentPhysicalCharacter != userMain)
-            {
-                Plugin.Log.Debug($"[QuickSwitch-ShouldUpload] Current character '{currentPhysicalCharacter}' != main '{userMain}' - not uploading {character.Name}");
-                return false;
-            }
-
-            // Is this CS+ character set to public sharing?
             var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
-            if (sharing != ProfileSharing.ShowcasePublic)
+
+            if (sharing == ProfileSharing.NeverShare)
             {
-                Plugin.Log.Debug($"[QuickSwitch-ShouldUpload] Character '{character.Name}' sharing is '{sharing}' (not public) - not uploading");
+                Plugin.Log.Debug($"[QuickSwitch-ShouldUpload] NeverShare - not uploading {character.Name}");
                 return false;
             }
 
-            Plugin.Log.Debug($"[QuickSwitch-ShouldUpload] ✓ All checks passed - will upload {character.Name} as {currentPhysicalCharacter}");
+            Plugin.Log.Debug($"[QuickSwitch-ShouldUpload] ✓ {sharing} - uploading {character.Name}");
             return true;
+        }
+
+        private ProfileSharing GetEffectiveSharingForUpload(Character character, string currentPhysicalCharacter)
+        {
+            var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
+
+            if (sharing != ProfileSharing.ShowcasePublic)
+                return sharing;
+
+            var userMain = plugin.Configuration.GalleryMainCharacter;
+            bool onMainCharacter = !string.IsNullOrEmpty(userMain) && currentPhysicalCharacter == userMain;
+
+            if (onMainCharacter)
+            {
+                Plugin.Log.Debug($"[QuickSwitch-Sharing] ShowcasePublic on Main Character - will appear in Gallery");
+                return ProfileSharing.ShowcasePublic;
+            }
+            else
+            {
+                Plugin.Log.Debug($"[QuickSwitch-Sharing] ShowcasePublic but not on Main Character - sending as AlwaysShare");
+                return ProfileSharing.AlwaysShare;
+            }
         }
 
         private (float width, float height) CalculateImageDimensions(Dalamud.Interface.Textures.TextureWraps.IDalamudTextureWrap texture, float maxSize)
@@ -695,43 +575,26 @@ namespace CharacterSelectPlugin.Windows
 
         private void UpdateSelectedDesignFromConfig(Character character)
         {
-            // Check if there's a last used design for this character
             if (plugin.Configuration.LastUsedDesignByCharacter.TryGetValue(character.Name, out var lastUsedDesignName))
             {
-                // Only update if this is different from what we're tracking (external change)
                 if (lastUsedDesignName != lastTrackedDesignName)
                 {
-                    // External change detected - reset user interaction and sync
                     userIsInteracting = false;
                     lastTrackedDesignName = lastUsedDesignName;
-                    
-                    // Find the design with the matching name
+
                     var activeDesign = character.Designs.FirstOrDefault(d => d.Name.Equals(lastUsedDesignName, StringComparison.OrdinalIgnoreCase));
-                    if (activeDesign != null)
-                    {
-                        // Update selectedDesignIndex to match the active design
-                        selectedDesignIndex = character.Designs.IndexOf(activeDesign);
-                    }
-                    else
-                    {
-                        // Design name not found, reset to -1
-                        selectedDesignIndex = -1;
-                    }
+                    selectedDesignIndex = activeDesign != null ? character.Designs.IndexOf(activeDesign) : -1;
                 }
             }
             else
             {
-                // No last used design for this character
                 if (!string.IsNullOrEmpty(lastTrackedDesignName))
                 {
-                    // External change detected - clear the tracking
                     userIsInteracting = false;
                     lastTrackedDesignName = "";
                     selectedDesignIndex = -1;
                 }
             }
         }
-
-
     }
 }

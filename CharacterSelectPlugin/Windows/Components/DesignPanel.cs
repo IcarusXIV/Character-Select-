@@ -61,6 +61,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedGlamourerDesign = "";
         private string editedAutomation = "";
         private string editedCustomizeProfile = "";
+        private int? editedGearset = null;
         private string editedDesignPreviewPath = "";
         private string advancedDesignMacroText = "";
         private string originalAdvancedMacroText = "";
@@ -168,7 +169,6 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.SetCursorScreenPos(handleMin);
                     ImGui.InvisibleButton("##resize_handle", new Vector2(scaledHandleWidth, windowSize.Y));
 
-                    // Check if this invisible button is real...
                     if (ImGui.IsItemActive() || isResizing)
                     {
                         if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
@@ -194,7 +194,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     PanelWidth = Math.Clamp(newWidth, MinPanelWidth, MaxPanelWidth);
                     // Save the new width immediately for responsiveness
                     plugin.Configuration.DesignPanelWidth = PanelWidth;
-                    // Force the main window to recalculate layout, consensually
+                    // Force main window to recalculate layout
                     if (plugin.MainWindow != null)
                     {
                         plugin.MainWindow.InvalidateLayout();
@@ -214,7 +214,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 ? ImGui.GetColorU32(new Vector4(0.6f, 0.6f, 0.8f, 0.8f))
                 : ImGui.GetColorU32(new Vector4(0.4f, 0.4f, 0.6f, 0.3f));
 
-            // Draw a subtle line at the left edge, so subtle you might not see it!
+            // Subtle line at left edge
             drawList.AddLine(
                 new Vector2(handleMin.X + 2 * totalScale, handleMin.Y + 10 * totalScale),
                 new Vector2(handleMin.X + 2 * totalScale, handleMax.Y - 10 * totalScale),
@@ -222,7 +222,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 2f * totalScale
             );
 
-            // Draw resize grip dots when hovered, really grip them
+            // Draw resize grip dots when hovered
             if (hovered || isResizing)
             {
                 float dotSize = 2f * totalScale;
@@ -317,7 +317,6 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void ApplyScaledStyles(float scale)
         {
-            // Style, do you have it?
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.08f, 0.08f, 0.1f, 0.98f));
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.1f, 0.12f, 0.95f));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
@@ -540,7 +539,6 @@ namespace CharacterSelectPlugin.Windows.Components
                         ? new Vector4(color.Value.X, color.Value.Y, color.Value.Z, 1.0f)
                         : new Vector4(0.5f, 0.5f, 0.5f, 1.0f);
 
-                    // Style, I think I'm getting it!
                     ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(buttonColor.X * 1.2f, buttonColor.Y * 1.2f, buttonColor.Z * 1.2f, 1.0f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(buttonColor.X * 0.8f, buttonColor.Y * 0.8f, buttonColor.Z * 0.8f, 1.0f));
@@ -625,6 +623,11 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             DrawCustomizeField(inputWidth, scale);
+
+            if (plugin.Configuration.EnableGearsetAssignments)
+            {
+                DrawGearsetField(inputWidth, scale);
+            }
 
             DrawPreviewImageField(scale);
 
@@ -745,6 +748,73 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     UpdateAdvancedMacroCustomize();
                 }
+            }
+        }
+
+        private void DrawGearsetField(float inputWidth, float scale)
+        {
+            ImGui.Text("Assigned Gearset");
+
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.Text("\uf05a");
+            ImGui.PopFont();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(300 * scale);
+                ImGui.TextUnformatted("Optional: Automatically switch to this gearset when applying this design.\nChoose 'None' to use the character's setting or not change gearsets.\nDesign setting overrides character setting.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+
+            ImGui.SetCursorPosX(10 * scale);
+            ImGui.SetNextItemWidth(inputWidth);
+
+            // Get available gearsets
+            var gearsets = plugin.GetPlayerGearsets();
+
+            // Build display text for current selection
+            string currentDisplay = "None (use character setting)";
+            if (editedGearset.HasValue)
+            {
+                var matchingGearset = gearsets.FirstOrDefault(g => g.Number == editedGearset.Value);
+                if (matchingGearset.Number > 0)
+                {
+                    currentDisplay = plugin.GetGearsetDisplayName(matchingGearset.Number, matchingGearset.JobId, matchingGearset.Name);
+                }
+                else
+                {
+                    currentDisplay = $"Gearset {editedGearset.Value}";
+                }
+            }
+
+            if (ImGui.BeginCombo("##AssignedGearset", currentDisplay))
+            {
+                // "None" option
+                if (ImGui.Selectable("None (use character setting)", !editedGearset.HasValue))
+                {
+                    editedGearset = null;
+                }
+                if (!editedGearset.HasValue)
+                    ImGui.SetItemDefaultFocus();
+
+                // Gearset options
+                foreach (var gearset in gearsets)
+                {
+                    string displayName = plugin.GetGearsetDisplayName(gearset.Number, gearset.JobId, gearset.Name);
+                    bool isSelected = editedGearset.HasValue && editedGearset.Value == gearset.Number;
+
+                    if (ImGui.Selectable(displayName, isSelected))
+                    {
+                        editedGearset = gearset.Number;
+                    }
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+
+                ImGui.EndCombo();
             }
         }
 
@@ -1062,7 +1132,11 @@ namespace CharacterSelectPlugin.Windows.Components
 
             bool canSave = !string.IsNullOrWhiteSpace(editedDesignName) && !string.IsNullOrWhiteSpace(editedGlamourerDesign);
 
-            // Save button stylist here, how can i help you today?
+            // Center text in buttons
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4 * scale, 4 * scale));
+            ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
+
+            // Save button styling
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.4f, 0.2f, 0.8f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.5f, 0.3f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.6f, 0.4f, 1.0f));
@@ -1070,7 +1144,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (!canSave)
                 ImGui.BeginDisabled();
 
-            if (ImGui.Button("Save Design", new Vector2(buttonWidth, buttonHeight)))
+            if (ImGui.Button("Save Design", new Vector2(buttonWidth, 0)))
             {
                 SaveDesign(character);
                 CloseDesignEditor();
@@ -1085,17 +1159,18 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SameLine();
 
-            // Cancel button styling - #stopcancebutton
+            // Cancel button styling
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.4f, 0.2f, 0.2f, 0.8f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.3f, 0.3f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.6f, 0.4f, 0.4f, 1.0f));
 
-            if (ImGui.Button("Cancel", new Vector2(buttonWidth, buttonHeight)))
+            if (ImGui.Button("Cancel", new Vector2(buttonWidth, 0)))
             {
                 CloseDesignEditor();
             }
 
             ImGui.PopStyleColor(3);
+            ImGui.PopStyleVar(2);
         }
 
         private void DrawSortingControls(Character character, float scale)
@@ -1523,14 +1598,14 @@ namespace CharacterSelectPlugin.Windows.Components
                      SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
             {
                 starColor = design.IsFavorite
-                    ? new Vector4(1.0f, 1.0f, 1.0f, hovered ? 1f : 0.8f) // Pure white for favorited snowflake
-                    : new Vector4(0.7f, 0.7f, 0.8f, hovered ? 0.8f : 0.5f); // Light gray for unfavorited
+                    ? new Vector4(1.0f, 1.0f, 1.0f, hovered ? 1f : 0.8f) // Pure white for favourited snowflake
+                    : new Vector4(0.7f, 0.7f, 0.8f, hovered ? 0.8f : 0.5f); // Light grey for unfavourited
             }
             else
             {
                 starColor = design.IsFavorite
-                    ? new Vector4(1f, 0.8f, 0.2f, hovered ? 1f : 0.7f) // Gold for normal favorites
-                    : new Vector4(0.5f, 0.5f, 0.5f, hovered ? 0.8f : 0.4f); // Gray for normal unfavorited
+                    ? new Vector4(1f, 0.8f, 0.2f, hovered ? 1f : 0.7f) // Gold for normal favourites
+                    : new Vector4(0.5f, 0.5f, 0.5f, hovered ? 0.8f : 0.4f); // Grey for normal unfavourited
             }
 
             // Ensure proper icon centering with explicit alignment
@@ -1568,7 +1643,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 SortDesigns(character);
             }
             
-            // Add tooltip for all favorite buttons
+            // Add tooltip for all favourite buttons
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip(design.IsFavorite ? "Remove from favourites" : "Add to favourites");
@@ -1576,7 +1651,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             x += btnSize + spacing;
 
-            // Design name styling, can't be, won't be, stopped!
+            // Design name styling
             float rightZone = hovered ? (3 * btnSize + 2 * spacing + pad) : 0; // Only show buttons on hover
             float availW = rowW - (x - rowMin.X) - rightZone - pad;
 
@@ -1618,6 +1693,16 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.3f, 0.8f, 0.3f, 1f)); // Green
             if (ImGui.Button("\uf00c", new Vector2(btnSize, btnSize)))
             {
+                // Switch gearset if assigned (design overrides character)
+                if (plugin.Configuration.EnableGearsetAssignments)
+                {
+                    var effectiveGearset = design.AssignedGearset ?? character.AssignedGearset;
+                    if (effectiveGearset.HasValue)
+                    {
+                        plugin.SwitchToGearset(effectiveGearset.Value);
+                    }
+                }
+
                 // Check if this is a Secret Mode (Conflict Resolution) design
                 if (design.SecretModState != null && design.SecretModState.Any())
                 {
@@ -1905,12 +1990,16 @@ namespace CharacterSelectPlugin.Windows.Components
                 float windowWidth = ImGui.GetWindowWidth();
                 ImGui.SetCursorPosX((windowWidth - totalButtonWidth) / 2); // Center buttons
 
+                // Center text in buttons
+                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4 * scale, 4 * scale));
+                ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
+
                 // Save button (green) - just saves advanced mode changes
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.6f, 0.2f, 1.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.7f, 0.3f, 1.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.1f, 0.5f, 0.1f, 1.0f));
-                
-                if (ImGui.Button("Save", new Vector2(buttonWidth, buttonHeight)))
+
+                if (ImGui.Button("Save", new Vector2(buttonWidth, 0)))
                 {
                     // Save the advanced macro changes to the current design
                     if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count && !isNewDesign)
@@ -1940,8 +2029,8 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 1.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.7f, 0.3f, 0.3f, 1.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.1f, 0.1f, 1.0f));
-                
-                if (ImGui.Button("Cancel", new Vector2(buttonWidth, buttonHeight)))
+
+                if (ImGui.Button("Cancel", new Vector2(buttonWidth, 0)))
                 {
                     // Restore original text
                     advancedDesignMacroText = originalAdvancedMacroText;
@@ -1951,6 +2040,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     // Don't save changes - return to normal editing
                 }
                 ImGui.PopStyleColor(3);
+                ImGui.PopStyleVar(2);
 
                 PopScaledStyles();
             }
@@ -2166,6 +2256,7 @@ namespace CharacterSelectPlugin.Windows.Components
             isAdvancedModeDesign = false;
             editedAutomation = "";
             editedCustomizeProfile = "";
+            editedGearset = null;
             editedDesignPreviewPath = "";
             plugin.EditedDesignName = editedDesignName;
             plugin.EditedGlamourerDesign = editedGlamourerDesign;
@@ -2185,6 +2276,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             editedAutomation = design.Automation ?? "";
             editedCustomizeProfile = design.CustomizePlusProfile ?? "";
+            editedGearset = design.AssignedGearset;
             editedDesignPreviewPath = design.PreviewImagePath ?? "";
             isAdvancedModeDesign = design.IsAdvancedMode;
             isAdvancedModeWindowOpen = design.IsAdvancedMode;
@@ -2267,8 +2359,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 existingDesign.Automation = editedAutomation;
                 existingDesign.GlamourerDesign = editedGlamourerDesign;
                 existingDesign.CustomizePlusProfile = editedCustomizeProfile;
+                existingDesign.AssignedGearset = editedGearset;
                 existingDesign.PreviewImagePath = editedDesignPreviewPath;
-                
+
                 // Apply any Secret Mode state that was configured during editing
                 if (temporaryDesignSecretModState != null)
                 {
@@ -2293,7 +2386,8 @@ namespace CharacterSelectPlugin.Windows.Components
                     editedDesignPreviewPath
                 )
                 {
-                    DateAdded = DateTime.UtcNow
+                    DateAdded = DateTime.UtcNow,
+                    AssignedGearset = editedGearset
                 };
 
                 // Apply any Secret Mode state that was configured during editing

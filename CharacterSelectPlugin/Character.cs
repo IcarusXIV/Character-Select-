@@ -13,32 +13,33 @@ namespace CharacterSelectPlugin
         public string Macros { get; set; } = ""; 
         public string? ImagePath { get; set; }
         public List<CharacterDesign> Designs { get; set; }
-        public Vector3 NameplateColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default to white
+        public Vector3 NameplateColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
         public string PenumbraCollection { get; set; } = "";
         public string GlamourerDesign { get; set; } = "";
         public string CustomizeProfile { get; set; } = "";
         public bool IsFavorite { get; set; } = false; 
-        public DateTime DateAdded { get; set; } = DateTime.Now; // Tracks when the character was added
-        public int SortOrder { get; set; } = 0; // Tracks manual drag-drop order
+        public DateTime DateAdded { get; set; } = DateTime.Now;
+        public int SortOrder { get; set; } = 0;
         public string HonorificTitle { get; set; } = "";
         public string HonorificPrefix { get; set; } = "";
         public string HonorificSuffix { get; set; } = "";
-        public Vector3 HonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
-        public Vector3 HonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
-        public string MoodlePreset { get; set; } = ""; // MOODLES
-        public byte IdlePoseIndex { get; set; } = 7; // Idles!
+        public Vector3 HonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
+        public Vector3 HonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
+        public int? HonorificGradientSet { get; set; } = null;
+        public string? HonorificAnimationStyle { get; set; } = null;
+        public string MoodlePreset { get; set; } = "";
+        public byte IdlePoseIndex { get; set; } = 7;
         public byte SitPoseIndex { get; set; } = 255;
         public byte GroundSitPoseIndex { get; set; } = 255;
         public byte DozePoseIndex { get; set; } = 255;
-        public Dictionary<string, bool>? SecretModState { get; set; } // Secret Mode mod selections
-        public List<string>? SecretModPins { get; set; } // Secret Mode pinned mods (character-specific)
+        public Dictionary<string, bool>? SecretModState { get; set; }
+        public List<string>? SecretModPins { get; set; }
         
         /// <summary>
-        /// Original mod option settings in this character's collection at session start
-        /// Used to restore baseline when switching between designs
-        /// Format: ModDirectory -> GroupName -> List of selected option names
+        /// Baseline mod options captured at session start for restoration when switching designs.
+        /// Format: ModDirectory -> GroupName -> SelectedOptionNames
         /// </summary>
-        [JsonIgnore] // Don't persist - captured fresh each session
+        [JsonIgnore]
         public Dictionary<string, Dictionary<string, List<string>>>? OriginalCollectionState { get; set; }
         public string? Pronouns { get; set; }
         public string? Gender { get; set; }
@@ -68,12 +69,28 @@ namespace CharacterSelectPlugin
         public List<string> KnownTags { get; set; } = new();
         public List<string> DesignTags { get; set; } = new List<string>();
         public string CharacterAutomation { get; set; } = "";
+
+        /// <summary>Gearset to switch to when applying this character (null = don't switch).</summary>
+        public int? AssignedGearset { get; set; } = null;
+
         public List<DesignFolder> DesignFolders { get; set; } = new();
         public Vector3? OverrideAccentColor { get; set; } 
         public string? BackgroundImage { get; set; }
         public ProfileEffects? Effects { get; set; }
         public string GalleryStatus { get; set; } = "";
         public bool IsAdvancedMode { get; set; } = false;
+        
+        // Extended profile fields
+        public string? ExtendedBio { get; set; } = "";
+        public string? PersonalityTraits { get; set; } = "";
+        public string? BackstorySnippet { get; set; } = "";
+        public string? Hooks { get; set; } = "";
+        public string? Connections { get; set; } = "";
+        public string? Goals { get; set; } = "";
+        public string? Secrets { get; set; } = "";
+        public string? Quotes { get; set; } = "";
+        public List<string> GalleryImages { get; set; } = new();
+        public string? BannerImagePath { get; set; } = null;
 
 
 

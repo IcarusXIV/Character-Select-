@@ -54,7 +54,6 @@ namespace CharacterSelectPlugin.Effects
                     if (File.Exists(filePath))
                     {
                         fogTexturePaths.Add(filePath);
-                        Plugin.Log?.Debug($"Found fog texture: {fileName}");
                     }
                     else
                     {

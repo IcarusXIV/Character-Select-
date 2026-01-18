@@ -57,7 +57,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Calculate content height based on character count
             float contentHeight = reorderBuffer.Count * characterRowHeight;
 
-            // Total window height = header + content + buttons (with reasonable limits) who'd have thought math would be involved...
+            // Total window height (clamped)
             var windowHeight = Math.Clamp(
                 headerHeight + contentHeight + buttonHeight,
                 minHeight,
@@ -102,26 +102,20 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
+        private int themeColorCount = 0;
+        private int themeStyleVarCount = 0;
+
         private void ApplyScaledStyles(float scale)
         {
-            // Style 
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.08f, 0.08f, 0.1f, 0.98f));
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.1f, 0.12f, 0.95f));
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.16f, 0.16f, 0.2f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.22f, 0.22f, 0.28f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.28f, 0.28f, 0.35f, 1.0f));
-
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 5.0f * scale);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8.0f * scale);
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * scale, 5 * scale));
-            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(6 * scale, 3 * scale));
+            // Apply theme colors (supports Custom theme, seasonal themes, and default)
+            themeColorCount = ThemeHelper.PushThemeColors(plugin.Configuration);
+            themeStyleVarCount = ThemeHelper.PushThemeStyleVars(plugin.Configuration.UIScaleMultiplier);
         }
 
         private void PopScaledStyles()
         {
-            ImGui.PopStyleVar(4);
-            ImGui.PopStyleColor(6);
+            ThemeHelper.PopThemeStyleVars(themeStyleVarCount);
+            ThemeHelper.PopThemeColors(themeColorCount);
         }
 
         public void Open()

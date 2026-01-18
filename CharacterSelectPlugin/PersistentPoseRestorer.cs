@@ -48,7 +48,7 @@ public unsafe class PoseRestorer
 
     private void TrySetPose(EmoteController.PoseType type, byte desired, FFXIVClientStructs.FFXIV.Client.Game.Character.Character* charPtr)
     {
-        if (desired >= 254) return;
+        if (desired >= 7) return; // Valid poses are 0-6 only; 7+ means "None"
 
         byte current = PlayerState.Instance()->SelectedPoses[(int)type];
         if (current == desired) return;

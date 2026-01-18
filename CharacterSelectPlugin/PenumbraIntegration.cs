@@ -48,6 +48,11 @@ namespace CharacterSelectPlugin
         private IDisposable? modDeletedSubscriber; 
         private IDisposable? modMovedSubscriber;
         
+        // Static debounce mechanism for mod deletion warnings (shared across instances)
+        private static readonly Dictionary<string, DateTime> recentModDeletionWarnings = new();
+        private static readonly object debounceLock = new object();
+        private readonly TimeSpan debounceTime = TimeSpan.FromSeconds(5); // Increased from 2 to 5 seconds
+        
         public bool IsPenumbraAvailable { get; private set; }
         
         public PenumbraIntegration(IDalamudPluginInterface pluginInterface, IPluginLog log)
@@ -284,16 +289,124 @@ namespace CharacterSelectPlugin
             {
                 log.Information($"Mod deleted: {modDirectoryName}");
                 
-                // Remove from cache
-                var plugin = CharacterSelectPlugin.Plugin.Instance;
-                if (plugin?.modCategorizationCache != null && plugin.modCategorizationCache.ContainsKey(modDirectoryName))
+                // Check debounce - prevent duplicate warnings for the same mod
+                var now = DateTime.UtcNow;
+                bool shouldSkip = false;
+                
+                lock (debounceLock)
                 {
-                    plugin.modCategorizationCache.Remove(modDirectoryName);
+                    if (recentModDeletionWarnings.TryGetValue(modDirectoryName, out var lastWarning))
+                    {
+                        var timeSinceLastWarning = now - lastWarning;
+                        log.Information($"Mod {modDirectoryName}: Last warning was {timeSinceLastWarning.TotalSeconds:F2} seconds ago");
+                        
+                        if (timeSinceLastWarning < debounceTime)
+                        {
+                            log.Information($"DEBOUNCE: Skipping duplicate mod deletion warning for {modDirectoryName} (within {debounceTime.TotalSeconds}s debounce period)");
+                            shouldSkip = true;
+                        }
+                    }
+                    else
+                    {
+                        log.Information($"Mod {modDirectoryName}: First deletion event seen");
+                    }
+                }
+                
+                if (shouldSkip) return;
+                
+                // Check if any character/design uses this mod in Conflict Resolution
+                var plugin = CharacterSelectPlugin.Plugin.Instance;
+                if (plugin != null)
+                {
+                    var affectedItems = new List<(string character, string design)>();
                     
-                    // Update persistent cache
-                    plugin.RemoveFromModCache(modDirectoryName);
+                    foreach (var character in plugin.Characters)
+                    {
+                        // Check character-level CR mods
+                        if (character.SecretModState?.ContainsKey(modDirectoryName) == true)
+                        {
+                            affectedItems.Add((character.Name, "Base Character"));
+                        }
+                        
+                        // Check each design's CR mods
+                        foreach (var design in character.Designs)
+                        {
+                            if (design.SecretModState?.ContainsKey(modDirectoryName) == true)
+                            {
+                                affectedItems.Add((character.Name, design.Name));
+                            }
+                        }
+                    }
                     
-                    log.Information($"Removed deleted mod '{modDirectoryName}' from cache");
+                    // Send warning if any characters/designs are affected
+                    if (affectedItems.Count > 0)
+                    {
+                        // Extract mod name from directory path for cleaner display
+                        var modName = System.IO.Path.GetFileName(modDirectoryName) ?? modDirectoryName;
+                        
+                        // Build single consolidated message in red
+                        var messageBuilder = new System.Text.StringBuilder();
+                        
+                        if (affectedItems.Count == 1)
+                        {
+                            messageBuilder.AppendLine($"[CS+] WARNING: Deleted mod '{modName}' was used in the following Design:");
+                        }
+                        else
+                        {
+                            messageBuilder.AppendLine($"[CS+] WARNING: Deleted mod '{modName}' was used in the following Designs:");
+                        }
+                        
+                        foreach (var (character, design) in affectedItems)
+                        {
+                            if (design == "Base Character")
+                            {
+                                messageBuilder.AppendLine($"  • {character} (Character-level CR)");
+                            }
+                            else
+                            {
+                                messageBuilder.AppendLine($"  • {character} → Design: {design}");
+                            }
+                        }
+                        
+                        if (affectedItems.Count == 1)
+                        {
+                            messageBuilder.Append("This design may not apply correctly, please double check.");
+                        }
+                        else
+                        {
+                            messageBuilder.Append("These designs may not apply correctly, please double check.");
+                        }
+                        
+                        Plugin.ChatGui.PrintError(messageBuilder.ToString());
+                        
+                        // Record this warning to prevent duplicates
+                        lock (debounceLock)
+                        {
+                            recentModDeletionWarnings[modDirectoryName] = now;
+                            
+                            // Clean up old entries (older than 10 minutes)
+                            var cutoff = now - TimeSpan.FromMinutes(10);
+                            var keysToRemove = recentModDeletionWarnings
+                                .Where(kvp => kvp.Value < cutoff)
+                                .Select(kvp => kvp.Key)
+                                .ToList();
+                            foreach (var key in keysToRemove)
+                            {
+                                recentModDeletionWarnings.Remove(key);
+                            }
+                        }
+                    }
+                    
+                    // Remove from cache
+                    if (plugin.modCategorizationCache != null && plugin.modCategorizationCache.ContainsKey(modDirectoryName))
+                    {
+                        plugin.modCategorizationCache.Remove(modDirectoryName);
+                        
+                        // Update persistent cache
+                        plugin.RemoveFromModCache(modDirectoryName);
+                        
+                        log.Information($"Removed deleted mod '{modDirectoryName}' from cache");
+                    }
                 }
             }
             catch (Exception ex)
@@ -2152,6 +2265,11 @@ namespace CharacterSelectPlugin
                 if (result == 0) // 0 = Success
                 {
                     return true;
+                }
+                else if (result == 1) // 1 = NothingChanged (already in correct state)
+                {
+                    log.Debug($"TrySetModSettings - no change needed for {modName}.{optionGroupName} (already in correct state)");
+                    return true; // Treat as success since options are already correct
                 }
                 
                 log.Warning($"TrySetModSettings failed with error code: {result}");

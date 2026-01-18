@@ -12,28 +12,24 @@ namespace CharacterSelectPlugin.Managers
         private static string ConfigBackupPath => Path.Combine(BackupDirectory, "characterselectplugin_backup.json");
         private static string VersionFilePath => Path.Combine(BackupDirectory, "last_backup_version.txt");
 
-        // Create a backup of the current configuration before updates
+        // Create backup before updates if needed
         public static void CreateBackupIfNeeded(Configuration config, string currentVersion)
         {
             try
             {
-                // Ensure backup directory exists
                 Directory.CreateDirectory(BackupDirectory);
 
-                // Check if we need to create a backup
                 bool shouldBackup = ShouldCreateBackup(currentVersion);
 
                 if (shouldBackup)
                 {
                     Plugin.Log.Info($"[Backup] Creating configuration backup for version {currentVersion}");
 
-                    // Backup main config file
                     BackupMainConfig(config);
 
-                    // Clean old backups (keep last 5)
+                    // Prune old backups
                     CleanOldBackups();
 
-                    // Update version file
                     File.WriteAllText(VersionFilePath, currentVersion);
 
                     Plugin.Log.Info($"[Backup] Backup completed successfully");
@@ -45,27 +41,27 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Determine if a backup should be created based on version changes
+        // Check if backup needed (version change or 7+ days)
         private static bool ShouldCreateBackup(string currentVersion)
         {
             try
             {
                 if (!File.Exists(VersionFilePath))
                 {
-                    // First time running this version of backup system
+                    // First run
                     return true;
                 }
 
                 string lastBackupVersion = File.ReadAllText(VersionFilePath).Trim();
 
-                // Create backup if version changed
+                // Version changed
                 if (lastBackupVersion != currentVersion)
                 {
                     Plugin.Log.Debug($"[Backup] Version changed from {lastBackupVersion} to {currentVersion}");
                     return true;
                 }
 
-                // Also create backup if it's been more than 7 days since last backup
+                // Periodic backup (7+ days)
                 var backupInfo = new FileInfo(ConfigBackupPath);
                 if (backupInfo.Exists && DateTime.Now - backupInfo.LastWriteTime > TimeSpan.FromDays(7))
                 {
@@ -82,16 +78,14 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Back up the main configuration file
+        // Save config to timestamped backup file
         private static void BackupMainConfig(Configuration config)
         {
             try
             {
-                // Create timestamped backup
                 string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
                 string timestampedBackup = Path.Combine(BackupDirectory, $"config_backup_{timestamp}.json");
 
-                // Serialize current config with type information
                 var settings = new JsonSerializerSettings 
                 {
                     TypeNameHandling = TypeNameHandling.Objects,
@@ -99,10 +93,9 @@ namespace CharacterSelectPlugin.Managers
                 };
                 string configJson = JsonConvert.SerializeObject(config, settings);
 
-                // Save timestamped backup
                 File.WriteAllText(timestampedBackup, configJson);
 
-                // Also save as the "current" backup
+                // Also save as "current" backup
                 File.WriteAllText(ConfigBackupPath, configJson);
 
                 Plugin.Log.Debug($"[Backup] Config backed up to: {timestampedBackup}");
@@ -113,8 +106,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Remove old backup files, keeping only the most recent 5 AUTOMATIC backups
-        // Manual and emergency backups are never automatically cleaned
+        // Keep only 5 most recent automatic backups (manual/emergency preserved)
         private static void CleanOldBackups()
         {
             try
@@ -122,15 +114,13 @@ namespace CharacterSelectPlugin.Managers
                 if (!Directory.Exists(BackupDirectory))
                     return;
 
-                // Only clean automatic backups (config_backup_*.json)
-                // Exclude manual_backup_* and emergency_* backups from cleanup
+                // Only clean automatic backups, preserve manual/emergency
                 var automaticBackupFiles = Directory.GetFiles(BackupDirectory, "config_backup_*.json")
                     .Where(f => !Path.GetFileName(f).Contains("manual_backup_") && !Path.GetFileName(f).Contains("emergency_"))
                     .Select(f => new FileInfo(f))
                     .OrderByDescending(f => f.CreationTime)
                     .ToArray();
 
-                // Keep the 5 most recent automatic backups
                 var filesToDelete = automaticBackupFiles.Skip(5);
 
                 foreach (var file in filesToDelete)
@@ -154,7 +144,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Restore configuration from backup
+        // Load config from backup file
         public static Configuration? RestoreFromBackup()
         {
             try
@@ -186,7 +176,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Get information about available backups
+        // Get backup metadata
         public static BackupInfo GetBackupInfo()
         {
             var info = new BackupInfo();
@@ -206,7 +196,6 @@ namespace CharacterSelectPlugin.Managers
                     info.LastBackupVersion = File.ReadAllText(VersionFilePath).Trim();
                 }
 
-                // Count timestamped backups
                 if (Directory.Exists(BackupDirectory))
                 {
                     info.BackupCount = Directory.GetFiles(BackupDirectory, "config_backup_*.json").Length;
@@ -220,7 +209,7 @@ namespace CharacterSelectPlugin.Managers
             return info;
         }
 
-        // Create an emergency backup
+        // Create emergency backup
         public static void CreateEmergencyBackup(Configuration config)
         {
             try
@@ -244,7 +233,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Create a manual backup with custom name
+        // Create manual backup with optional custom name
         public static string? CreateManualBackup(Configuration config, string? customName = null)
         {
             try
@@ -276,7 +265,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Export configuration to a specific file path
+        // Export config to specified path
         public static bool ExportConfiguration(Configuration config, string filePath)
         {
             try
@@ -299,7 +288,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Import configuration from a file path
+        // Import config from file
         public static Configuration? ImportConfiguration(string filePath)
         {
             try
@@ -335,7 +324,7 @@ namespace CharacterSelectPlugin.Managers
             }
         }
 
-        // Get list of available backup files
+        // List all backup files
         public static List<BackupFileInfo> GetAvailableBackups()
         {
             var backups = new List<BackupFileInfo>();

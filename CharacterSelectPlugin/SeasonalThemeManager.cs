@@ -17,7 +17,8 @@ namespace CharacterSelectPlugin
         Default,      // Always use default theme
         Halloween,    // Always use Halloween theme
         Christmas,    // Always use Christmas theme
-        Winter        // Always use Winter theme
+        Winter,       // Always use Winter theme
+        Custom        // User-customized theme
     }
 
     public class SeasonalThemeColors
@@ -103,7 +104,11 @@ namespace CharacterSelectPlugin
             // Legacy support: if old setting was true and no new selection made, default to Current
             if (config.UseSeasonalTheme && config.SelectedTheme == ThemeSelection.Current)
                 return true;
-            
+
+            // Custom theme is not a seasonal theme
+            if (config.SelectedTheme == ThemeSelection.Custom)
+                return false;
+
             return config.SelectedTheme != ThemeSelection.Default;
         }
 
@@ -116,6 +121,7 @@ namespace CharacterSelectPlugin
                 ThemeSelection.Halloween => SeasonalTheme.Halloween,
                 ThemeSelection.Christmas => SeasonalTheme.Christmas,
                 ThemeSelection.Winter => SeasonalTheme.Winter,
+                ThemeSelection.Custom => SeasonalTheme.Default, // Custom uses its own styling
                 _ => SeasonalTheme.Default
             };
         }
@@ -157,6 +163,7 @@ namespace CharacterSelectPlugin
                 ThemeSelection.Halloween => "Halloween",
                 ThemeSelection.Christmas => "Christmas",
                 ThemeSelection.Winter => "Winter",
+                ThemeSelection.Custom => "Custom",
                 _ => "Default"
             };
         }
@@ -171,6 +178,7 @@ namespace CharacterSelectPlugin
                 ThemeSelection.Halloween => "Orange and purple Halloween theme",
                 ThemeSelection.Christmas => "Red, green, and gold Christmas theme",
                 ThemeSelection.Winter => "Icy blue and white winter theme",
+                ThemeSelection.Custom => "Your custom colors and settings",
                 _ => "Standard theme"
             };
         }

@@ -7,8 +7,11 @@ using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Net.Http;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
+using Dalamud.Interface.ManagedFontAtlas;
+using CharacterSelectPlugin.Windows.Components;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -29,6 +32,23 @@ namespace CharacterSelectPlugin.Windows
         private float bioScrollY = 0f;
         private string? imagePreviewUrl = null;
         private bool showImagePreview = false;
+        private int currentPreviewIndex = 0;
+        private List<string> availableImagePaths = new List<string>();
+
+        // Tab system
+        private int activeTab = 0; // 0 = Overview, 1 = Gallery
+
+        // Gallery image caching - use the same approach as profile images
+        private Dictionary<string, string> galleryImagePaths = new Dictionary<string, string>(); // URL to local file path
+        private Dictionary<string, bool> galleryImageComplete = new Dictionary<string, bool>(); // URL to download status
+        private HashSet<string> downloadingImages = new HashSet<string>();
+        private Dictionary<string, string> imageStatus = new Dictionary<string, string>(); // For debugging
+
+        // Banner URL caching
+        private HashSet<string> downloadingBanners = new HashSet<string>();
+
+        // Background URL caching
+        private HashSet<string> downloadingBackgrounds = new HashSet<string>();
 
         // Animation variables
         private float animationTime = 0f;
@@ -42,11 +62,28 @@ namespace CharacterSelectPlugin.Windows
         private float[] gothicWispPositions = new float[8];
         private float[] gothicWispPhases = new float[8];
         private bool stylesPushed = false;
+        
+        // Expansion state
+        private bool isExpanded = false;
+        private bool isAnimating = false;
+        private bool pendingClose = false;
+        private float animationProgress = 0f;
+        private Vector2 collapsedSize = new Vector2(420f, 580f);
+        private Vector2 expandedSize = new Vector2(1200f, 700f);
+        private Vector2 currentWindowSize = new Vector2(420f, 580f);
+        
+        // Track actual biography position for handlebar alignment
+        private float actualBioPositionY = 0f;
 
         public RPProfile? CurrentProfile => showingExternal ? externalProfile : character?.RPProfile;
 
         public RPProfileViewWindow(Plugin plugin)
-            : base("RPProfileWindow",
+            : this(plugin, "RPProfileWindow")
+        {
+        }
+
+        public RPProfileViewWindow(Plugin plugin, string windowName)
+            : base(windowName,
                 ImGuiWindowFlags.NoDecoration |
                 ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoCollapse)
@@ -54,13 +91,78 @@ namespace CharacterSelectPlugin.Windows
             this.plugin = plugin;
             IsOpen = false;
 
-            SizeConstraints = new WindowSizeConstraints
-            {
-                MinimumSize = new Vector2(420, 550),
-                MaximumSize = new Vector2(9999, 9999)
-            };
+            UpdateSizeConstraints();
 
             InitializeAnimationData();
+        }
+        
+        private void UpdateSizeConstraints()
+        {
+            if (isExpanded)
+            {
+                SizeConstraints = new WindowSizeConstraints
+                {
+                    MinimumSize = expandedSize,
+                    MaximumSize = expandedSize
+                };
+            }
+            else
+            {
+                SizeConstraints = new WindowSizeConstraints
+                {
+                    MinimumSize = collapsedSize,
+                    MaximumSize = new Vector2(600, 800)
+                };
+            }
+        }
+        
+        private void UpdateAnimation()
+        {
+            if (!isAnimating) return;
+            
+            var deltaTime = ImGui.GetIO().DeltaTime;
+            animationProgress += deltaTime * 2f; // Slower, smoother animation
+            
+            if (animationProgress >= 1f)
+            {
+                animationProgress = 1f;
+                isAnimating = false;
+            }
+            
+            // Smoother cubic easing function (ease-in-out-cubic)
+            float t = Math.Clamp(animationProgress, 0f, 1f);
+            float easedProgress = t < 0.5f 
+                ? 4f * t * t * t
+                : 1f - MathF.Pow(-2f * t + 2f, 3f) / 2f;
+            
+            // Interpolate window size
+            Vector2 targetSize = isExpanded ? expandedSize : collapsedSize;
+            Vector2 startSize = isExpanded ? collapsedSize : expandedSize;
+            currentWindowSize = Vector2.Lerp(startSize, targetSize, easedProgress);
+            
+            // Update size constraints during animation to prevent hitching
+            if (isAnimating)
+            {
+                SizeConstraints = new WindowSizeConstraints
+                {
+                    MinimumSize = currentWindowSize,
+                    MaximumSize = currentWindowSize
+                };
+            }
+            else
+            {
+                // Only update final constraints when animation is complete
+                UpdateSizeConstraints();
+            }
+            
+            ImGui.SetWindowSize(currentWindowSize);
+        }
+        
+        private void ToggleExpansion()
+        {
+            isExpanded = !isExpanded;
+            isAnimating = true;
+            animationProgress = 0f;
         }
 
         private void InitializeAnimationData()
@@ -95,12 +197,44 @@ namespace CharacterSelectPlugin.Windows
             }
         }
 
+        private Vector2? pendingPositionOffset = null;
+        private Vector2? pendingAbsolutePosition = null;
+
         public void SetCharacter(Character character)
         {
             this.character = character;
             showingExternal = false;
             bringToFront = true;
             ResetImageCache();
+
+            // Always reset to compact view when setting character
+            isExpanded = false;
+            isAnimating = false;
+            animationProgress = 0f;
+            currentWindowSize = collapsedSize;
+            UpdateSizeConstraints();
+        }
+
+        public void OffsetPosition(float x, float y)
+        {
+            pendingPositionOffset = new Vector2(x, y);
+            pendingAbsolutePosition = null; // Clear absolute if offset is set
+        }
+
+        public void SetAbsolutePosition(float x, float y)
+        {
+            pendingAbsolutePosition = new Vector2(x, y);
+            pendingPositionOffset = null; // Clear offset if absolute is set
+        }
+
+        public void RefreshCharacterData(Character character)
+        {
+            // Update character data without affecting the expanded state
+            this.character = character;
+            showingExternal = false;
+            ResetImageCache(); // Ensure UI refreshes properly
+            // Don't reset the expanded state or bring to front
+            // This is for real-time updates from the editor
         }
 
         public void SetExternalProfile(RPProfile profile)
@@ -109,6 +243,13 @@ namespace CharacterSelectPlugin.Windows
             showingExternal = true;
             ResetImageCache();
             bringToFront = true;
+            
+            // Always reset to compact view when setting external profile
+            isExpanded = false;
+            isAnimating = false;
+            animationProgress = 0f;
+            currentWindowSize = collapsedSize;
+            UpdateSizeConstraints();
         }
 
         private void ResetImageCache()
@@ -119,6 +260,19 @@ namespace CharacterSelectPlugin.Windows
             cachedTexture?.Dispose();
             cachedTexture = null;
             cachedTexturePath = null;
+        }
+
+        public override void OnClose()
+        {
+            // Reset state when window closes
+            stylesPushed = false;
+            pendingClose = false;
+            isExpanded = false;
+            isAnimating = false;
+            animationProgress = 0f;
+            currentWindowSize = collapsedSize;
+            ResetImageCache();
+            base.OnClose();
         }
 
         public override void PreDraw()
@@ -140,10 +294,24 @@ namespace CharacterSelectPlugin.Windows
 
                 if (firstOpen)
                 {
-                    var center = ImGui.GetMainViewport().GetCenter();
-                    ImGui.SetNextWindowPos(center, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+                    // Use absolute position if set, otherwise use offset from center
+                    if (pendingAbsolutePosition.HasValue)
+                    {
+                        ImGui.SetNextWindowPos(pendingAbsolutePosition.Value, ImGuiCond.Always);
+                        pendingAbsolutePosition = null;
+                    }
+                    else
+                    {
+                        var center = ImGui.GetMainViewport().GetCenter();
+                        var offset = pendingPositionOffset ?? Vector2.Zero;
+                        ImGui.SetNextWindowPos(center + offset, ImGuiCond.Always, new Vector2(0.5f, 0.5f));
+                        pendingPositionOffset = null;
+                    }
                     firstOpen = false;
                 }
+
+                // Force window size to match current state when bringing to front
+                ImGui.SetNextWindowSize(currentWindowSize, ImGuiCond.Always);
 
                 bringToFront = false;
             }
@@ -151,6 +319,20 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            // Handle deferred close to avoid mid-draw state issues
+            if (pendingClose)
+            {
+                pendingClose = false;
+                IsOpen = false;
+                if (stylesPushed)
+                {
+                    ImGui.PopStyleVar(2);
+                    ImGui.PopStyleColor(2);
+                    stylesPushed = false;
+                }
+                return;
+            }
+
             var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
             var rp = CurrentProfile;
@@ -164,6 +346,9 @@ namespace CharacterSelectPlugin.Windows
                 }
                 return;
             }
+
+            // Update animation state
+            UpdateAnimation();
 
             var currentSize = ImGui.GetWindowSize();
 
@@ -196,7 +381,7 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
 
-            if (!ImGui.Begin("RPProfileWindow",
+            if (!ImGui.Begin(WindowName,
                 ImGuiWindowFlags.NoDecoration |
                 ImGuiWindowFlags.NoCollapse |
                 ImGuiWindowFlags.NoScrollbar))
@@ -213,7 +398,17 @@ namespace CharacterSelectPlugin.Windows
 
             plugin.RPProfileViewWindowPos = ImGui.GetWindowPos();
             plugin.RPProfileViewWindowSize = ImGui.GetWindowSize();
-            DrawProfileContent(rp, totalScale);
+
+            if (isExpanded)
+            {
+                DrawExpandedProfile(rp, totalScale);
+            }
+            else
+            {
+                DrawProfileContent(rp, totalScale);
+                DrawExpandButton(totalScale);
+            }
+
             DrawImagePreview(totalScale);
             ImGui.End();
 
@@ -224,6 +419,7 @@ namespace CharacterSelectPlugin.Windows
                 stylesPushed = false;
             }
         }
+
         private void DrawImagePreview(float scale)
         {
             if (!showImagePreview || string.IsNullOrEmpty(imagePreviewUrl))
@@ -261,6 +457,37 @@ namespace CharacterSelectPlugin.Windows
 
                     ImGui.SetCursorPos(startPos);
                     ImGui.Image((ImTextureID)texture.Handle, displaySize);
+                    
+                    // Navigation controls - only show if there are multiple images
+                    if (availableImagePaths.Count > 1)
+                    {
+                        var buttonSize = new Vector2(60f, 40f);
+                        var buttonPadding = 20f;
+                        
+                        // Left arrow button
+                        ImGui.SetCursorPos(new Vector2(buttonPadding, (windowSize.Y - buttonSize.Y) * 0.5f));
+                        if (ImGui.Button("◀", buttonSize) && currentPreviewIndex > 0)
+                        {
+                            currentPreviewIndex--;
+                            imagePreviewUrl = availableImagePaths[currentPreviewIndex];
+                        }
+                        
+                        // Right arrow button  
+                        ImGui.SetCursorPos(new Vector2(windowSize.X - buttonSize.X - buttonPadding, (windowSize.Y - buttonSize.Y) * 0.5f));
+                        if (ImGui.Button("▶", buttonSize) && currentPreviewIndex < availableImagePaths.Count - 1)
+                        {
+                            currentPreviewIndex++;
+                            imagePreviewUrl = availableImagePaths[currentPreviewIndex];
+                        }
+                        
+                        // Image counter
+                        var counterText = $"{currentPreviewIndex + 1} / {availableImagePaths.Count}";
+                        var counterSize = ImGui.CalcTextSize(counterText);
+                        ImGui.SetCursorPos(new Vector2((windowSize.X - counterSize.X) * 0.5f, windowSize.Y - counterSize.Y - 30f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 0.8f));
+                        ImGui.Text(counterText);
+                        ImGui.PopStyleColor();
+                    }
                 }
                 else
                 {
@@ -272,8 +499,27 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.Text("Loading image...");
                 }
 
-                // Click anywhere to close
-                if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                // Keyboard navigation
+                if (availableImagePaths.Count > 1)
+                {
+                    if (ImGui.IsKeyPressed(ImGuiKey.LeftArrow) && currentPreviewIndex > 0)
+                    {
+                        currentPreviewIndex--;
+                        imagePreviewUrl = availableImagePaths[currentPreviewIndex];
+                    }
+                    if (ImGui.IsKeyPressed(ImGuiKey.RightArrow) && currentPreviewIndex < availableImagePaths.Count - 1)
+                    {
+                        currentPreviewIndex++;
+                        imagePreviewUrl = availableImagePaths[currentPreviewIndex];
+                    }
+                }
+                
+                // Escape to close
+                if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+                    showImagePreview = false;
+                
+                // Click anywhere to close (but not on navigation buttons)
+                if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && !ImGui.IsAnyItemHovered())
                     showImagePreview = false;
             }
             ImGui.End();
@@ -295,6 +541,13 @@ namespace CharacterSelectPlugin.Windows
                     return null; // Still downloading or failed
             }
 
+            // For local profiles, check if a gallery image is selected for preview
+            var galleryPreviewPath = GetSelectedGalleryPreviewPath();
+            if (!string.IsNullOrEmpty(galleryPreviewPath))
+            {
+                return galleryPreviewPath;
+            }
+
             // For local profiles, prefer custom image path
             if (!string.IsNullOrEmpty(rp.CustomImagePath) && File.Exists(rp.CustomImagePath))
             {
@@ -310,6 +563,19 @@ namespace CharacterSelectPlugin.Windows
             // Don't preview the default image
             return null;
         }
+        
+        private string? GetSelectedGalleryPreviewPath()
+        {
+            var rp = CurrentProfile;
+            // Only use gallery preview if explicitly enabled AND a valid image is selected
+            if (rp?.UseGalleryPreview == true && rp.GalleryImages?.Count > 0 && rp.SelectedGalleryPreviewIndex >= 0)
+            {
+                var galleryIndex = Math.Clamp(rp.SelectedGalleryPreviewIndex, 0, rp.GalleryImages.Count - 1);
+                var galleryImage = rp.GalleryImages[galleryIndex];
+                return GetGalleryImagePath(galleryImage.Url);
+            }
+            return null;
+        }
 
 
         private void DrawProfileContent(RPProfile rp, float scale)
@@ -322,11 +588,41 @@ namespace CharacterSelectPlugin.Windows
             var bioStartY = Math.Max(280f * scale, wndSize.Y * 0.48f);
             var animationStartY = Math.Max(bioStartY + (120f * scale), wndSize.Y * 0.85f);
 
-            bool hasCustomBackground = !string.IsNullOrEmpty(rp.BackgroundImage);
+            // Check for URL-based RP background first, then preset backgrounds
+            string? backgroundSource = null;
+            bool isUrlBackground = false;
+
+            if (!string.IsNullOrEmpty(rp.RPBackgroundImageUrl))
+            {
+                var cachedPath = GetRPBackgroundImageCachePath(rp.RPBackgroundImageUrl);
+                if (File.Exists(cachedPath))
+                {
+                    backgroundSource = cachedPath;
+                    isUrlBackground = true;
+                }
+                else if (!downloadingBackgrounds.Contains(rp.RPBackgroundImageUrl))
+                {
+                    Task.Run(async () => await DownloadRPBackgroundImageAsync(rp.RPBackgroundImageUrl));
+                }
+            }
+            else if (!string.IsNullOrEmpty(rp.BackgroundImage))
+            {
+                // Fallback to preset backgrounds
+                backgroundSource = rp.BackgroundImage;
+            }
+
+            bool hasCustomBackground = backgroundSource != null;
 
             if (hasCustomBackground)
             {
-                DrawCustomBackground(dl, wndPos, wndSize, rp.BackgroundImage!, scale);
+                if (isUrlBackground)
+                {
+                    DrawRPUrlBackground(dl, wndPos, wndSize, backgroundSource!, rp, scale);
+                }
+                else
+                {
+                    DrawCustomBackground(dl, wndPos, wndSize, backgroundSource!, scale);
+                }
             }
             else
             {
@@ -353,6 +649,9 @@ namespace CharacterSelectPlugin.Windows
                     DrawAnimationFadeIn(dl, wndPos, wndSize, bioStartY, animationStartY, scale);
                 }
             }
+
+            // Banner is only shown in expanded view mode
+            // In collapsed mode, we focus on the character portrait and basic info
 
             DrawEnhancedBorders(dl, wndPos, wndSize, scale);
             DrawEnhancedHeader(scale);
@@ -401,7 +700,13 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Spacing();
             ImGui.Spacing();
 
+            // Capture the actual biography Y position for the expand button
+            var actualBioStartY = ImGui.GetCursorScreenPos().Y;
             DrawResponsiveBioSection(rp, wndSize, scale);
+            var actualBioEndY = ImGui.GetCursorScreenPos().Y;
+            
+            // Calculate middle of bio section for handlebar alignment
+            actualBioPositionY = actualBioStartY + ((actualBioEndY - actualBioStartY) / 2);
 
             ImGui.EndChild();
 
@@ -616,6 +921,350 @@ namespace CharacterSelectPlugin.Windows
                 Plugin.Log.Error($"Error in DrawCustomBackground: {ex.Message}");
                 DrawNeonGlow(dl, wndPos, wndSize, scale);
                 DrawMainBackground(dl, wndPos, wndSize, scale);
+            }
+        }
+
+        private void DrawUrlBackground(ImDrawListPtr dl, Vector2 wndPos, Vector2 wndSize, string imagePath, RPProfile rp, float scale)
+        {
+            try
+            {
+                if (!File.Exists(imagePath))
+                {
+                    DrawNeonGlow(dl, wndPos, wndSize, scale);
+                    DrawMainBackground(dl, wndPos, wndSize, scale);
+                    return;
+                }
+
+                var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                if (texture != null)
+                {
+                    Vector2 imageSize = new Vector2(texture.Width, texture.Height);
+
+                    // Apply user zoom
+                    float zoom = Math.Clamp(rp.BackgroundImageZoom, 0.5f, 3.0f);
+                    float scaleX = wndSize.X / imageSize.X;
+                    float scaleY = wndSize.Y / imageSize.Y;
+                    float imageScale = Math.Max(scaleX, scaleY) * zoom;
+
+                    Vector2 scaledSize = imageSize * imageScale;
+
+                    // Apply user offset as percentage of window size (independent of image size)
+                    // Range -1 to 1 maps to -50% to +50% of window dimension
+                    var userOffsetX = rp.BackgroundImageOffsetX * wndSize.X * 0.5f;
+                    var userOffsetY = rp.BackgroundImageOffsetY * wndSize.Y * 0.5f;
+                    Vector2 offset = ((wndSize - scaledSize) * 0.5f) + new Vector2(userOffsetX, userOffsetY);
+
+                    // Apply opacity
+                    float opacity = Math.Clamp(rp.BackgroundImageOpacity, 0.1f, 1.0f);
+
+                    dl.PushClipRect(wndPos, wndPos + wndSize, true);
+                    dl.AddImage((ImTextureID)texture.Handle,
+                        wndPos + offset,
+                        wndPos + offset + scaledSize,
+                        Vector2.Zero,
+                        Vector2.One,
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, opacity))
+                    );
+                    dl.PopClipRect();
+                }
+                else
+                {
+                    DrawNeonGlow(dl, wndPos, wndSize, scale);
+                    DrawMainBackground(dl, wndPos, wndSize, scale);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Error in DrawUrlBackground: {ex.Message}");
+                DrawNeonGlow(dl, wndPos, wndSize, scale);
+                DrawMainBackground(dl, wndPos, wndSize, scale);
+            }
+        }
+
+        private void DrawUrlBackgroundInRegion(ImDrawListPtr dl, Vector2 regionPos, Vector2 regionSize, string imagePath, RPProfile rp, float scale)
+        {
+            try
+            {
+                if (!File.Exists(imagePath))
+                    return;
+
+                var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                if (texture != null)
+                {
+                    Vector2 imageSize = new Vector2(texture.Width, texture.Height);
+
+                    // Apply user zoom
+                    float zoom = Math.Clamp(rp.BackgroundImageZoom, 0.5f, 3.0f);
+                    float scaleX = regionSize.X / imageSize.X;
+                    float scaleY = regionSize.Y / imageSize.Y;
+                    float imageScale = Math.Max(scaleX, scaleY) * zoom;
+
+                    Vector2 scaledSize = imageSize * imageScale;
+
+                    // Apply user offset as percentage of region size (independent of image size)
+                    // Range -1 to 1 maps to -50% to +50% of region dimension
+                    var userOffsetX = rp.BackgroundImageOffsetX * regionSize.X * 0.5f;
+                    var userOffsetY = rp.BackgroundImageOffsetY * regionSize.Y * 0.5f;
+                    Vector2 offset = ((regionSize - scaledSize) * 0.5f) + new Vector2(userOffsetX, userOffsetY);
+
+                    // Apply opacity
+                    float opacity = Math.Clamp(rp.BackgroundImageOpacity, 0.1f, 1.0f);
+
+                    dl.PushClipRect(regionPos, regionPos + regionSize, true);
+                    dl.AddImage((ImTextureID)texture.Handle,
+                        regionPos + offset,
+                        regionPos + offset + scaledSize,
+                        Vector2.Zero,
+                        Vector2.One,
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, opacity))
+                    );
+                    dl.PopClipRect();
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Error in DrawUrlBackgroundInRegion: {ex.Message}");
+            }
+        }
+
+        private string GetBackgroundImageCachePath(string imageUrl)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    return "";
+
+                var fileName = $"erpbg_{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(imageUrl)).Replace('/', '_').Replace('+', '-')}";
+                return Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private async Task DownloadBackgroundImageAsync(string imageUrl)
+        {
+            if (string.IsNullOrWhiteSpace(imageUrl))
+                return;
+
+            var imagePath = GetBackgroundImageCachePath(imageUrl);
+
+            if (File.Exists(imagePath))
+                return;
+
+            lock (downloadingBackgrounds)
+            {
+                if (downloadingBackgrounds.Contains(imageUrl))
+                    return;
+                downloadingBackgrounds.Add(imageUrl);
+            }
+
+            try
+            {
+                if (File.Exists(imagePath))
+                    return;
+
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(15);
+                var response = await client.GetAsync(imageUrl);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                    var tempPath = imagePath + ".tmp";
+                    await File.WriteAllBytesAsync(tempPath, imageBytes);
+                    File.Move(tempPath, imagePath);
+                    Plugin.Log.Info($"Downloaded ERP background image: {imageUrl}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Failed to download ERP background image {imageUrl}: {ex.Message}");
+            }
+            finally
+            {
+                lock (downloadingBackgrounds)
+                {
+                    downloadingBackgrounds.Remove(imageUrl);
+                }
+            }
+        }
+
+        private void DrawRPUrlBackground(ImDrawListPtr dl, Vector2 wndPos, Vector2 wndSize, string imagePath, RPProfile rp, float scale)
+        {
+            try
+            {
+                if (!File.Exists(imagePath))
+                {
+                    DrawNeonGlow(dl, wndPos, wndSize, scale);
+                    DrawMainBackground(dl, wndPos, wndSize, scale);
+                    return;
+                }
+
+                var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                if (texture != null)
+                {
+                    Vector2 imageSize = new Vector2(texture.Width, texture.Height);
+
+                    // Apply user zoom (RP-specific property)
+                    float zoom = Math.Clamp(rp.RPBackgroundImageZoom, 0.5f, 3.0f);
+                    float scaleX = wndSize.X / imageSize.X;
+                    float scaleY = wndSize.Y / imageSize.Y;
+                    float imageScale = Math.Max(scaleX, scaleY) * zoom;
+
+                    Vector2 scaledSize = imageSize * imageScale;
+
+                    // Apply user offset as percentage of window size (independent of image size)
+                    // Range -1 to 1 maps to -50% to +50% of window dimension
+                    var userOffsetX = rp.RPBackgroundImageOffsetX * wndSize.X * 0.5f;
+                    var userOffsetY = rp.RPBackgroundImageOffsetY * wndSize.Y * 0.5f;
+                    Vector2 offset = ((wndSize - scaledSize) * 0.5f) + new Vector2(userOffsetX, userOffsetY);
+
+                    // Apply opacity (RP-specific property)
+                    float opacity = Math.Clamp(rp.RPBackgroundImageOpacity, 0.1f, 1.0f);
+
+                    dl.PushClipRect(wndPos, wndPos + wndSize, true);
+                    dl.AddImage((ImTextureID)texture.Handle,
+                        wndPos + offset,
+                        wndPos + offset + scaledSize,
+                        Vector2.Zero,
+                        Vector2.One,
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, opacity))
+                    );
+                    dl.PopClipRect();
+                }
+                else
+                {
+                    DrawNeonGlow(dl, wndPos, wndSize, scale);
+                    DrawMainBackground(dl, wndPos, wndSize, scale);
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Error in DrawRPUrlBackground: {ex.Message}");
+                DrawNeonGlow(dl, wndPos, wndSize, scale);
+                DrawMainBackground(dl, wndPos, wndSize, scale);
+            }
+        }
+
+        private string GetRPBackgroundImageCachePath(string imageUrl)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    return "";
+
+                var fileName = $"rpbg_{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(imageUrl)).Replace('/', '_').Replace('+', '-')}";
+                return Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private async Task DownloadRPBackgroundImageAsync(string imageUrl)
+        {
+            if (string.IsNullOrWhiteSpace(imageUrl))
+                return;
+
+            var imagePath = GetRPBackgroundImageCachePath(imageUrl);
+
+            if (File.Exists(imagePath))
+                return;
+
+            lock (downloadingBackgrounds)
+            {
+                if (downloadingBackgrounds.Contains(imageUrl))
+                    return;
+                downloadingBackgrounds.Add(imageUrl);
+            }
+
+            try
+            {
+                if (File.Exists(imagePath))
+                    return;
+
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(15);
+                var response = await client.GetAsync(imageUrl);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                    var tempPath = imagePath + ".tmp";
+                    await File.WriteAllBytesAsync(tempPath, imageBytes);
+                    File.Move(tempPath, imagePath);
+                    Plugin.Log.Info($"Downloaded RP background image: {imageUrl}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Failed to download RP background image {imageUrl}: {ex.Message}");
+            }
+            finally
+            {
+                lock (downloadingBackgrounds)
+                {
+                    downloadingBackgrounds.Remove(imageUrl);
+                }
+            }
+        }
+
+        private void DrawBanner(ImDrawListPtr dl, Vector2 wndPos, Vector2 wndSize, string bannerImagePath, float bannerZoom, Vector2 bannerOffset, float scale)
+        {
+            try
+            {
+                if (!File.Exists(bannerImagePath))
+                {
+                    return;
+                }
+
+                var bannerTexture = Plugin.TextureProvider.GetFromFile(bannerImagePath).GetWrapOrDefault();
+                if (bannerTexture == null)
+                {
+                    return;
+                }
+
+                // Banner positioning - top portion of the window
+                float bannerHeight = wndSize.Y * 0.25f; // Banner takes up top 25% of window
+                Vector2 bannerRegionPos = wndPos;
+                Vector2 bannerRegionSize = new Vector2(wndSize.X, bannerHeight);
+
+                // Apply zoom and offset
+                float zoom = Math.Clamp(bannerZoom, 0.1f, 8.0f);
+                Vector2 offset = bannerOffset * scale;
+                Plugin.Log.Info($"[Profile Banner Debug] bannerOffset: {bannerOffset}, scale: {scale}, final offset: {offset}");
+
+                // Calculate banner size maintaining aspect ratio
+                float bannerAspect = (float)bannerTexture.Width / bannerTexture.Height;
+                float bannerWidth = bannerRegionSize.X * zoom;
+                float bannerDrawHeight = bannerWidth / bannerAspect;
+                
+                Vector2 bannerDrawSize = new Vector2(bannerWidth, bannerDrawHeight);
+                
+                // Center the banner in the region and apply offset
+                Vector2 centerOffset = (bannerRegionSize - bannerDrawSize) * 0.5f;
+                Vector2 bannerDrawPos = bannerRegionPos + centerOffset + offset;
+
+                // Clip to banner region
+                dl.PushClipRect(bannerRegionPos, bannerRegionPos + bannerRegionSize, true);
+                
+                // Draw the banner with some transparency to blend with background
+                dl.AddImage((ImTextureID)bannerTexture.Handle,
+                    bannerDrawPos,
+                    bannerDrawPos + bannerDrawSize,
+                    Vector2.Zero,
+                    Vector2.One,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.85f)) // Slightly transparent
+                );
+
+                dl.PopClipRect();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Error in DrawBanner: {ex.Message}");
             }
         }
 
@@ -2136,7 +2785,7 @@ namespace CharacterSelectPlugin.Windows
 
             if (ImGui.Button("X", new Vector2(buttonSize, buttonSize)))
             {
-                IsOpen = false;
+                pendingClose = true;
             }
 
             ImGui.PopStyleVar();
@@ -2276,6 +2925,98 @@ namespace CharacterSelectPlugin.Windows
             }
         }
 
+        private void DrawTitleAndStatus(RPProfile rp, float scale)
+        {
+            var hasTitle = !string.IsNullOrEmpty(rp.Title);
+            var hasStatus = !string.IsNullOrEmpty(rp.Status);
+
+            if (!hasTitle && !hasStatus) return;
+
+            var profileColor = ResolveNameplateColor();
+            var drawList = ImGui.GetWindowDrawList();
+
+            // Lift up closer to name/pronouns
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 2 * scale);
+
+            // Title line (regular text, not italic)
+            if (hasTitle)
+            {
+                // Draw icon if set (smaller size)
+                if (rp.TitleIcon > 0)
+                {
+                    var iconPos = ImGui.GetCursorScreenPos();
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    var iconText = ((FontAwesomeIcon)rp.TitleIcon).ToIconString();
+                    var iconColor = ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f));
+                    // Draw smaller by using drawlist with slight offset
+                    ImGui.SetWindowFontScale(0.85f);
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f));
+                    ImGui.Text(iconText);
+                    ImGui.PopStyleColor();
+                    ImGui.SetWindowFontScale(1.0f);
+                    ImGui.PopFont();
+                    ImGui.SameLine(0, 4 * scale);
+                }
+
+                // Draw title text (regular, not italic)
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.85f, 0.95f));
+                ImGui.Text(rp.Title!);
+                ImGui.PopStyleColor();
+            }
+
+            // Status line (italic)
+            if (hasStatus)
+            {
+                // Draw icon if set (smaller size)
+                if (rp.StatusIcon > 0)
+                {
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.SetWindowFontScale(0.85f);
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.9f, 0.6f, 0.9f)); // Greenish for status
+                    ImGui.Text(((FontAwesomeIcon)rp.StatusIcon).ToIconString());
+                    ImGui.PopStyleColor();
+                    ImGui.SetWindowFontScale(1.0f);
+                    ImGui.PopFont();
+                    ImGui.SameLine(0, 4 * scale);
+                }
+
+                // Draw status text in italics
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.85f, 0.7f, 0.95f)); // Greenish tint
+                DrawItalicText(rp.Status!, scale);
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawItalicText(string text, float scale)
+        {
+            // ImGui doesn't have native italic support, so we use a skew transform via drawlist
+            var drawList = ImGui.GetWindowDrawList();
+            var pos = ImGui.GetCursorScreenPos();
+            var textSize = ImGui.CalcTextSize(text);
+            var color = ImGui.GetColorU32(ImGuiCol.Text);
+
+            // Draw each character with a slight horizontal offset based on vertical position
+            float skewFactor = 0.15f; // How much to skew (italicize)
+            float charX = pos.X;
+
+            foreach (char c in text)
+            {
+                var charStr = c.ToString();
+                var charSize = ImGui.CalcTextSize(charStr);
+
+                // Calculate skew offset (top of character shifts right)
+                float skewOffset = charSize.Y * skewFactor;
+
+                // Draw character slightly skewed by offsetting based on Y
+                drawList.AddText(new Vector2(charX + skewOffset * 0.5f, pos.Y), color, charStr);
+
+                charX += charSize.X;
+            }
+
+            // Advance cursor past the text
+            ImGui.Dummy(new Vector2(textSize.X + textSize.Y * skewFactor, textSize.Y));
+        }
+
         private void DrawPortraitSection(RPProfile rp, float scale)
         {
             ImGui.BeginGroup();
@@ -2381,7 +3122,7 @@ namespace CharacterSelectPlugin.Windows
         private void DrawPortraitImage(IDalamudTextureWrap texture, RPProfile rp, float scale)
         {
             float portraitSize = 140f * scale;
-            float zoom = Math.Clamp(rp.ImageZoom, 0.5f, 3.0f);
+            float zoom = Math.Clamp(rp.ImageZoom, 0.1f, 10.0f);
             Vector2 offset = rp.ImageOffset * scale;
 
             float texAspect = (float)texture.Width / texture.Height;
@@ -2543,6 +3284,7 @@ namespace CharacterSelectPlugin.Windows
             // Capture Edit Profile button position for tutorial
             plugin.EditProfileButtonPos = ImGui.GetItemRectMin();
             plugin.EditProfileButtonSize = ImGui.GetItemRectSize();
+
             ImGui.PopStyleVar();
             ImGui.PopStyleColor(4);
         }
@@ -2614,7 +3356,7 @@ namespace CharacterSelectPlugin.Windows
                     Plugin.Log.Error($"[RPProfileViewWindow] Failed to download profile image: {ex.Message}");
                     imageDownloadComplete = true;
                 }
-            });
+                });
         }
 
         private Vector3 ResolveNameplateColor()
@@ -2647,6 +3389,2968 @@ namespace CharacterSelectPlugin.Windows
         private float GetSafeScale(float baseScale)
         {
             return Math.Clamp(baseScale, 0.3f, 5.0f); // Prevent extreme scaling
+        }
+        
+        private void DrawExpandButton(float scale)
+        {
+            var windowPos = ImGui.GetWindowPos();
+            var windowSize = ImGui.GetWindowSize();
+            var drawList = ImGui.GetWindowDrawList();
+            
+            // Inset handle on the right edge
+            float handleWidth = 14f * scale;
+            float handleHeight = 100f * scale;
+            float handleInset = 3f * scale; // How far it's inset from edge
+            
+            // Use the actual biography middle position and center the handlebar on it
+            float buttonX = windowPos.X + windowSize.X - handleWidth - handleInset;
+            float buttonY = actualBioPositionY - (handleHeight / 2); // Center handlebar vertically
+            
+            var handleMin = new Vector2(buttonX, buttonY);
+            var handleMax = new Vector2(buttonX + handleWidth, buttonY + handleHeight);
+            
+            // Check hover
+            var mousePos = ImGui.GetIO().MousePos;
+            bool isHovered = mousePos.X >= handleMin.X && mousePos.X <= windowPos.X + windowSize.X &&
+                            mousePos.Y >= handleMin.Y && mousePos.Y <= handleMax.Y;
+            
+            // Get theme colors
+            var profileColor = ResolveNameplateColor();
+            
+            // Draw inset groove effect with rounded corners
+            drawList.AddRectFilled(
+                handleMin,
+                handleMax,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)),
+                6f * scale // Rounded corners
+            );
+            
+            // Inner recessed area
+            var innerMin = handleMin + new Vector2(2f * scale, 2f * scale);
+            var innerMax = handleMax - new Vector2(2f * scale, 2f * scale);
+            
+            var bgColor = isHovered 
+                ? new Vector4(profileColor.X * 0.15f, profileColor.Y * 0.15f, profileColor.Z * 0.15f, 0.8f)
+                : new Vector4(0.05f, 0.05f, 0.05f, 0.7f);
+                
+            drawList.AddRectFilled(
+                innerMin,
+                innerMax,
+                ImGui.ColorConvertFloat4ToU32(bgColor),
+                4f * scale
+            );
+            
+            // Vertical grip lines for texture
+            float lineSpacing = 8f * scale;
+            float lineY = innerMin.Y + 20f * scale;
+            var gripColor = isHovered
+                ? new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.5f)
+                : new Vector4(0.3f, 0.3f, 0.3f, 0.3f);
+                
+            while (lineY < innerMax.Y - 20f * scale)
+            {
+                drawList.AddLine(
+                    new Vector2(innerMin.X + 4f * scale, lineY),
+                    new Vector2(innerMax.X - 4f * scale, lineY),
+                    ImGui.ColorConvertFloat4ToU32(gripColor),
+                    1f * scale
+                );
+                lineY += lineSpacing;
+            }
+            
+            // Small arrow in the center
+            var arrowColor = isHovered 
+                ? new Vector4(profileColor.X * 0.8f, profileColor.Y * 0.8f, profileColor.Z * 0.8f, 0.9f)
+                : new Vector4(0.5f, 0.5f, 0.5f, 0.7f);
+                
+            var arrowCenter = new Vector2(buttonX + handleWidth * 0.5f, buttonY + handleHeight * 0.5f);
+            var arrowSize = 3.5f * scale; // Much smaller arrow
+            
+            // Draw simple > arrow
+            drawList.PathClear();
+            drawList.PathLineTo(arrowCenter + new Vector2(-arrowSize, -arrowSize));
+            drawList.PathLineTo(arrowCenter + new Vector2(arrowSize * 0.5f, 0));
+            drawList.PathLineTo(arrowCenter + new Vector2(-arrowSize, arrowSize));
+            drawList.PathStroke(
+                ImGui.ColorConvertFloat4ToU32(arrowColor), 
+                ImDrawFlags.None, 
+                1.5f * scale // Thinner stroke
+            );
+            
+            // Highlight edge when hovered
+            if (isHovered)
+            {
+                drawList.AddRect(
+                    handleMin,
+                    handleMax,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.5f, profileColor.Y * 0.5f, profileColor.Z * 0.5f, 0.6f)),
+                    4f * scale,
+                    ImDrawFlags.None,
+                    1f * scale
+                );
+            }
+
+            // Draw NEW badge for Expanded RP Profile feature
+            bool showExpandBadge = !plugin.Configuration.SeenFeatures.Contains(FeatureKeys.ExpandedRPProfile);
+            if (showExpandBadge)
+            {
+                // Pulsing glow effect around the expand handle
+                float pulse = (float)(Math.Sin(ImGui.GetTime() * 3.0) * 0.5 + 0.5);
+                var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.5f); // Green glow
+
+                for (int i = 3; i >= 1; i--)
+                {
+                    var layerPadding = i * 2 * scale;
+                    var layerAlpha = glowColor.W * (1.0f - (i * 0.25f));
+                    drawList.AddRect(
+                        handleMin - new Vector2(layerPadding, layerPadding),
+                        handleMax + new Vector2(layerPadding, layerPadding),
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(glowColor.X, glowColor.Y, glowColor.Z, layerAlpha)),
+                        8f * scale,
+                        ImDrawFlags.None,
+                        2f * scale
+                    );
+                }
+            }
+
+            // Handle click
+            if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                ToggleExpansion();
+
+                // Mark Expanded RP Profile as seen when user expands
+                if (!plugin.Configuration.SeenFeatures.Contains(FeatureKeys.ExpandedRPProfile))
+                {
+                    plugin.Configuration.SeenFeatures.Add(FeatureKeys.ExpandedRPProfile);
+                    plugin.Configuration.Save();
+                }
+            }
+
+            // Tooltip
+            if (isHovered)
+            {
+                string tooltip = "View full profile";
+                if (showExpandBadge)
+                {
+                    tooltip += "\n\nNEW: Expanded profiles with content boxes!";
+                }
+                ImGui.SetTooltip(tooltip);
+            }
+        }
+        
+        private void DrawExpandedProfile(RPProfile rp, float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            var wndPos = ImGui.GetWindowPos();
+            var wndSize = ImGui.GetWindowSize();
+
+            // Calculate header section heights
+            var navHeight = 50f * scale;
+            var bannerHeight = 200f * scale;
+            var profileAreaHeight = 100f * scale;
+            var contentStartY = navHeight + bannerHeight + profileAreaHeight;
+
+            // Always draw base dark background for entire window first
+            dl.AddRectFilled(
+                wndPos,
+                wndPos + wndSize,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f))
+            );
+
+            // Check for URL-based ERP background - draw only in content area (below nav+banner+profile)
+            if (!string.IsNullOrEmpty(rp.BackgroundImageUrl))
+            {
+                var cachedPath = GetBackgroundImageCachePath(rp.BackgroundImageUrl);
+                if (File.Exists(cachedPath))
+                {
+                    // Draw URL background only in content area
+                    var contentPos = wndPos + new Vector2(0, contentStartY);
+                    var contentSize = new Vector2(wndSize.X, wndSize.Y - contentStartY);
+                    DrawUrlBackgroundInRegion(dl, contentPos, contentSize, cachedPath, rp, scale);
+                }
+                else if (!downloadingBackgrounds.Contains(rp.BackgroundImageUrl))
+                {
+                    Task.Run(async () => await DownloadBackgroundImageAsync(rp.BackgroundImageUrl));
+                }
+            }
+
+            // Draw navigation bar
+            DrawExpandedNavBar(scale);
+            
+            // Draw hero section with banner
+            DrawHeroSection(rp, scale);
+            
+            // Draw content grid
+            DrawContentGrid(rp, scale);
+            
+            // Draw collapse button in top-right
+            DrawCollapseButton(scale);
+            
+            // Draw collapse handle on left side
+            DrawLeftCollapseHandle(scale);
+        }
+        
+        private void DrawExpandedNavBar(float scale)
+        {
+            var windowSize = ImGui.GetWindowSize();
+            var navHeight = 50f * scale;
+            var profileColor = ResolveNameplateColor();
+            
+            // Nav background
+            var dl = ImGui.GetWindowDrawList();
+            var wndPos = ImGui.GetWindowPos();
+            
+            dl.AddRectFilled(
+                wndPos,
+                wndPos + new Vector2(windowSize.X, navHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 0.95f))
+            );
+            
+            // Bottom border
+            dl.AddLine(
+                wndPos + new Vector2(0, navHeight),
+                wndPos + new Vector2(windowSize.X, navHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 1.0f)),
+                1f * scale
+            );
+            
+            // Title
+            ImGui.SetCursorPos(new Vector2(24 * scale, 16 * scale));
+            ImGui.TextColored(Vector4.One, "Character Profile");
+            
+            // Navigation tabs - Overview and Gallery
+            var tabWidth = 100f * scale;
+            var tabSpacing = 32f * scale;
+            var totalTabWidth = tabWidth * 2 + tabSpacing; // Only 2 tabs now
+            var tabStartX = (windowSize.X - totalTabWidth) * 0.5f;
+            
+            ImGui.SetCursorPos(new Vector2(tabStartX, 14 * scale));
+            
+            // Overview tab
+            if (activeTab == 0)
+            {
+                // Active tab styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.1f, 0.1f, 0.1f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f));
+            }
+            else
+            {
+                // Inactive tab styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.1f, 0.1f, 0.1f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.631f, 0.631f, 0.667f, 1.0f));
+            }
+            
+            if (ImGui.Button("Overview", new Vector2(tabWidth, 24 * scale)))
+            {
+                activeTab = 0;
+            }
+            ImGui.PopStyleColor(3);
+            
+            ImGui.SameLine(0, tabSpacing);
+            
+            // Gallery tab
+            if (activeTab == 1)
+            {
+                // Active tab styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.1f, 0.1f, 0.1f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f));
+            }
+            else
+            {
+                // Inactive tab styling
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.1f, 0.1f, 0.1f, 0.8f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.631f, 0.631f, 0.667f, 1.0f));
+            }
+            
+            if (ImGui.Button("Gallery", new Vector2(tabWidth, 24 * scale)))
+            {
+                activeTab = 1;
+            }
+            ImGui.PopStyleColor(3);
+        }
+        
+        private void DrawHeroSection(RPProfile rp, float scale)
+        {
+            var windowSize = ImGui.GetWindowSize();
+            var navHeight = 50f * scale;
+            var bannerHeight = 200f * scale;
+            var profileAreaHeight = 100f * scale;
+            var profileColor = ResolveNameplateColor();
+            
+            var dl = ImGui.GetWindowDrawList();
+            var wndPos = ImGui.GetWindowPos();
+            
+            // Banner background with custom image if available
+            // Check for URL-based banner first, then local path
+            string? bannerSource = null;
+
+            if (!string.IsNullOrEmpty(rp.BannerImageUrl))
+            {
+                // URL-based banner
+                var cachedPath = GetBannerImagePath(rp.BannerImageUrl);
+                if (File.Exists(cachedPath))
+                {
+                    bannerSource = cachedPath;
+                }
+                else if (!downloadingBanners.Contains(rp.BannerImageUrl))
+                {
+                    // Start download
+                    Task.Run(async () => await DownloadBannerImageAsync(rp.BannerImageUrl));
+                }
+            }
+            else if (!string.IsNullOrEmpty(rp.BannerImagePath) && File.Exists(rp.BannerImagePath))
+            {
+                // Local file banner
+                bannerSource = rp.BannerImagePath;
+            }
+
+            if (!string.IsNullOrEmpty(bannerSource))
+            {
+                DrawBanner(dl, wndPos, windowSize, bannerSource, rp.BannerZoom, rp.BannerOffset, scale, navHeight, bannerHeight);
+            }
+            else
+            {
+                // Default banner background (dark gray)
+                dl.AddRectFilled(
+                    wndPos + new Vector2(0, navHeight),
+                    wndPos + new Vector2(windowSize.X, navHeight + bannerHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.15f, 0.15f, 0.15f, 1.0f))
+                );
+            }
+            
+            // Profile area below banner - gradient from profile color to black
+            var profileAreaTop = wndPos + new Vector2(0, navHeight + bannerHeight);
+            var profileAreaBottom = wndPos + new Vector2(windowSize.X, navHeight + bannerHeight + profileAreaHeight);
+            
+            // Create vertical gradient from profile-tinted color at top to black at bottom
+            var topColor = new Vector4(
+                profileColor.X * 0.2f,  // Use 20% of profile color intensity
+                profileColor.Y * 0.2f,
+                profileColor.Z * 0.2f,
+                1.0f
+            );
+            var bottomColor = new Vector4(0f, 0f, 0f, 1.0f); // Pure black
+            
+            // Draw gradient rectangle (vertical gradient)
+            dl.AddRectFilledMultiColor(
+                profileAreaTop,
+                profileAreaBottom,
+                ImGui.ColorConvertFloat4ToU32(topColor),            // Top-left
+                ImGui.ColorConvertFloat4ToU32(topColor),            // Top-right
+                ImGui.ColorConvertFloat4ToU32(bottomColor),         // Bottom-right
+                ImGui.ColorConvertFloat4ToU32(bottomColor)         // Bottom-left
+            );
+            
+            // Profile image - positioned to overlap banner and profile area
+            float imageSize = 160f * scale;
+            float imageX = 40f * scale;
+            
+            var imagePath = GetCurrentImagePath();
+            if (!string.IsNullOrEmpty(imagePath))
+            {
+                var texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                if (texture != null)
+                {
+                    // Image overlaps both sections
+                    var imagePos = wndPos + new Vector2(imageX, navHeight + bannerHeight - imageSize / 2);
+                    
+                    // White border around image
+                    dl.AddRect(
+                        imagePos - new Vector2(3 * scale),
+                        imagePos + new Vector2(imageSize + 3 * scale),
+                        ImGui.ColorConvertFloat4ToU32(Vector4.One),
+                        8f * scale,
+                        ImDrawFlags.None,
+                        3f * scale
+                    );
+                    
+                    // Dark border inside
+                    dl.AddRect(
+                        imagePos - new Vector2(1 * scale),
+                        imagePos + new Vector2(imageSize + 1 * scale),
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 1.0f)),
+                        8f * scale,
+                        ImDrawFlags.None,
+                        1f * scale
+                    );
+                    
+                    // Set up clipping for the image area
+                    dl.PushClipRect(imagePos, imagePos + new Vector2(imageSize), true);
+                    
+                    // Check if we're displaying a gallery image and use gallery positioning
+                    bool isGalleryImage = !string.IsNullOrEmpty(GetSelectedGalleryPreviewPath()) && 
+                                        GetSelectedGalleryPreviewPath() == imagePath;
+                    
+                    // Apply zoom and offset - use gallery settings if displaying gallery image
+                    float zoom = Math.Clamp(rp.ImageZoom, 0.1f, 10.0f);
+                    Vector2 offset = rp.ImageOffset * scale;
+                    
+                    // Override with gallery image settings if displaying a gallery image
+                    if (isGalleryImage && rp.SelectedGalleryPreviewIndex >= 0 && rp.SelectedGalleryPreviewIndex < rp.GalleryImages.Count)
+                    {
+                        var selectedImage = rp.GalleryImages[rp.SelectedGalleryPreviewIndex];
+                        zoom = Math.Clamp(selectedImage.Zoom, 0.1f, 10.0f);
+                        offset = selectedImage.Offset * scale;
+                    }
+                    
+                    // Calculate the actual draw size with zoom
+                    float texAspect = (float)texture.Width / texture.Height;
+                    float drawWidth, drawHeight;
+                    
+                    if (texAspect >= 1f)
+                    {
+                        drawHeight = imageSize * zoom;
+                        drawWidth = drawHeight * texAspect;
+                    }
+                    else
+                    {
+                        drawWidth = imageSize * zoom;
+                        drawHeight = drawWidth / texAspect;
+                    }
+                    
+                    Vector2 drawSize = new(drawWidth, drawHeight);
+                    
+                    // Draw image with zoom and offset
+                    dl.AddImageRounded(
+                        (ImTextureID)texture.Handle,
+                        imagePos + offset,
+                        imagePos + offset + drawSize,
+                        Vector2.Zero,
+                        Vector2.One,
+                        ImGui.ColorConvertFloat4ToU32(Vector4.One),
+                        6f * scale
+                    );
+                    
+                    // Pop the clipping rectangle
+                    dl.PopClipRect();
+                    
+                    // Add invisible button for click detection
+                    ImGui.SetCursorScreenPos(imagePos);
+                    ImGui.InvisibleButton("##ExpandedProfileImage", new Vector2(imageSize));
+                    
+                    // Handle clicks
+                    if (ImGui.IsItemClicked(ImGuiMouseButton.Left) || ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                    {
+                        imagePreviewUrl = imagePath;
+                        showImagePreview = true;
+                    }
+                    
+                    // Handle hover tooltip
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
+                        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.25f, 0.25f, 0.35f, 0.6f));
+                        
+                        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(12 * scale, 10 * scale));
+                        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 6.0f * scale);
+                        
+                        ImGui.BeginTooltip();
+                        
+                        // Image icon
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.8f, 1.0f, 1.0f));
+                        ImGui.PushFont(UiBuilder.IconFont);
+                        ImGui.Text("\uf03e"); // Image icon
+                        ImGui.PopFont();
+                        ImGui.PopStyleColor();
+                        ImGui.SameLine(0, 8 * scale);
+                        ImGui.Text("Image Preview");
+                        
+                        ImGui.Dummy(new Vector2(0, 2 * scale));
+                        ImGui.Separator();
+                        ImGui.Dummy(new Vector2(0, 2 * scale));
+                        
+                        ImGui.Text("Click to view full image");
+                        
+                        ImGui.EndTooltip();
+                        
+                        ImGui.PopStyleVar(2);
+                        ImGui.PopStyleColor(3);
+                    }
+                }
+            }
+            
+            // Character name and pronouns - positioned closer to banner/image overlap
+            ImGui.SetCursorPos(new Vector2(imageX + imageSize + 22 * scale, navHeight + bannerHeight + 5 * scale));
+            
+            // Name with pronouns on same line
+            var characterName = showingExternal ? (rp.CharacterName ?? "Unknown") : (character?.Name ?? "Unknown");
+            
+            // Draw name with larger font and pronouns with regular font
+            using (Plugin.Instance?.NameFont?.Push())
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, Vector4.One);
+                ImGui.Text(characterName);
+                ImGui.PopStyleColor();
+            }
+            
+            if (!string.IsNullOrEmpty(rp.Pronouns))
+            {
+                // Draw pronouns using drawlist for precise positioning
+                var drawList = ImGui.GetWindowDrawList();
+                var nameSize = ImGui.GetItemRectSize();
+                var namePos = ImGui.GetItemRectMin();
+                
+                // Position pronouns to the right of the name with vertical offset
+                var pronounsText = $"({rp.Pronouns})";
+                var pronounsPos = new Vector2(namePos.X + nameSize.X + 5 * scale, namePos.Y + 8 * scale);
+                
+                drawList.AddText(pronounsPos, ImGui.ColorConvertFloat4ToU32(new Vector4(0.631f, 0.631f, 0.667f, 1.0f)), pronounsText);
+            }
+            
+            // Move cursor past name (reduced spacing)
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + 2 * scale);
+
+            // Draw Title and Status for expanded view
+            DrawTitleAndStatusExpanded(rp, scale, imageX + imageSize + 22 * scale);
+        }
+
+        private void DrawTitleAndStatusExpanded(RPProfile rp, float scale, float startX)
+        {
+            var hasTitle = !string.IsNullOrEmpty(rp.Title);
+            var hasStatus = !string.IsNullOrEmpty(rp.Status);
+
+            if (!hasTitle && !hasStatus) return;
+
+            var profileColor = ResolveNameplateColor();
+            var drawList = ImGui.GetWindowDrawList();
+
+            // Title line (regular text, not italic)
+            if (hasTitle)
+            {
+                ImGui.SetCursorPosX(startX);
+
+                // Draw icon if set (smaller size)
+                if (rp.TitleIcon > 0)
+                {
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.SetWindowFontScale(0.85f);
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f));
+                    ImGui.Text(((FontAwesomeIcon)rp.TitleIcon).ToIconString());
+                    ImGui.PopStyleColor();
+                    ImGui.SetWindowFontScale(1.0f);
+                    ImGui.PopFont();
+                    ImGui.SameLine(0, 4 * scale);
+                }
+
+                // Draw title text (regular, not italic)
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.85f, 0.95f));
+                ImGui.Text(rp.Title!);
+                ImGui.PopStyleColor();
+            }
+
+            // Status line (italic)
+            if (hasStatus)
+            {
+                ImGui.SetCursorPosX(startX);
+
+                // Draw icon if set (smaller size)
+                if (rp.StatusIcon > 0)
+                {
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.SetWindowFontScale(0.85f);
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.9f, 0.6f, 0.9f)); // Greenish for status
+                    ImGui.Text(((FontAwesomeIcon)rp.StatusIcon).ToIconString());
+                    ImGui.PopStyleColor();
+                    ImGui.SetWindowFontScale(1.0f);
+                    ImGui.PopFont();
+                    ImGui.SameLine(0, 4 * scale);
+                }
+
+                // Draw status text in italics
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.85f, 0.7f, 0.95f)); // Greenish tint
+                DrawItalicText(rp.Status!, scale);
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawContentGrid(RPProfile rp, float scale)
+        {
+            var windowSize = ImGui.GetWindowSize();
+            var navHeight = 50f * scale;
+            var bannerHeight = 200f * scale;
+            var profileAreaHeight = 100f * scale;
+            var contentStartY = navHeight + bannerHeight + profileAreaHeight + 20 * scale;  // Content starts after profile area
+            
+            var contentMargin = 20f * scale;  // Reduced outer margin to give more space
+            var contentWidth = windowSize.X - contentMargin * 2;
+            var columnSpacing = 20f * scale;  // Fixed spacing between columns
+            var mainColumnWidth = (contentWidth - columnSpacing) * 0.69f;
+            var sidebarWidth = (contentWidth - columnSpacing) * 0.31f;
+            
+            var dl = ImGui.GetWindowDrawList();
+            var wndPos = ImGui.GetWindowPos();
+            
+            // Main content section background
+            var mainSectionPos = wndPos + new Vector2(contentMargin, contentStartY);
+            var mainSectionSize = new Vector2(mainColumnWidth, windowSize.Y - contentStartY - contentMargin);
+            var sidebarSectionPos = wndPos + new Vector2(contentMargin + mainColumnWidth + columnSpacing, contentStartY);
+            var sidebarSectionSize = new Vector2(sidebarWidth, windowSize.Y - contentStartY - contentMargin);
+            
+            // Create single scroll container for unified scrolling
+            var scrollHeight = windowSize.Y - contentStartY - contentMargin;
+            ImGui.SetCursorPos(new Vector2(0, contentStartY));
+
+            // Make child window background transparent when URL background is set
+            bool hasUrlBg = !string.IsNullOrEmpty(rp.BackgroundImageUrl);
+            if (hasUrlBg)
+            {
+                ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0, 0, 0, 0));
+            }
+            ImGui.BeginChild("##UnifiedScroll", new Vector2(windowSize.X, scrollHeight), false);
+            if (hasUrlBg)
+            {
+                ImGui.PopStyleColor();
+            }
+            
+            // Calculate content heights for virtual canvas
+            float totalContentHeight;
+            if (activeTab == 1) // Gallery
+            {
+                // For gallery tab, calculate height based on actual gallery content
+                // Max 20 images = 5 rows, plus header, spacing and breathing room
+                var maxRows = 5; // 20 images / 4 columns
+                var headerHeight = 60f * scale; // Approximate header height
+                var gallerySpacing = 16f * scale;
+                var galleryPadding = 20f * scale;
+                var breathingRoom = 100f * scale; // Extra space at bottom
+                
+                // Calculate approximate thumbnail size for height estimation
+                var approximateAvailableWidth = windowSize.X - (contentMargin * 2) - (40f * scale); // Account for gallery container margins
+                var approximateThumbnailSize = (approximateAvailableWidth - (gallerySpacing * 3)) / 4f;
+                
+                var galleryContentHeight = headerHeight + 
+                                          (maxRows * approximateThumbnailSize) + 
+                                          ((maxRows - 1) * gallerySpacing) + 
+                                          (galleryPadding * 2) + 
+                                          breathingRoom;
+                
+                totalContentHeight = galleryContentHeight;
+            }
+            else
+            {
+                // For Overview tab, use existing calculation
+                var estimatedMainHeight = 3500f * scale; // Increased for all the new sections
+                var estimatedSidebarHeight = 1500f * scale; // Will be calculated based on actual content
+                totalContentHeight = Math.Max(estimatedMainHeight, estimatedSidebarHeight) + 40 * scale;
+            }
+            
+            // Reserve space for the entire virtual canvas
+            ImGui.Dummy(new Vector2(0, totalContentHeight));
+            
+            // Get draw list for the scroll container
+            var childDl = ImGui.GetWindowDrawList();
+            var childPos = ImGui.GetWindowPos();
+            
+            // Only draw column backgrounds for Overview tab
+            if (activeTab == 0) // Overview
+            {
+                // Check if there's a URL background - if so, use semi-transparent panel backgrounds
+                bool hasUrlBackground = !string.IsNullOrEmpty(rp.BackgroundImageUrl);
+                float panelBgAlpha = hasUrlBackground ? 0.75f : 1.0f;
+                float shadowAlpha = hasUrlBackground ? 0.3f : 0.5f;
+                float edgeAlpha = hasUrlBackground ? 0.5f : 1.0f;
+
+                // Draw backgrounds at fixed positions within scroll area
+                // Main content background
+                var mainPanelPos = childPos + new Vector2(contentMargin, 0);
+                var mainPanelSize = new Vector2(mainColumnWidth, totalContentHeight);
+
+            // Dark inner shadow
+            childDl.AddRect(
+                mainPanelPos + new Vector2(1, 1),
+                mainPanelPos + new Vector2(mainPanelSize.X - 1, Math.Min(mainPanelSize.Y, scrollHeight) - 1),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, shadowAlpha)),
+                6f * scale
+            );
+
+            // Main background
+            childDl.AddRectFilled(
+                mainPanelPos + new Vector2(2, 2),
+                mainPanelPos + new Vector2(mainPanelSize.X - 2, Math.Min(mainPanelSize.Y, scrollHeight) - 2),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.035f, 0.035f, 0.035f, panelBgAlpha)),
+                5f * scale
+            );
+
+            // Bright edge highlight
+            childDl.AddRect(
+                mainPanelPos,
+                mainPanelPos + new Vector2(mainPanelSize.X, Math.Min(mainPanelSize.Y, scrollHeight)),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.08f, 0.08f, 0.08f, edgeAlpha)),
+                6f * scale
+            );
+
+            // Sidebar background
+            var sidebarPanelPos = childPos + new Vector2(contentMargin + mainColumnWidth + columnSpacing, 0);
+            var sidebarPanelSize = new Vector2(sidebarWidth, totalContentHeight);
+
+            // Dark inner shadow
+            childDl.AddRect(
+                sidebarPanelPos + new Vector2(1, 1),
+                sidebarPanelPos + new Vector2(sidebarPanelSize.X - 1, Math.Min(sidebarPanelSize.Y, scrollHeight) - 1),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, shadowAlpha)),
+                6f * scale
+            );
+
+            // Main background
+            childDl.AddRectFilled(
+                sidebarPanelPos + new Vector2(2, 2),
+                sidebarPanelPos + new Vector2(sidebarPanelSize.X - 2, Math.Min(sidebarPanelSize.Y, scrollHeight) - 2),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.035f, 0.035f, 0.035f, panelBgAlpha)),
+                5f * scale
+            );
+
+            // Bright edge highlight
+            childDl.AddRect(
+                sidebarPanelPos,
+                sidebarPanelPos + new Vector2(sidebarPanelSize.X, Math.Min(sidebarPanelSize.Y, scrollHeight)),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.08f, 0.08f, 0.08f, edgeAlpha)),
+                6f * scale
+            );
+            } // End background drawing for Overview tab
+            
+            // Now draw content directly on the virtual canvas
+            // Content based on active tab
+            if (activeTab == 0) // Overview
+            {
+                // Main content - with proper padding from edges
+                var mainContentX = contentMargin + 12 * scale;
+                var mainContentMaxX = contentMargin + mainColumnWidth - 24 * scale;
+                ImGui.SetCursorPos(new Vector2(mainContentX, 18 * scale));
+                ImGui.BeginChild("##MainContentInner", new Vector2(mainColumnWidth - 24 * scale, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar);
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(32 * scale, 24 * scale));
+                DrawMainContentCards(rp, scale);
+                ImGui.PopStyleVar();
+                ImGui.EndChild();
+                
+                // Sidebar content - positioned properly within its area
+                var sidebarContentX = contentMargin + mainColumnWidth + columnSpacing + 12 * scale;
+                ImGui.SetCursorPos(new Vector2(sidebarContentX, 18 * scale));
+                ImGui.BeginChild("##SidebarInner", new Vector2(sidebarWidth - 24 * scale, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar);
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(24 * scale, 24 * scale));
+                DrawSidebarCards(rp, scale);
+                ImGui.PopStyleVar();
+                ImGui.EndChild();
+            }
+            else if (activeTab == 1) // Gallery
+            {
+                // Gallery container that nearly fills available width with breathing room
+                var availableWidth = windowSize.X - (contentMargin * 2);
+                var breathingRoom = 40f * scale; // Breathing room on each side
+                var galleryWidth = Math.Max(800f * scale, availableWidth - (breathingRoom * 2)); // Nearly fill width, min 800px
+                var galleryContentX = contentMargin + (availableWidth - galleryWidth) / 2f; // Center it
+                
+                ImGui.SetCursorPos(new Vector2(galleryContentX, 18 * scale));
+                ImGui.BeginChild("##GalleryContent", new Vector2(galleryWidth, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar);
+                ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(40 * scale, 32 * scale));
+                DrawGalleryGrid(rp, scale);
+                ImGui.PopStyleVar();
+                ImGui.EndChild();
+            }
+            
+            ImGui.EndChild(); // End UnifiedScroll
+        }
+        
+        private void DrawMainContentCards(RPProfile rp, float scale)
+        {
+            var characterName = showingExternal ? rp.CharacterName : character?.Name;
+            
+            var drawList = ImGui.GetWindowDrawList();
+            var headerPos = ImGui.GetCursorScreenPos();
+            
+            // Draw content cards from LeftContentBoxes if available, otherwise use defaults
+            if (rp.LeftContentBoxes?.Count > 0)
+            {
+                // Show all content boxes on left side
+                for (int i = 0; i < rp.LeftContentBoxes.Count; i++)
+                {
+                    var box = rp.LeftContentBoxes[i];
+                    
+                    DrawCard(box.Title, box.Subtitle, () =>
+                    {
+                        // Render content based on layout type
+                        DrawContentBoxLayout(box, scale);
+                    }, scale, true);
+                    
+                    // Spacing between cards
+                    if (i < rp.LeftContentBoxes.Count - 1)
+                    {
+                        ImGui.Dummy(new Vector2(0, 16 * scale));
+                    }
+                }
+            }
+        }
+        
+        private void DrawSidebarCards(RPProfile rp, float scale)
+        {
+            // Draw content cards from RightContentBoxes if available, otherwise use defaults
+            if (rp.RightContentBoxes?.Count > 0)
+            {
+                for (int i = 0; i < rp.RightContentBoxes.Count; i++)
+                {
+                    var box = rp.RightContentBoxes[i];
+                    
+                    DrawCard(box.Title, null, () =>
+                    {
+                        if (box.Title == "Quick Info")
+                        {
+                            DrawQuickInfo(rp, scale);
+                        }
+                        else if (box.Title == "Additional Details")
+                        {
+                            DrawAdditionalInfo(rp, scale);
+                        }
+                        else if (box.Title == "Key Traits")
+                        {
+                            if (!string.IsNullOrEmpty(rp.Tags))
+                            {
+                                var tags = rp.Tags.Split(',').Select(t => t.Trim()).Where(t => !string.IsNullOrEmpty(t)).ToList();
+                                foreach (var tag in tags)
+                                {
+                                    DrawTraitItem(tag, scale);
+                                }
+                            }
+                            else
+                            {
+                                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                                ImGui.TextWrapped("No traits defined yet.");
+                                ImGui.PopStyleColor();
+                            }
+                        }
+                        else if (box.Title == "Likes & Dislikes" || box.Type == ContentBoxType.LikesAndDislikes)
+                        {
+                            if (!string.IsNullOrEmpty(box.Likes) || !string.IsNullOrEmpty(box.Dislikes))
+                            {
+                                DrawContentBoxLayout(box, scale);
+                            }
+                            else
+                            {
+                                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                                ImGui.TextWrapped("No likes or dislikes defined yet.");
+                                ImGui.PopStyleColor();
+                            }
+                        }
+                        else if (box.Title == "External Links")
+                        {
+                            if (!string.IsNullOrEmpty(rp.Links))
+                            {
+                                DrawExternalLink(rp.Links, scale);
+                            }
+                            else
+                            {
+                                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                                ImGui.TextWrapped("No external links provided yet.");
+                                ImGui.PopStyleColor();
+                            }
+                        }
+                        else
+                        {
+                            // Use the proper content box layout system
+                            DrawContentBoxLayout(box, scale);
+                        }
+                    }, scale);
+                    
+                    // Spacing between cards
+                    if (i < rp.RightContentBoxes.Count - 1)
+                    {
+                        ImGui.Dummy(new Vector2(0, 24 * scale));
+                    }
+                }
+            }
+            else
+            {
+                // Fallback to default cards
+                // Quick Info - only first 4 items
+                DrawCard("Quick Info", null, () =>
+                {
+                    DrawQuickInfo(rp, scale);
+                }, scale);
+                
+                // Spacing between cards
+                ImGui.Dummy(new Vector2(0, 24 * scale));
+                
+                // Additional Details - only show if data exists
+                if (!string.IsNullOrEmpty(rp.Relationship) || !string.IsNullOrEmpty(rp.Occupation))
+                {
+                    DrawCard("Additional Details", null, () =>
+                    {
+                        DrawAdditionalInfo(rp, scale);
+                    }, scale);
+
+                    // Spacing between cards
+                    ImGui.Dummy(new Vector2(0, 24 * scale));
+                }
+                
+                // Character Traits (Tags) - only show if data exists
+                if (!string.IsNullOrEmpty(rp.Tags))
+                {
+                    DrawCard("Key Traits", null, () =>
+                    {
+                        var tags = rp.Tags.Split(',').Select(t => t.Trim()).Where(t => !string.IsNullOrEmpty(t)).ToList();
+                        foreach (var tag in tags)
+                        {
+                            DrawTraitItem(tag, scale);
+                        }
+                    }, scale);
+
+                    // Proper spacing between cards
+                    ImGui.Dummy(new Vector2(0, 24 * scale));
+                }
+                
+                // Likes & Dislikes - only show if data exists
+                var likesDislikesBox = rp.LeftContentBoxes?.FirstOrDefault(cb => cb.Type == ContentBoxType.LikesAndDislikes)
+                                      ?? rp.RightContentBoxes?.FirstOrDefault(cb => cb.Type == ContentBoxType.LikesAndDislikes);
+                var likesData = likesDislikesBox?.Likes ?? "";
+                var dislikesData = likesDislikesBox?.Dislikes ?? "";
+
+                if (!string.IsNullOrEmpty(likesData) || !string.IsNullOrEmpty(dislikesData))
+                {
+                    DrawCard("Likes & Dislikes", null, () =>
+                    {
+                        // Likes section with thumbs up icon
+                        if (!string.IsNullOrEmpty(likesData))
+                        {
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.9f, 0.5f, 1.0f));
+                            ImGui.Text("👍 Likes");
+                            ImGui.PopStyleColor();
+
+                            var likesItems = likesData.Split(',', '\n').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
+                            foreach (var like in likesItems)
+                            {
+                                DrawLikesDislikesTraitItem(like, scale, true);
+                            }
+
+                            if (!string.IsNullOrEmpty(dislikesData))
+                            {
+                                ImGui.Dummy(new Vector2(0, 8 * scale));
+                            }
+                        }
+
+                        // Dislikes section with thumbs down icon
+                        if (!string.IsNullOrEmpty(dislikesData))
+                        {
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.5f, 0.5f, 1.0f));
+                            ImGui.Text("👎 Dislikes");
+                            ImGui.PopStyleColor();
+
+                            var dislikesItems = dislikesData.Split(',', '\n').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
+                            foreach (var dislike in dislikesItems)
+                            {
+                                DrawLikesDislikesTraitItem(dislike, scale, false);
+                            }
+                        }
+                    }, scale);
+
+                    // Proper spacing between cards
+                    ImGui.Dummy(new Vector2(0, 24 * scale));
+                }
+
+                // External Links - only show if data exists
+                if (!string.IsNullOrEmpty(rp.Links))
+                {
+                    DrawCard("External Links", null, () =>
+                    {
+                        DrawExternalLink(rp.Links, scale);
+                    }, scale);
+                }
+            }
+        }
+        
+        private void DrawCard(string title, string? subtitle, Action content, float scale, bool isMainContent = false)
+        {
+            var profileColor = ResolveNameplateColor();
+            var cardId = $"##{title}Card";
+            
+            // Calculate base card height dynamically
+            float headerHeight = 60 * scale; // Height for title/subtitle area
+            float minContentHeight = isMainContent ? 120 * scale : 80 * scale; // Minimum content area
+            float padding = 20 * scale; // Top and bottom padding
+            
+            // Set appropriate base heights based on sidebar vs main content
+            float baseCardHeight;
+            if (isMainContent) 
+            {
+                baseCardHeight = 200 * scale; // Base height for main content (left side)
+            }
+            else 
+            {
+                // Right sidebar - different bases for different types
+                if (title == "Quick Info")
+                    baseCardHeight = 250 * scale;
+                else if (title == "Additional Details") 
+                    baseCardHeight = 180 * scale;
+                else if (title == "Key Traits")
+                    baseCardHeight = 200 * scale;
+                else if (title == "Likes & Dislikes")
+                    baseCardHeight = 200 * scale;
+                else if (title == "External Links")
+                    baseCardHeight = 120 * scale;
+                else
+                    baseCardHeight = 150 * scale; // Default for new content boxes
+            }
+            
+            // Calculate actual content height by rendering content in a temporary invisible area
+            float actualContentHeight = 0f;
+            var tempCursor = ImGui.GetCursorPos();
+            var availableWidth = ImGui.GetContentRegionAvail().X - (48 * scale); // Account for card padding
+            
+            // Measure content height by rendering it invisibly
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0, 0, 0, 0)); // Invisible
+            ImGui.BeginGroup();
+            ImGui.PushTextWrapPos(availableWidth);
+            
+            var startY = ImGui.GetCursorPosY();
+            content();
+            var endY = ImGui.GetCursorPosY();
+            actualContentHeight = endY - startY;
+            
+            ImGui.PopTextWrapPos();
+            ImGui.EndGroup();
+            ImGui.PopStyleColor();
+            ImGui.SetCursorPos(tempCursor); // Reset cursor position
+            
+            // Calculate required height: header + actual content + padding + breathing room
+            float breathingRoom = 20 * scale; // Extra space at bottom for visual comfort
+            float requiredHeight = headerHeight + actualContentHeight + padding + breathingRoom;
+            
+            // Allow Timeline boxes to expand more (2.5x) since they're vertical in nature
+            float growthMultiplier = 1.5f; // Default growth for most content
+            if (title == "Character Timeline" || title == "Timeline" || 
+                (isMainContent && title.Contains("Timeline")))
+            {
+                growthMultiplier = 2.5f; // Allow timeline to grow more
+            }
+            
+            float maxCardHeight = baseCardHeight * growthMultiplier; // Allow growth before scrolling
+            
+            float finalCardHeight;
+            var flags = ImGuiWindowFlags.None;
+            
+            if (requiredHeight <= maxCardHeight)
+            {
+                // Content fits within growth limit - use required height and no scrollbar
+                finalCardHeight = Math.Max(baseCardHeight, requiredHeight);
+                flags = ImGuiWindowFlags.NoScrollbar;
+            }
+            else
+            {
+                // Content exceeds growth limit - use max height and enable scrolling
+                finalCardHeight = maxCardHeight;
+                flags = ImGuiWindowFlags.AlwaysVerticalScrollbar;
+            }
+                
+            // Card styling - clean like HTML
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.067f, 0.067f, 0.067f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.102f, 0.102f, 0.102f, 1.0f));
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0f * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, 1.0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(24 * scale, 20 * scale));
+            
+            ImGui.BeginChild(cardId, new Vector2(0, finalCardHeight), true, flags);
+            
+            // Now draw the glow effect on the child window's draw list after background is rendered
+            var drawList = ImGui.GetWindowDrawList();
+            var cardStartPos = ImGui.GetWindowPos(); // Child window position
+            var lineHeight = 1.5f * scale;
+            var glowRadius = 12f * scale;
+            var cardWidth = ImGui.GetWindowSize().X;
+            var glowInset = 2f * scale; // Distance from top edge
+            
+            // Create a proper glow effect that fades from edges to center
+            var glowFadeWidth = cardWidth * 0.25f; // 25% of width for fade zones
+            var glowCoreWidth = cardWidth * 0.5f; // 50% of width for bright core
+            var glowCoreStart = (cardWidth - glowCoreWidth) * 0.5f;
+            
+            // Vertical glow properties
+            var glowFadeHeight = 8f * scale;
+            var coreLineHeight = 1f * scale; // Thinner core line
+            
+            // Left fade zone (transparent to bright)
+            drawList.AddRectFilledMultiColor(
+                cardStartPos + new Vector2(0, glowInset),
+                cardStartPos + new Vector2(glowCoreStart, glowInset + coreLineHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.0f)), // Transparent left
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f)), // Bright right
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f)), // Bright right
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.0f))  // Transparent left
+            );
+            
+            // Central core (full brightness)
+            drawList.AddRectFilled(
+                cardStartPos + new Vector2(glowCoreStart, glowInset),
+                cardStartPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f))
+            );
+            
+            // Right fade zone (bright to transparent)
+            drawList.AddRectFilledMultiColor(
+                cardStartPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset),
+                cardStartPos + new Vector2(cardWidth, glowInset + coreLineHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f)), // Bright left
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.0f)), // Transparent right
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.0f)), // Transparent right
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 0.9f))  // Bright left
+            );
+            
+            // Soft downward glow - left fade
+            drawList.AddRectFilledMultiColor(
+                cardStartPos + new Vector2(0, glowInset + coreLineHeight),
+                cardStartPos + new Vector2(glowCoreStart, glowInset + coreLineHeight + glowFadeHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.0f)), // Transparent
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.4f)), // Soft glow
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+            );
+            
+            // Soft downward glow - center
+            drawList.AddRectFilledMultiColor(
+                cardStartPos + new Vector2(glowCoreStart, glowInset + coreLineHeight),
+                cardStartPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight + glowFadeHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.7f, profileColor.Y * 0.7f, profileColor.Z * 0.7f, 0.5f)), // Bright top
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.7f, profileColor.Y * 0.7f, profileColor.Z * 0.7f, 0.5f)), // Bright top
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+            );
+            
+            // Soft downward glow - right fade
+            drawList.AddRectFilledMultiColor(
+                cardStartPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight),
+                cardStartPos + new Vector2(cardWidth, glowInset + coreLineHeight + glowFadeHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.4f)), // Soft glow
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.0f)), // Transparent
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+            );
+            
+            // Title with proper sizing  
+            // Card title - positioned to account for glow line
+            ImGui.SetCursorPos(new Vector2(24 * scale, 24 * scale));
+            ImGui.BeginGroup();
+            
+            // Title text with header font
+            using (Plugin.Instance?.HeaderFont?.Push())
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.97f, 1.0f));
+                ImGui.Text(title);
+                ImGui.PopStyleColor();
+            }
+            
+            if (!string.IsNullOrEmpty(subtitle))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.502f, 0.518f, 0.549f, 1.0f));
+                ImGui.PushTextWrapPos(ImGui.GetWindowWidth() - 24 * scale);
+                ImGui.TextWrapped(subtitle);
+                ImGui.PopTextWrapPos();
+                ImGui.PopStyleColor();
+            }
+            ImGui.EndGroup();
+            
+            // Content area with spacing adjusted for left side overlap
+            var contentY = isMainContent ? 85 * scale : 64 * scale; // More spacing for main content
+            ImGui.SetCursorPos(new Vector2(24 * scale, contentY));
+            ImGui.BeginGroup();
+            ImGui.PushTextWrapPos(ImGui.GetWindowWidth() - 24 * scale);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.824f, 0.835f, 0.863f, 1.0f));
+            
+            content();
+            
+            ImGui.PopStyleColor();
+            ImGui.PopTextWrapPos();
+            ImGui.EndGroup();
+            
+            ImGui.EndChild();
+            ImGui.PopStyleVar(3);
+            ImGui.PopStyleColor(2);
+        }
+        
+        private void DrawGalleryGrid(RPProfile rp, float scale)
+        {
+            // Gallery grid layout with thumbnails
+            if (rp.GalleryImages?.Count > 0)
+            {
+                var characterName = showingExternal ? rp.CharacterName : character?.Name;
+                var headerText = !string.IsNullOrEmpty(characterName) ? $"{characterName}'s Gallery" : "Character Gallery";
+                
+                // Use exact header styling matching Overview tab cards
+                using (Plugin.Instance?.HeaderFont?.Push())
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.97f, 1.0f));
+                    ImGui.Text(headerText);
+                    ImGui.PopStyleColor();
+                }
+                ImGui.Spacing();
+                
+                // Calculate grid dimensions first
+                var availableWidth = ImGui.GetContentRegionAvail().X;
+                var containerPadding = 20f * scale;
+                var spacing = 16f * scale; // Spacing between images
+                var columns = 4; // Fixed 4 columns
+                
+                // Calculate usable width inside container (subtract padding from both sides)
+                var usableWidth = availableWidth - (containerPadding * 2);
+                var thumbnailSize = (usableWidth - (spacing * (columns - 1))) / columns; // Fill usable width
+                
+                // Calculate total grid width and centering offset (push right slightly)
+                var totalGridWidth = (thumbnailSize * columns) + (spacing * (columns - 1));
+                var centeringOffset = (availableWidth - totalGridWidth) / 2f + (8f * scale);
+                
+                // Calculate container height needed for all images
+                var rows = (int)Math.Ceiling((double)rp.GalleryImages.Count / columns);
+                var containerHeight = (rows * thumbnailSize) + ((rows - 1) * spacing) + (containerPadding * 2);
+                
+                // Draw container background with proper glow effect like Overview tab boxes
+                var dl = ImGui.GetWindowDrawList();
+                var containerPos = ImGui.GetCursorScreenPos();
+                var containerSize = new Vector2(availableWidth, containerHeight);
+                
+                // Container background (dark)
+                dl.AddRectFilled(
+                    containerPos,
+                    containerPos + containerSize,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.067f, 0.067f, 0.067f, 1.0f)),
+                    8.0f * scale
+                );
+                
+                // Container border
+                dl.AddRect(
+                    containerPos,
+                    containerPos + containerSize,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.102f, 0.102f, 0.102f, 1.0f)),
+                    8.0f * scale,
+                    ImDrawFlags.None,
+                    1.0f
+                );
+                
+                // Add proper glow effect on top of container like Overview tab boxes
+                var accentColor = ResolveNameplateColor();
+                var glowInset = 2f * scale;
+                var cardWidth = availableWidth;
+                
+                // Create a proper glow effect that fades from edges to center
+                var glowFadeWidth = cardWidth * 0.25f; // 25% of width for fade zones
+                var glowCoreWidth = cardWidth * 0.5f; // 50% of width for bright core
+                var glowCoreStart = (cardWidth - glowCoreWidth) * 0.5f;
+                
+                // Vertical glow properties
+                var glowFadeHeight = 8f * scale;
+                var coreLineHeight = 1f * scale; // Thinner core line
+                
+                // Left fade zone (transparent to bright)
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(0, glowInset),
+                    containerPos + new Vector2(glowCoreStart, glowInset + coreLineHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f)), // Transparent left
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f)), // Bright right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f)), // Bright right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f))  // Transparent left
+                );
+                
+                // Central core (full brightness)
+                dl.AddRectFilled(
+                    containerPos + new Vector2(glowCoreStart, glowInset),
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 1.0f))
+                );
+                
+                // Right fade zone (bright to transparent)
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset),
+                    containerPos + new Vector2(cardWidth, glowInset + coreLineHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f)), // Bright left
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f)), // Transparent right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f)), // Transparent right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f))  // Bright left
+                );
+                
+                // Soft downward glow - left fade
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(0, glowInset + coreLineHeight),
+                    containerPos + new Vector2(glowCoreStart, glowInset + coreLineHeight + glowFadeHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.0f)), // Transparent
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.4f)), // Soft glow
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+                );
+                
+                // Soft downward glow - center
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(glowCoreStart, glowInset + coreLineHeight),
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight + glowFadeHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.7f, accentColor.Y * 0.7f, accentColor.Z * 0.7f, 0.5f)), // Bright top
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.7f, accentColor.Y * 0.7f, accentColor.Z * 0.7f, 0.5f)), // Bright top
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+                );
+                
+                // Soft downward glow - right fade
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight),
+                    containerPos + new Vector2(cardWidth, glowInset + coreLineHeight + glowFadeHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.4f)), // Soft glow
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.0f)), // Transparent
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+                );
+                
+                // Reserve space for the container and position cursor properly
+                ImGui.Dummy(new Vector2(availableWidth, containerPadding)); // Top padding
+                
+                for (int i = 0; i < rp.GalleryImages.Count; i++)
+                {
+                    if (i % columns == 0)
+                    {
+                        // Start of new row - use calculated centering offset
+                        ImGui.SetCursorPosX(centeringOffset);
+                    }
+                    else
+                    {
+                        ImGui.SameLine();
+                    }
+                    
+                    var galleryImage = rp.GalleryImages[i];
+                    
+                    // Use the exact same approach as profile images
+                    var imagePath = GetGalleryImagePath(galleryImage.Url);
+                    IDalamudTextureWrap? texture = null;
+                    
+                    if (!string.IsNullOrEmpty(imagePath))
+                    {
+                        if (File.Exists(imagePath))
+                        {
+                            imageStatus[galleryImage.Url] = $"File exists: {Path.GetFileName(imagePath)}";
+                            texture = Plugin.TextureProvider.GetFromFile(imagePath).GetWrapOrDefault();
+                            if (texture != null)
+                            {
+                                imageStatus[galleryImage.Url] = "Loaded successfully!";
+                            }
+                            else
+                            {
+                                imageStatus[galleryImage.Url] = $"GetWrapOrDefault null: {Path.GetFileName(imagePath)}";
+                            }
+                        }
+                        else
+                        {
+                            imageStatus[galleryImage.Url] = $"File missing: {Path.GetFileName(imagePath)}";
+                        }
+                    }
+                    else
+                    {
+                        imageStatus[galleryImage.Url] = "No image path returned";
+                    }
+                    
+                    bool isLoading = downloadingImages.Contains(galleryImage.Url);
+                    
+                    if (texture != null)
+                    {
+                        // Draw actual image
+                        var cursorPos = ImGui.GetCursorScreenPos();
+                        
+                        // Apply individual gallery image zoom and offset settings
+                        var aspectRatio = (float)texture.Width / texture.Height;
+                        
+                        // Use the individual image's zoom and offset settings
+                        float zoom = Math.Clamp(galleryImage.Zoom, 0.1f, 10.0f);
+                        Vector2 userOffset = galleryImage.Offset * scale;
+                        
+                        // Calculate image size with zoom applied
+                        Vector2 imageSize;
+                        if (aspectRatio > 1f)
+                        {
+                            // Image is wider - fit height, scale width
+                            imageSize.Y = thumbnailSize * zoom;
+                            imageSize.X = imageSize.Y * aspectRatio;
+                        }
+                        else
+                        {
+                            // Image is taller or square - fit width, scale height
+                            imageSize.X = thumbnailSize * zoom;
+                            imageSize.Y = imageSize.X / aspectRatio;
+                        }
+                        
+                        // Center the zoomed image and apply user offset
+                        Vector2 imageOffset = new Vector2(
+                            -(imageSize.X - thumbnailSize) * 0.5f + userOffset.X,
+                            -(imageSize.Y - thumbnailSize) * 0.5f + userOffset.Y
+                        );
+                        
+                        var imageDl = ImGui.GetWindowDrawList();
+                        
+                        // Draw subtle drop shadow
+                        imageDl.AddRectFilled(
+                            cursorPos + new Vector2(3 * scale, 3 * scale), 
+                            cursorPos + new Vector2(thumbnailSize + 3 * scale, thumbnailSize + 3 * scale),
+                            ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)), 
+                            6f * scale
+                        );
+                        
+                        // Draw main background (dark)
+                        imageDl.AddRectFilled(
+                            cursorPos, 
+                            cursorPos + new Vector2(thumbnailSize, thumbnailSize),
+                            ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 1.0f)), 
+                            6f * scale
+                        );
+                        
+                        // Clip image to thumbnail bounds with slight inset for border
+                        var imageInset = 3f * scale;
+                        var imagePos = cursorPos + new Vector2(imageInset);
+                        var imageDisplaySize = thumbnailSize - (imageInset * 2);
+                        imageDl.PushClipRect(imagePos, imagePos + new Vector2(imageDisplaySize), true);
+                        
+                        // Adjust image position for the inset
+                        var adjustedImageOffset = imageOffset + new Vector2(imageInset);
+                        var adjustedImageSize = imageSize * (imageDisplaySize / thumbnailSize); // Scale image size proportionally
+                        
+                        // Draw image
+                        imageDl.AddImage((ImTextureID)texture.Handle, 
+                                  imagePos + imageOffset * (imageDisplaySize / thumbnailSize), 
+                                  imagePos + imageOffset * (imageDisplaySize / thumbnailSize) + adjustedImageSize);
+                        
+                        imageDl.PopClipRect();
+                        
+                        // Draw elegant border frame
+                        imageDl.AddRect(
+                            cursorPos, 
+                            cursorPos + new Vector2(thumbnailSize, thumbnailSize),
+                            ImGui.ColorConvertFloat4ToU32(new Vector4(0.8f, 0.8f, 0.9f, 0.9f)), 
+                            6f * scale,
+                            ImDrawFlags.None,
+                            2f * scale
+                        );
+                        
+                        // Add inner highlight
+                        imageDl.AddRect(
+                            cursorPos + new Vector2(1f * scale), 
+                            cursorPos + new Vector2(thumbnailSize - 1f * scale, thumbnailSize - 1f * scale),
+                            ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.1f)), 
+                            5f * scale,
+                            ImDrawFlags.None,
+                            1f * scale
+                        );
+                        
+                        // Invisible button for click detection
+                        ImGui.InvisibleButton($"##gallery_{i}", new Vector2(thumbnailSize, thumbnailSize));
+                        
+                        // Add hover effect
+                        bool isHovered = ImGui.IsItemHovered();
+                        if (isHovered)
+                        {
+                            // Hover glow effect - brighter version of the accent color
+                            var hoverAccentColor = ResolveNameplateColor();
+                            var hoverGlowColor = new Vector4(hoverAccentColor.X, hoverAccentColor.Y, hoverAccentColor.Z, 0.4f);
+                            imageDl.AddRect(
+                                cursorPos - new Vector2(2f * scale), 
+                                cursorPos + new Vector2(thumbnailSize + 2f * scale, thumbnailSize + 2f * scale),
+                                ImGui.ColorConvertFloat4ToU32(hoverGlowColor), 
+                                6f * scale,
+                                ImDrawFlags.None,
+                                3f * scale
+                            );
+                            
+                            // Subtle highlight overlay
+                            imageDl.AddRectFilled(
+                                cursorPos, 
+                                cursorPos + new Vector2(thumbnailSize, thumbnailSize),
+                                ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.1f)), 
+                                6f * scale
+                            );
+                            
+                            // Image name overlay - thin bar at bottom
+                            if (!string.IsNullOrWhiteSpace(galleryImage.Name))
+                            {
+                                var nameBarHeight = 20f * scale;
+                                var nameBarPos = cursorPos + new Vector2(0, thumbnailSize - nameBarHeight);
+                                var nameBarSize = new Vector2(thumbnailSize, nameBarHeight);
+                                
+                                // Semi-transparent dark background
+                                imageDl.AddRectFilled(
+                                    nameBarPos,
+                                    nameBarPos + nameBarSize,
+                                    ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.7f))
+                                );
+                                
+                                // Draw the name text using draw list to avoid layout issues
+                                var textPos = nameBarPos + new Vector2(4f * scale, 2f * scale);
+                                imageDl.AddText(textPos, ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 1f)), galleryImage.Name);
+                            }
+                        }
+                        
+                        if (ImGui.IsItemClicked())
+                        {
+                            // Build list of available images and set current index
+                            availableImagePaths.Clear();
+                            currentPreviewIndex = 0;
+                            
+                            for (int j = 0; j < rp.GalleryImages.Count; j++)
+                            {
+                                var availableImagePath = GetGalleryImagePath(rp.GalleryImages[j].Url);
+                                if (!string.IsNullOrEmpty(availableImagePath) && File.Exists(availableImagePath))
+                                {
+                                    availableImagePaths.Add(availableImagePath);
+                                    if (j == i) // Current clicked image
+                                    {
+                                        currentPreviewIndex = availableImagePaths.Count - 1;
+                                    }
+                                }
+                            }
+                            
+                            imagePreviewUrl = imagePath; // Use the local file path, not the URL
+                            showImagePreview = true;
+                        }
+                    }
+                    else
+                    {
+                        // Show button with status info
+                        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 1.0f));
+                        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
+                        
+                        var status = imageStatus.GetValueOrDefault(galleryImage.Url, "Load Image");
+                        bool clicked = ImGui.Button($"{status}##gallery_{i}", new Vector2(thumbnailSize, thumbnailSize));
+                        
+                        ImGui.PopStyleColor(2);
+                        
+                        // Start download when button is clicked OR automatically on first render
+                        if (clicked || (!galleryImageComplete.ContainsKey(galleryImage.Url) && !downloadingImages.Contains(galleryImage.Url)))
+                        {
+                            _ = Task.Run(() => StartImageDownload(galleryImage.Url));
+                        }
+                    }
+                    
+                }
+                
+                // Add bottom padding and advance cursor
+                ImGui.Dummy(new Vector2(availableWidth, containerPadding + 10f * scale));
+                
+            }
+            else
+            {
+                // Empty state - also with header and container
+                var characterName = showingExternal ? rp.CharacterName : character?.Name;
+                var headerText = !string.IsNullOrEmpty(characterName) ? $"{characterName}'s Gallery" : "Character Gallery";
+                
+                // Use exact header styling matching Overview tab cards
+                using (Plugin.Instance?.HeaderFont?.Push())
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.97f, 1.0f));
+                    ImGui.Text(headerText);
+                    ImGui.PopStyleColor();
+                }
+                ImGui.Spacing();
+                
+                // Empty state with same container style as main gallery
+                var availableWidth = ImGui.GetContentRegionAvail().X;
+                var containerPadding = 20f * scale;
+                var containerHeight = 200f * scale; // Smaller height for empty state
+                
+                // Draw container background with proper glow effect like Overview tab boxes
+                var dl = ImGui.GetWindowDrawList();
+                var containerPos = ImGui.GetCursorScreenPos();
+                var containerSize = new Vector2(availableWidth, containerHeight);
+                
+                // Container background (dark)
+                dl.AddRectFilled(
+                    containerPos,
+                    containerPos + containerSize,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.067f, 0.067f, 0.067f, 1.0f)),
+                    8.0f * scale
+                );
+                
+                // Container border
+                dl.AddRect(
+                    containerPos,
+                    containerPos + containerSize,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.102f, 0.102f, 0.102f, 1.0f)),
+                    8.0f * scale,
+                    ImDrawFlags.None,
+                    1.0f
+                );
+                
+                // Add proper glow effect on top of container like Overview tab boxes
+                var accentColor = ResolveNameplateColor();
+                var glowInset = 2f * scale;
+                var cardWidth = availableWidth;
+                
+                // Create a proper glow effect that fades from edges to center
+                var glowFadeWidth = cardWidth * 0.25f; // 25% of width for fade zones
+                var glowCoreWidth = cardWidth * 0.5f; // 50% of width for bright core
+                var glowCoreStart = (cardWidth - glowCoreWidth) * 0.5f;
+                
+                // Vertical glow properties
+                var glowFadeHeight = 8f * scale;
+                var coreLineHeight = 1f * scale; // Thinner core line
+                
+                // Left fade zone (transparent to bright)
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(0, glowInset),
+                    containerPos + new Vector2(glowCoreStart, glowInset + coreLineHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f)), // Transparent left
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f)), // Bright right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f)), // Bright right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f))  // Transparent left
+                );
+                
+                // Central core (full brightness)
+                dl.AddRectFilled(
+                    containerPos + new Vector2(glowCoreStart, glowInset),
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 1.0f))
+                );
+                
+                // Right fade zone (bright to transparent)
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset),
+                    containerPos + new Vector2(cardWidth, glowInset + coreLineHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f)), // Bright left
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f)), // Transparent right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.0f)), // Transparent right
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X, accentColor.Y, accentColor.Z, 0.9f))  // Bright left
+                );
+                
+                // Soft downward glow - left fade
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(0, glowInset + coreLineHeight),
+                    containerPos + new Vector2(glowCoreStart, glowInset + coreLineHeight + glowFadeHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.0f)), // Transparent
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.4f)), // Soft glow
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+                );
+                
+                // Soft downward glow - center
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(glowCoreStart, glowInset + coreLineHeight),
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight + glowFadeHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.7f, accentColor.Y * 0.7f, accentColor.Z * 0.7f, 0.5f)), // Bright top
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.7f, accentColor.Y * 0.7f, accentColor.Z * 0.7f, 0.5f)), // Bright top
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+                );
+                
+                // Soft downward glow - right fade
+                dl.AddRectFilledMultiColor(
+                    containerPos + new Vector2(glowCoreStart + glowCoreWidth, glowInset + coreLineHeight),
+                    containerPos + new Vector2(cardWidth, glowInset + coreLineHeight + glowFadeHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.4f)), // Soft glow
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(accentColor.X * 0.6f, accentColor.Y * 0.6f, accentColor.Z * 0.6f, 0.0f)), // Transparent
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0)), // Transparent bottom
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0))  // Transparent bottom
+                );
+                
+                // Center empty state text in container using relative positioning
+                ImGui.Dummy(new Vector2(availableWidth, containerHeight / 2 - 15f * scale)); // Top padding to center vertically
+                
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.631f, 0.631f, 0.667f, 1.0f));
+                var text = "No gallery images added yet. Use the profile editor to add image URLs to showcase your character!";
+                var availableTextWidth = availableWidth - (containerPadding * 2);
+                var textSize = ImGui.CalcTextSize(text, true, availableTextWidth);
+                var centerX = containerPadding + (availableTextWidth - textSize.X) * 0.5f;
+                
+                ImGui.SetCursorPosX(centerX);
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + availableTextWidth);
+                ImGui.TextWrapped(text);
+                ImGui.PopTextWrapPos();
+                ImGui.PopStyleColor();
+                
+                // Add remaining bottom padding
+                ImGui.Dummy(new Vector2(availableWidth, containerHeight / 2 - textSize.Y / 2 + 10f * scale));
+            }
+        }
+        
+        private void DrawQuickInfo(RPProfile rp, float scale)
+        {
+            var availWidth = ImGui.GetContentRegionAvail().X;
+            var cardWidth = (availWidth - 16 * scale) / 2;
+            var cardHeight = 75f * scale;
+            var spacing = 20f * scale;
+            
+            // Helper to draw a clean info card
+            void DrawInfoCard(string label, string value, float xPos, float yPos)
+            {
+                var drawList = ImGui.GetWindowDrawList();
+                var cardPos = ImGui.GetCursorScreenPos() + new Vector2(xPos, yPos);
+                
+                // Card background with gradient
+                drawList.AddRectFilledMultiColor(
+                    cardPos,
+                    cardPos + new Vector2(cardWidth, cardHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.055f, 0.055f, 0.055f, 1.0f)),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.055f, 0.055f, 0.055f, 1.0f)),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f))
+                );
+                
+                // Card border with subtle glow
+                drawList.AddRect(
+                    cardPos,
+                    cardPos + new Vector2(cardWidth, cardHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.11f, 0.11f, 0.11f, 1.0f)),
+                    8f * scale,
+                    ImDrawFlags.None,
+                    1f * scale
+                );
+                
+                // Inner highlight
+                drawList.AddRect(
+                    cardPos + new Vector2(1, 1),
+                    cardPos + new Vector2(cardWidth - 1, cardHeight - 1),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.02f)),
+                    7f * scale,
+                    ImDrawFlags.None,
+                    1f * scale
+                );
+                
+                // Label - uppercase, slightly larger
+                var labelUpper = label.ToUpper();
+                var labelSize = ImGui.CalcTextSize(labelUpper);
+                var scaledLabelSize = labelSize * 0.85f;
+                
+                // Label - smaller, uppercase
+                drawList.AddText(
+                    cardPos + new Vector2((cardWidth - scaledLabelSize.X) * 0.5f, 20 * scale),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.455f, 0.467f, 0.490f, 1.0f)),
+                    labelUpper
+                );
+                
+                // Value - normal size white text
+                var valueSize = ImGui.CalcTextSize(value);
+                drawList.AddText(
+                    cardPos + new Vector2((cardWidth - valueSize.X) * 0.5f, 40 * scale),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.941f, 0.941f, 0.949f, 1.0f)),
+                    value
+                );
+            }
+            
+            // Draw only first 4 items in 2x2 grid
+            DrawInfoCard("AGE", rp.Age ?? "Unknown", 0, 0);
+            DrawInfoCard("RACE", rp.Race ?? "Unknown", cardWidth + spacing, 0);
+            
+            DrawInfoCard("GENDER", rp.Gender ?? "Unknown", 0, cardHeight + spacing);
+            DrawInfoCard("ORIENTATION", rp.Orientation ?? "Unknown", cardWidth + spacing, cardHeight + spacing);
+        }
+        
+        private void DrawAdditionalInfo(RPProfile rp, float scale)
+        {
+            var availWidth = ImGui.GetContentRegionAvail().X;
+            var cardWidth = (availWidth - 12 * scale) / 2;
+            var cardHeight = 70f * scale;
+            var spacing = 12f * scale;
+            
+            void DrawInfoCard(string label, string value, float xPos, float yPos)
+            {
+                var drawList = ImGui.GetWindowDrawList();
+                var cardPos = ImGui.GetCursorScreenPos() + new Vector2(xPos, yPos);
+                
+                // Same card style as Quick Info
+                drawList.AddRectFilledMultiColor(
+                    cardPos,
+                    cardPos + new Vector2(cardWidth, cardHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.055f, 0.055f, 0.055f, 1.0f)),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.055f, 0.055f, 0.055f, 1.0f)),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f))
+                );
+                
+                drawList.AddRect(
+                    cardPos,
+                    cardPos + new Vector2(cardWidth, cardHeight),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.11f, 0.11f, 0.11f, 1.0f)),
+                    8f * scale,
+                    ImDrawFlags.None,
+                    1f * scale
+                );
+                
+                drawList.AddRect(
+                    cardPos + new Vector2(1, 1),
+                    cardPos + new Vector2(cardWidth - 1, cardHeight - 1),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(1, 1, 1, 0.02f)),
+                    7f * scale,
+                    ImDrawFlags.None,
+                    1f * scale
+                );
+                
+                var labelUpper = label.ToUpper();
+                var labelSize = ImGui.CalcTextSize(labelUpper);
+                var scaledLabelSize = labelSize * 0.85f;
+                
+                // Label - normal size
+                drawList.AddText(
+                    cardPos + new Vector2((cardWidth - scaledLabelSize.X) * 0.5f, 20 * scale),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.455f, 0.467f, 0.490f, 1.0f)),
+                    labelUpper
+                );
+                
+                // Value - normal size
+                var valueSize = ImGui.CalcTextSize(value);
+                drawList.AddText(
+                    cardPos + new Vector2((cardWidth - valueSize.X) * 0.5f, 40 * scale),
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.941f, 0.941f, 0.949f, 1.0f)),
+                    value
+                );
+            }
+            
+            // Draw relationship and occupation
+            int cardCount = 0;
+            if (!string.IsNullOrEmpty(rp.Relationship))
+            {
+                DrawInfoCard("RELATIONSHIP", rp.Relationship, cardCount % 2 == 0 ? 0 : cardWidth + spacing, 0);
+                cardCount++;
+            }
+            
+            if (!string.IsNullOrEmpty(rp.Occupation))
+            {
+                DrawInfoCard("OCCUPATION", rp.Occupation, cardCount % 2 == 0 ? 0 : cardWidth + spacing, cardCount > 1 ? cardHeight + spacing : 0);
+                cardCount++;
+            }
+        }
+        
+        private void DrawExternalLink(string link, float scale)
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            var linkPos = ImGui.GetCursorScreenPos();
+            
+            // Link styling - clickable area with icon
+            var linkSize = new Vector2(ImGui.GetContentRegionAvail().X, 40 * scale);
+            
+            // Hover detection
+            var mousePos = ImGui.GetIO().MousePos;
+            var isHovered = mousePos.X >= linkPos.X && mousePos.X <= linkPos.X + linkSize.X &&
+                           mousePos.Y >= linkPos.Y && mousePos.Y <= linkPos.Y + linkSize.Y;
+            
+            // Background on hover
+            if (isHovered)
+            {
+                drawList.AddRectFilled(
+                    linkPos,
+                    linkPos + linkSize,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.5f)),
+                    6f * scale
+                );
+            }
+            
+            // External link icon
+            var iconPos = linkPos + new Vector2(14 * scale, linkSize.Y * 0.5f);
+            var iconSize = 16f * scale;
+            var profileColor = ResolveNameplateColor();
+            
+            // Arrow icon
+            drawList.AddLine(
+                iconPos + new Vector2(0, -iconSize * 0.3f),
+                iconPos + new Vector2(iconSize * 0.6f, -iconSize * 0.3f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f)),
+                2f * scale
+            );
+            drawList.AddLine(
+                iconPos + new Vector2(iconSize * 0.6f, -iconSize * 0.3f),
+                iconPos + new Vector2(iconSize * 0.6f, iconSize * 0.3f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f)),
+                2f * scale
+            );
+            drawList.AddLine(
+                iconPos + new Vector2(iconSize * 0.2f, 0),
+                iconPos + new Vector2(iconSize * 0.6f, -iconSize * 0.3f),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f)),
+                2f * scale
+            );
+            
+            // Link text
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 40 * scale);
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (linkSize.Y - ImGui.GetTextLineHeight()) * 0.5f);
+            ImGui.TextColored(new Vector4(0.784f, 0.812f, 0.878f, 1.0f), link);
+            
+            // Click handling
+            if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                OpenUrl(link);
+            }
+            
+            if (isHovered)
+            {
+                ImGui.SetTooltip("Click to open in browser");
+            }
+            
+            // Move cursor past the link
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + linkSize.Y * 0.5f);
+        }
+        
+        private void DrawAbilityItem(string ability, float scale)
+        {
+            var profileColor = ResolveNameplateColor();
+            var drawList = ImGui.GetWindowDrawList();
+            
+            // Ability box background
+            var startPos = ImGui.GetCursorScreenPos();
+            var boxSize = new Vector2(ImGui.GetContentRegionAvail().X, 60 * scale);
+            
+            // Hover detection
+            var mousePos = ImGui.GetIO().MousePos;
+            bool isHovered = mousePos.X >= startPos.X && mousePos.X <= startPos.X + boxSize.X &&
+                           mousePos.Y >= startPos.Y && mousePos.Y <= startPos.Y + boxSize.Y;
+            
+            // Draw background with hover effect
+            var bgColor = isHovered
+                ? new Vector4(0.08f, 0.08f, 0.08f, 1.0f)
+                : new Vector4(0.05f, 0.05f, 0.05f, 0.8f);
+                
+            drawList.AddRectFilled(
+                startPos,
+                startPos + boxSize,
+                ImGui.ColorConvertFloat4ToU32(bgColor),
+                6f * scale
+            );
+            
+            // Border
+            drawList.AddRect(
+                startPos,
+                startPos + boxSize,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.15f, 0.15f, 0.15f, isHovered ? 1.0f : 0.6f)),
+                6f * scale,
+                ImDrawFlags.None,
+                1f * scale
+            );
+            
+            // Left accent bar
+            drawList.AddRectFilled(
+                startPos,
+                startPos + new Vector2(4 * scale, boxSize.Y),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.8f, profileColor.Y * 0.8f, profileColor.Z * 0.8f, 1.0f))
+            );
+            
+            // Content
+            ImGui.SetCursorScreenPos(startPos + new Vector2(20 * scale, 15 * scale));
+            ImGui.BeginGroup();
+            
+            // Ability name
+            ImGui.TextColored(Vector4.One, ability);
+            
+            // Placeholder description
+            ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.62f, 1.0f), "Mastered technique");
+            
+            ImGui.EndGroup();
+            
+            // Advance cursor
+            ImGui.SetCursorScreenPos(startPos + new Vector2(0, boxSize.Y + 8 * scale));
+        }
+        
+        private void DrawTraitItem(string trait, bool isPositive, float scale)
+        {
+            var profileColor = ResolveNameplateColor();
+            var drawList = ImGui.GetWindowDrawList();
+            var pos = ImGui.GetCursorScreenPos();
+            
+            // Colored line indicator
+            drawList.AddRectFilled(
+                pos,
+                pos + new Vector2(3 * scale, 20 * scale),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.067f, 0.714f, 0.506f, 1.0f))
+            );
+            
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 12 * scale);
+            ImGui.Text(trait);
+            ImGui.Spacing();
+        }
+        
+        private void DrawTraitItem(string trait, float scale)
+        {
+            var profileColor = ResolveNameplateColor();
+            var drawList = ImGui.GetWindowDrawList();
+            var itemPos = ImGui.GetCursorScreenPos();
+            var itemWidth = ImGui.GetContentRegionAvail().X;
+            var itemHeight = 32f * scale;
+            
+            // Item background
+            drawList.AddRectFilled(
+                itemPos,
+                itemPos + new Vector2(itemWidth, itemHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
+                6f * scale
+            );
+            
+            // Item border
+            drawList.AddRect(
+                itemPos,
+                itemPos + new Vector2(itemWidth, itemHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.122f, 0.122f, 0.122f, 1.0f)),
+                6f * scale,
+                ImDrawFlags.None,
+                1f * scale
+            );
+            
+            // Left accent border (blue)
+            drawList.AddRectFilled(
+                itemPos,
+                itemPos + new Vector2(3 * scale, itemHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f))
+            );
+            
+            // Text
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 12 * scale);
+            ImGui.TextColored(new Vector4(0.847f, 0.847f, 0.863f, 1.0f), trait);
+            
+            // Move cursor past the item
+            ImGui.SetCursorPosY(itemPos.Y - ImGui.GetWindowPos().Y + itemHeight + 8 * scale);
+        }
+        
+        private void DrawLikesDislikesTraitItem(string trait, float scale, bool isLike = true)
+        {
+            var drawList = ImGui.GetWindowDrawList();
+            var itemPos = ImGui.GetCursorScreenPos();
+            var itemWidth = ImGui.GetContentRegionAvail().X;
+            var itemHeight = 32f * scale;
+            
+            // Item background (exact same as Key Traits)
+            drawList.AddRectFilled(
+                itemPos,
+                itemPos + new Vector2(itemWidth, itemHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
+                6f * scale
+            );
+            
+            // Item border (exact same as Key Traits)
+            drawList.AddRect(
+                itemPos,
+                itemPos + new Vector2(itemWidth, itemHeight),
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.122f, 0.122f, 0.122f, 1.0f)),
+                6f * scale,
+                ImDrawFlags.None,
+                1f * scale
+            );
+            
+            // Left accent border (hardcoded green for likes, red for dislikes) - with rounding to match background
+            var accentColor = isLike 
+                ? new Vector4(0.067f, 0.714f, 0.506f, 1.0f) // Hardcoded green
+                : new Vector4(0.8f, 0.2f, 0.2f, 1.0f);      // Hardcoded red
+            drawList.AddRectFilled(
+                itemPos,
+                itemPos + new Vector2(3 * scale, itemHeight),
+                ImGui.ColorConvertFloat4ToU32(accentColor),
+                6f * scale, // Match the background rounding
+                ImDrawFlags.RoundCornersLeft // Only round the left side
+            );
+            
+            // Text with FontAwesome thumbs icons
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 12 * scale);
+            
+            // Draw emoji icon and text
+            string emoji = isLike ? "👍" : "👎";
+            ImGui.TextColored(new Vector4(0.847f, 0.847f, 0.863f, 1.0f), $"{emoji} {trait}");
+            
+            // Move cursor past the item (exact same as Key Traits)
+            ImGui.SetCursorPosY(itemPos.Y - ImGui.GetWindowPos().Y + itemHeight + 8 * scale);
+        }
+        
+        private void DrawCollapseButton(float scale)
+        {
+            var windowPos = ImGui.GetWindowPos();
+            var windowSize = ImGui.GetWindowSize();
+            var drawList = ImGui.GetWindowDrawList();
+            
+            // Standard Dalamud-style buttons in top-right corner
+            float buttonSize = 26f * scale;
+            float buttonSpacing = 4f * scale;
+            
+            // Edit button (left of close button)
+            float editButtonX = windowPos.X + windowSize.X - (buttonSize * 2) - buttonSpacing - 12f * scale;
+            float editButtonY = windowPos.Y + 12f * scale;
+            
+            // Close button (rightmost)
+            float closeButtonX = windowPos.X + windowSize.X - buttonSize - 12f * scale;
+            float closeButtonY = windowPos.Y + 12f * scale;
+            
+            // Draw edit button (only if not showing external profile)
+            if (!showingExternal)
+            {
+                DrawEditButton(editButtonX, editButtonY, buttonSize, scale, drawList);
+            }
+            
+            // Draw close button
+            DrawCloseButton(closeButtonX, closeButtonY, buttonSize, scale, drawList);
+        }
+        
+        private void DrawEditButton(float buttonX, float buttonY, float buttonSize, float scale, ImDrawListPtr drawList)
+        {
+            var buttonMin = new Vector2(buttonX, buttonY);
+            var buttonMax = new Vector2(buttonX + buttonSize, buttonY + buttonSize);
+            
+            // Check hover
+            var mousePos = ImGui.GetIO().MousePos;
+            bool isHovered = mousePos.X >= buttonMin.X && mousePos.X <= buttonMax.X &&
+                            mousePos.Y >= buttonMin.Y && mousePos.Y <= buttonMax.Y;
+            
+            // Button styling
+            if (isHovered)
+            {
+                // Blue hover background for edit
+                drawList.AddRectFilled(
+                    buttonMin,
+                    buttonMax,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.2f, 0.4f, 0.8f, 0.8f)),
+                    4f * scale
+                );
+            }
+            else
+            {
+                // Subtle background when not hovered
+                drawList.AddRectFilled(
+                    buttonMin,
+                    buttonMax,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.5f)),
+                    4f * scale
+                );
+            }
+            
+            // Edit icon (pencil)
+            var iconColor = isHovered
+                ? new Vector4(1.0f, 1.0f, 1.0f, 1.0f)
+                : new Vector4(0.7f, 0.7f, 0.7f, 1.0f);
+
+            var iconFont = UiBuilder.IconFont;
+            if (iconFont.IsLoaded())
+            {
+                var center = new Vector2(buttonX + buttonSize * 0.5f, buttonY + buttonSize * 0.5f);
+                drawList.AddText(iconFont,
+                    16f * scale,
+                    center - new Vector2(8f * scale, 8f * scale),
+                    ImGui.ColorConvertFloat4ToU32(iconColor),
+                    "\uf044" // Edit/pencil icon
+                );
+            }
+
+            // Draw NEW badge on Edit button
+            bool showEditBadge = !plugin.Configuration.SeenFeatures.Contains(FeatureKeys.ExpandedRPProfile);
+            if (showEditBadge)
+            {
+                // Pulsing glow effect around the button
+                float pulse = (float)(Math.Sin(ImGui.GetTime() * 3.0) * 0.5 + 0.5);
+                var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.5f); // Green glow
+
+                for (int i = 3; i >= 1; i--)
+                {
+                    var layerPadding = i * 2 * scale;
+                    var layerAlpha = glowColor.W * (1.0f - (i * 0.25f));
+                    drawList.AddRect(
+                        buttonMin - new Vector2(layerPadding, layerPadding),
+                        buttonMax + new Vector2(layerPadding, layerPadding),
+                        ImGui.ColorConvertFloat4ToU32(new Vector4(glowColor.X, glowColor.Y, glowColor.Z, layerAlpha)),
+                        6f * scale,
+                        ImDrawFlags.None,
+                        2f * scale
+                    );
+                }
+            }
+
+            // Handle click - open edit window
+            if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                if (character != null)
+                {
+                    plugin.RPProfileEditWindow.SetCharacter(character);
+                    
+                    // Set window to be focused on next frame
+                    ImGui.SetNextWindowFocus();
+                    plugin.RPProfileEditWindow.IsOpen = true;
+                    
+                    // Also use Dalamud's BringToFront for good measure
+                    plugin.RPProfileEditWindow.BringToFront();
+                }
+            }
+            
+            // Tooltip
+            if (isHovered)
+            {
+                ImGui.SetTooltip("Edit Profile");
+            }
+        }
+        
+        private void DrawCloseButton(float buttonX, float buttonY, float buttonSize, float scale, ImDrawListPtr drawList)
+        {
+            
+            var buttonMin = new Vector2(buttonX, buttonY);
+            var buttonMax = new Vector2(buttonX + buttonSize, buttonY + buttonSize);
+            
+            // Check hover
+            var mousePos = ImGui.GetIO().MousePos;
+            bool isHovered = mousePos.X >= buttonMin.X && mousePos.X <= buttonMax.X &&
+                            mousePos.Y >= buttonMin.Y && mousePos.Y <= buttonMax.Y;
+            
+            // Standard window close button styling
+            if (isHovered)
+            {
+                // Red hover background
+                drawList.AddRectFilled(
+                    buttonMin,
+                    buttonMax,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.8f, 0.2f, 0.2f, 0.8f)),
+                    4f * scale
+                );
+            }
+            else
+            {
+                // Subtle background when not hovered
+                drawList.AddRectFilled(
+                    buttonMin,
+                    buttonMax,
+                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 0.5f)),
+                    4f * scale
+                );
+            }
+            
+            // X icon - thinner and more standard
+            var iconColor = isHovered 
+                ? new Vector4(1.0f, 1.0f, 1.0f, 1.0f)
+                : new Vector4(0.7f, 0.7f, 0.7f, 1.0f);
+            var center = new Vector2(buttonX + buttonSize * 0.5f, buttonY + buttonSize * 0.5f);
+            var iconSize = 6f * scale;
+            
+            // Draw X with consistent line thickness
+            drawList.AddLine(
+                center + new Vector2(-iconSize, -iconSize),
+                center + new Vector2(iconSize, iconSize),
+                ImGui.ColorConvertFloat4ToU32(iconColor),
+                1.5f * scale
+            );
+            
+            drawList.AddLine(
+                center + new Vector2(-iconSize, iconSize),
+                center + new Vector2(iconSize, -iconSize),
+                ImGui.ColorConvertFloat4ToU32(iconColor),
+                1.5f * scale
+            );
+            
+            // Handle click - close the window
+            if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                pendingClose = true;
+            }
+            
+            // Tooltip
+            if (isHovered)
+            {
+                ImGui.SetTooltip("Close");
+            }
+        }
+        
+        private void DrawLeftCollapseHandle(float scale)
+        {
+            var windowPos = ImGui.GetWindowPos();
+            var windowSize = ImGui.GetWindowSize();
+            var drawList = ImGui.GetWindowDrawList();
+            
+            // Inset handle on the left edge
+            float handleWidth = 14f * scale;
+            float handleHeight = 100f * scale;
+            float handleInset = 3f * scale; // How far it's inset from edge
+            
+            // Calculate position to align with content area
+            var navHeight = 50f * scale;
+            var bannerHeight = 200f * scale;
+            var profileAreaHeight = 100f * scale;
+            var contentStartY = navHeight + bannerHeight + profileAreaHeight + 20 * scale;
+            
+            // Position aligned with main content section
+            float buttonX = windowPos.X + handleInset;
+            float buttonY = windowPos.Y + contentStartY;
+            
+            var handleMin = new Vector2(buttonX, buttonY);
+            var handleMax = new Vector2(buttonX + handleWidth, buttonY + handleHeight);
+            
+            // Check hover
+            var mousePos = ImGui.GetIO().MousePos;
+            bool isHovered = mousePos.X >= windowPos.X && mousePos.X <= handleMax.X &&
+                            mousePos.Y >= handleMin.Y && mousePos.Y <= handleMax.Y;
+            
+            // Get theme colors
+            var profileColor = ResolveNameplateColor();
+            
+            // Draw inset groove effect with rounded corners
+            drawList.AddRectFilled(
+                handleMin,
+                handleMax,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)),
+                6f * scale // Rounded corners
+            );
+            
+            // Inner recessed area
+            var innerMin = handleMin + new Vector2(2f * scale, 2f * scale);
+            var innerMax = handleMax - new Vector2(2f * scale, 2f * scale);
+            
+            var bgColor = isHovered 
+                ? new Vector4(profileColor.X * 0.15f, profileColor.Y * 0.15f, profileColor.Z * 0.15f, 0.8f)
+                : new Vector4(0.05f, 0.05f, 0.05f, 0.7f);
+                
+            drawList.AddRectFilled(
+                innerMin,
+                innerMax,
+                ImGui.ColorConvertFloat4ToU32(bgColor),
+                4f * scale
+            );
+            
+            // Vertical grip lines for texture
+            float lineSpacing = 8f * scale;
+            float lineY = innerMin.Y + 20f * scale;
+            var gripColor = isHovered
+                ? new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.5f)
+                : new Vector4(0.3f, 0.3f, 0.3f, 0.3f);
+                
+            while (lineY < innerMax.Y - 20f * scale)
+            {
+                drawList.AddLine(
+                    new Vector2(innerMin.X + 4f * scale, lineY),
+                    new Vector2(innerMax.X - 4f * scale, lineY),
+                    ImGui.ColorConvertFloat4ToU32(gripColor),
+                    1f * scale
+                );
+                lineY += lineSpacing;
+            }
+            
+            // Small arrow in the center (pointing left)
+            var arrowColor = isHovered 
+                ? new Vector4(profileColor.X * 0.8f, profileColor.Y * 0.8f, profileColor.Z * 0.8f, 0.9f)
+                : new Vector4(0.5f, 0.5f, 0.5f, 0.7f);
+                
+            var handleCenter = new Vector2(
+                handleMin.X + handleWidth * 0.5f,
+                handleMin.Y + handleHeight * 0.5f
+            );
+            
+            // Draw < arrow
+            var arrowSize = 3.5f * scale;
+            drawList.AddLine(
+                handleCenter + new Vector2(arrowSize * 0.5f, -arrowSize),
+                handleCenter + new Vector2(-arrowSize * 0.5f, 0),
+                ImGui.ColorConvertFloat4ToU32(arrowColor),
+                2f * scale
+            );
+            
+            drawList.AddLine(
+                handleCenter + new Vector2(-arrowSize * 0.5f, 0),
+                handleCenter + new Vector2(arrowSize * 0.5f, arrowSize),
+                ImGui.ColorConvertFloat4ToU32(arrowColor),
+                2f * scale
+            );
+            
+            // Handle click
+            if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                ToggleExpansion();
+            }
+            
+            // Tooltip
+            if (isHovered)
+            {
+                ImGui.SetTooltip("Back to compact view");
+            }
+        }
+
+        private void DrawBanner(ImDrawListPtr dl, Vector2 wndPos, Vector2 wndSize, string bannerImagePath, float bannerZoom, Vector2 bannerOffset, float scale, float navHeight, float bannerHeight)
+        {
+            var bannerTexture = Plugin.TextureProvider.GetFromFile(bannerImagePath).GetWrapOrDefault();
+            if (bannerTexture == null) return;
+
+            // Banner region
+            var bannerRegionPos = wndPos + new Vector2(0, navHeight);
+            var bannerRegionSize = new Vector2(wndSize.X, bannerHeight);
+
+            // Set up clipping region for banner area
+            dl.PushClipRect(bannerRegionPos, bannerRegionPos + bannerRegionSize, true);
+
+            // Calculate banner drawing parameters
+            float zoom = Math.Clamp(bannerZoom, 0.5f, 3.0f);
+            Vector2 offset = bannerOffset * scale;
+
+            float bannerAspect = (float)bannerTexture.Width / bannerTexture.Height;
+            float bannerDrawWidth = bannerRegionSize.X * zoom;
+            float bannerDrawHeight = bannerDrawWidth / bannerAspect;
+
+            Vector2 bannerDrawSize = new(bannerDrawWidth, bannerDrawHeight);
+            Vector2 bannerDrawPos = bannerRegionPos + offset + new Vector2(
+                (bannerRegionSize.X - bannerDrawWidth) * 0.5f,
+                (bannerRegionSize.Y - bannerDrawHeight) * 0.5f
+            );
+
+            // Draw banner image
+            dl.AddImage((ImTextureID)bannerTexture.Handle, bannerDrawPos, bannerDrawPos + bannerDrawSize,
+                Vector2.Zero, Vector2.One, ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.85f)));
+
+            dl.PopClipRect();
+        }
+
+        private async Task StartImageDownload(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url) || downloadingImages.Contains(url))
+                return;
+
+            try
+            {
+                downloadingImages.Add(url);
+                imageStatus[url] = "Downloading...";
+
+                using var httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(10); // 10 second timeout
+                
+                var imageData = await httpClient.GetByteArrayAsync(url);
+                imageStatus[url] = $"Downloaded {imageData.Length} bytes";
+                
+                // Create file in plugin directory like the profile image system
+                var hash = Convert.ToBase64String(
+                    System.Security.Cryptography.MD5.HashData(
+                        System.Text.Encoding.UTF8.GetBytes(url)
+                    )
+                ).Replace("/", "_").Replace("+", "-");
+
+                string fileName = $"GalleryImage_{hash}.png";
+                string tempPath = Path.Combine(
+                    Plugin.PluginInterface.GetPluginConfigDirectory(),
+                    fileName
+                );
+                
+                // Write image data to file
+                await File.WriteAllBytesAsync(tempPath, imageData);
+                imageStatus[url] = "File saved, ready to load";
+                galleryImagePaths[url] = tempPath;
+                galleryImageComplete[url] = true;
+            }
+            catch (Exception ex)
+            {
+                imageStatus[url] = $"Error: {ex.Message}";
+                galleryImageComplete[url] = true; // Mark as failed
+            }
+            finally
+            {
+                downloadingImages.Remove(url);
+            }
+        }
+
+        private string? GetGalleryImagePath(string url)
+        {
+            // Use the exact same logic as GetCurrentImagePath() for profile images
+            if (galleryImageComplete.GetValueOrDefault(url) && galleryImagePaths.TryGetValue(url, out var path))
+            {
+                if (File.Exists(path))
+                    return path;
+            }
+            return null;
+        }
+
+        private void DrawContentBoxLayout(ContentBox box, float scale)
+        {
+            // Get available width for the content box
+            var availableWidth = ImGui.GetContentRegionAvail().X;
+
+            // Determine if the viewer is the owner of the profile
+            bool isOwner = !showingExternal && character != null;
+
+            // Set the external profile flag for connection click handling
+            ContentBoxRenderer.IsViewingExternalProfile = showingExternal;
+
+            // Set the profile accent color for styled elements (quotes, etc.)
+            var profileColor = ResolveNameplateColor();
+            ContentBoxRenderer.ProfileAccentColor = profileColor;
+
+            // Use ContentBoxRenderer to render the content box
+            ContentBoxRenderer.RenderContentBox(box, availableWidth, scale, isOwner, (modifiedBox) => {
+                // When a checkbox is toggled, save the character immediately
+                if (character != null)
+                {
+                    plugin.Configuration.Save();
+                }
+            });
+        }
+
+        private void DrawStandardLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Content))
+            {
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 8 * scale));
+                ImGui.TextWrapped(box.Content);
+                ImGui.PopStyleVar();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No content written yet.");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawLikesDislikesLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Likes) || !string.IsNullOrEmpty(box.Dislikes))
+            {
+                // Parse likes into individual items
+                if (!string.IsNullOrEmpty(box.Likes))
+                {
+                    var likesItems = box.Likes.Split(new char[] { '\n', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var item in likesItems)
+                    {
+                        if (!string.IsNullOrWhiteSpace(item))
+                        {
+                            DrawLikesDislikesTraitItem(item.Trim(), scale, true); // true = likes (green)
+                        }
+                    }
+                }
+
+                // Parse dislikes into individual items  
+                if (!string.IsNullOrEmpty(box.Dislikes))
+                {
+                    var dislikesItems = box.Dislikes.Split(new char[] { '\n', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var item in dislikesItems)
+                    {
+                        if (!string.IsNullOrWhiteSpace(item))
+                        {
+                            DrawLikesDislikesTraitItem(item.Trim(), scale, false); // false = dislikes (red)
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No preferences listed yet.");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawListLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Content))
+            {
+                var lines = box.Content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 4 * scale));
+                
+                foreach (var line in lines)
+                {
+                    var trimmedLine = line.Trim();
+                    if (string.IsNullOrEmpty(trimmedLine)) continue;
+                    
+                    // Auto-format as bullet points if not already formatted
+                    if (!trimmedLine.StartsWith("•") && !trimmedLine.StartsWith("-") && 
+                        !trimmedLine.StartsWith("*") && !char.IsDigit(trimmedLine[0]))
+                    {
+                        ImGui.Text($"• {trimmedLine}");
+                    }
+                    else
+                    {
+                        ImGui.Text(trimmedLine);
+                    }
+                }
+                ImGui.PopStyleVar();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No list items added yet.");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawKeyValueLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Content))
+            {
+                var lines = box.Content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                var availableWidth = ImGui.GetContentRegionAvail().X;
+                var labelWidth = availableWidth * 0.35f; // 35% for labels, 65% for values
+                
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 6 * scale));
+                
+                foreach (var line in lines)
+                {
+                    var parts = line.Split(new[] { ':', '=' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length == 2)
+                    {
+                        var label = parts[0].Trim();
+                        var value = parts[1].Trim();
+                        
+                        // Label (aligned)
+                        ImGui.SetNextItemWidth(labelWidth);
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.9f, 1.0f)); // Slightly brighter
+                        ImGui.Text($"{label}:");
+                        ImGui.PopStyleColor();
+                        
+                        ImGui.SameLine();
+                        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (10 * scale)); // Padding
+                        ImGui.TextWrapped(value);
+                    }
+                    else
+                    {
+                        // Regular line without key-value format
+                        ImGui.TextWrapped(line.Trim());
+                    }
+                }
+                ImGui.PopStyleVar();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No key-value pairs added yet. Format: Key: Value");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawQuoteLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.QuoteText))
+            {
+                var availableWidth = ImGui.GetContentRegionAvail().X;
+                var quoteIndent = 20 * scale;
+                
+                // Quote mark and indented text
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + quoteIndent);
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.9f, 1.0f)); // Subtle purple tint
+                ImGui.PushFont(ImGui.GetIO().Fonts.Fonts[0]); // Could use italic font if available
+                
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + availableWidth - (quoteIndent * 2));
+                ImGui.Text($"\"{box.QuoteText}\"");
+                ImGui.PopTextWrapPos();
+                
+                ImGui.PopFont();
+                ImGui.PopStyleColor();
+                
+                // Attribution
+                if (!string.IsNullOrEmpty(box.QuoteAuthor))
+                {
+                    ImGui.Spacing();
+                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + availableWidth - (100 * scale));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.7f, 1.0f));
+                    ImGui.Text($"— {box.QuoteAuthor}");
+                    ImGui.PopStyleColor();
+                }
+            }
+            else if (!string.IsNullOrEmpty(box.Content))
+            {
+                // Fallback to content if no specific quote fields
+                DrawQuoteFromContent(box.Content, scale);
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No quote added yet.");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawQuoteFromContent(string content, float scale)
+        {
+            var availableWidth = ImGui.GetContentRegionAvail().X;
+            var quoteIndent = 20 * scale;
+            
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + quoteIndent);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.9f, 1.0f));
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + availableWidth - (quoteIndent * 2));
+            ImGui.TextWrapped($"\"{content}\"");
+            ImGui.PopTextWrapPos();
+            ImGui.PopStyleColor();
+        }
+
+        private void DrawTimelineLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Content))
+            {
+                var lines = box.Content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                var availableWidth = ImGui.GetContentRegionAvail().X;
+                var dateWidth = 80 * scale;
+                
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 8 * scale));
+                
+                foreach (var line in lines)
+                {
+                    var trimmedLine = line.Trim();
+                    if (string.IsNullOrEmpty(trimmedLine)) continue;
+                    
+                    // Try to parse date/event format
+                    var parts = trimmedLine.Split(new[] { '-', '—', '–' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length == 2)
+                    {
+                        var date = parts[0].Trim();
+                        var eventText = parts[1].Trim();
+                        
+                        // Date
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.4f, 1.0f)); // Gold
+                        ImGui.SetNextItemWidth(dateWidth);
+                        ImGui.Text(date);
+                        ImGui.PopStyleColor();
+                        
+                        ImGui.SameLine();
+                        ImGui.Text("────");
+                        ImGui.SameLine();
+                        
+                        // Event
+                        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + availableWidth - dateWidth - (40 * scale));
+                        ImGui.TextWrapped(eventText);
+                        ImGui.PopTextWrapPos();
+                    }
+                    else
+                    {
+                        // Regular line without timeline format
+                        ImGui.TextWrapped(trimmedLine);
+                    }
+                }
+                ImGui.PopStyleVar();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No timeline events added yet. Format: Date — Event");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawGridLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Content))
+            {
+                var lines = box.Content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                var availableWidth = ImGui.GetContentRegionAvail().X;
+                var columns = Math.Min(3, Math.Max(1, (int)(availableWidth / (120 * scale)))); // Auto columns
+                
+                if (lines.Length > 0)
+                {
+                    ImGui.Columns(columns, "GridColumns", false);
+                    var columnWidth = availableWidth / columns;
+                    
+                    for (int i = 0; i < columns; i++)
+                    {
+                        ImGui.SetColumnWidth(i, columnWidth);
+                    }
+                    
+                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 4 * scale));
+                    
+                    for (int i = 0; i < lines.Length; i++)
+                    {
+                        var line = lines[i].Trim();
+                        if (!string.IsNullOrEmpty(line))
+                        {
+                            ImGui.TextWrapped(line);
+                        }
+                        
+                        if (i < lines.Length - 1)
+                        {
+                            ImGui.NextColumn();
+                        }
+                    }
+                    
+                    ImGui.PopStyleVar();
+                    ImGui.Columns(1);
+                }
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No grid items added yet.");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawProsConsLayout(ContentBox box, float scale)
+        {
+            var availableWidth = ImGui.GetContentRegionAvail().X;
+            var columnWidth = (availableWidth - (10 * scale)) * 0.5f;
+
+            if (!string.IsNullOrEmpty(box.LeftColumn) || !string.IsNullOrEmpty(box.RightColumn))
+            {
+                ImGui.Columns(2, "ProsConsColumns", false);
+                ImGui.SetColumnWidth(0, columnWidth);
+                ImGui.SetColumnWidth(1, columnWidth);
+
+                // Left column (Pros/Strengths)
+                if (!string.IsNullOrEmpty(box.LeftColumn))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.8f, 0.4f, 1.0f)); // Green
+                    ImGui.Text("✓ Pros / Strengths");
+                    ImGui.PopStyleColor();
+                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 4 * scale));
+                    
+                    var lines = box.LeftColumn.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines)
+                    {
+                        var trimmed = line.Trim();
+                        if (!string.IsNullOrEmpty(trimmed))
+                        {
+                            if (!trimmed.StartsWith("•") && !trimmed.StartsWith("✓"))
+                                ImGui.Text($"• {trimmed}");
+                            else
+                                ImGui.Text(trimmed);
+                        }
+                    }
+                    ImGui.PopStyleVar();
+                }
+
+                ImGui.NextColumn();
+
+                // Right column (Cons/Weaknesses)
+                if (!string.IsNullOrEmpty(box.RightColumn))
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.4f, 0.4f, 1.0f)); // Red
+                    ImGui.Text("✗ Cons / Weaknesses");
+                    ImGui.PopStyleColor();
+                    ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 4 * scale));
+                    
+                    var lines = box.RightColumn.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines)
+                    {
+                        var trimmed = line.Trim();
+                        if (!string.IsNullOrEmpty(trimmed))
+                        {
+                            if (!trimmed.StartsWith("•") && !trimmed.StartsWith("✗"))
+                                ImGui.Text($"• {trimmed}");
+                            else
+                                ImGui.Text(trimmed);
+                        }
+                    }
+                    ImGui.PopStyleVar();
+                }
+
+                ImGui.Columns(1);
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No pros/cons listed yet.");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawTaggedLayout(ContentBox box, float scale)
+        {
+            if (!string.IsNullOrEmpty(box.Content))
+            {
+                var sections = box.Content.Split(new[] { "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+                
+                foreach (var section in sections)
+                {
+                    var lines = section.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length == 0) continue;
+                    
+                    var tagLine = lines[0].Trim();
+                    
+                    // Draw tag/category header
+                    if (tagLine.StartsWith("#") || tagLine.StartsWith("[") || tagLine.EndsWith(":"))
+                    {
+                        var tagText = tagLine.TrimStart('#').TrimStart('[').TrimEnd(']').TrimEnd(':');
+                        
+                        // Tag bubble background
+                        var tagSize = ImGui.CalcTextSize(tagText);
+                        var padding = new Vector2(8 * scale, 4 * scale);
+                        var tagBgSize = tagSize + padding * 2;
+                        var cursor = ImGui.GetCursorScreenPos();
+                        
+                        var dl = ImGui.GetWindowDrawList();
+                        dl.AddRectFilled(cursor, cursor + tagBgSize, 
+                            ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.5f, 0.8f, 0.3f)), 4 * scale);
+                        dl.AddRect(cursor, cursor + tagBgSize, 
+                            ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.5f, 0.8f, 0.8f)), 4 * scale);
+                        
+                        ImGui.SetCursorScreenPos(cursor + padding);
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 1.0f, 1.0f));
+                        ImGui.Text(tagText);
+                        ImGui.PopStyleColor();
+                        ImGui.SetCursorScreenPos(cursor + new Vector2(0, tagBgSize.Y + (6 * scale)));
+                        
+                        // Content under the tag
+                        if (lines.Length > 1)
+                        {
+                            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 4 * scale));
+                            for (int i = 1; i < lines.Length; i++)
+                            {
+                                var contentLine = lines[i].Trim();
+                                if (!string.IsNullOrEmpty(contentLine))
+                                {
+                                    ImGui.TextWrapped(contentLine);
+                                }
+                            }
+                            ImGui.PopStyleVar();
+                        }
+                    }
+                    else
+                    {
+                        // Regular content without tag formatting
+                        foreach (var line in lines)
+                        {
+                            if (!string.IsNullOrEmpty(line.Trim()))
+                                ImGui.TextWrapped(line.Trim());
+                        }
+                    }
+                    
+                    ImGui.Spacing();
+                }
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
+                ImGui.TextWrapped("No tagged content yet. Format: #Tag or [Category]: Content");
+                ImGui.PopStyleColor();
+            }
+        }
+
+        // Banner URL support methods
+        private string GetBannerImagePath(string imageUrl)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    return "";
+
+                var fileName = $"banner_{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(imageUrl)).Replace('/', '_').Replace('+', '-')}";
+                return Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private async Task DownloadBannerImageAsync(string imageUrl)
+        {
+            if (string.IsNullOrWhiteSpace(imageUrl))
+                return;
+
+            var imagePath = GetBannerImagePath(imageUrl);
+
+            if (File.Exists(imagePath))
+                return;
+
+            lock (downloadingBanners)
+            {
+                if (downloadingBanners.Contains(imageUrl))
+                    return;
+                downloadingBanners.Add(imageUrl);
+            }
+
+            try
+            {
+                if (File.Exists(imagePath))
+                    return;
+
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(15);
+                var response = await client.GetAsync(imageUrl);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                    var tempPath = imagePath + ".tmp";
+                    await File.WriteAllBytesAsync(tempPath, imageBytes);
+                    File.Move(tempPath, imagePath);
+                    Plugin.Log.Info($"[ProfileView] Downloaded banner image: {imageUrl}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[ProfileView] Failed to download banner image {imageUrl}: {ex.Message}");
+            }
+            finally
+            {
+                lock (downloadingBanners)
+                {
+                    downloadingBanners.Remove(imageUrl);
+                }
+            }
         }
     }
 }

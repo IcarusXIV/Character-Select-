@@ -5,6 +5,8 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text.Json.Serialization;
 
@@ -28,6 +30,8 @@ namespace CharacterSelectPlugin
         public int CurrentSortIndex { get; set; } = 0; // Default to Manual (SortType.Manual = 0)
         public PersistentPoseSet DefaultPoses { get; set; } = new();
         public bool IsQuickSwitchWindowOpen { get; set; } = false;
+        public bool RememberMainWindowState { get; set; } = false;
+        public bool IsMainWindowOpen { get; set; } = false;
         public bool EnableAutomations { get; set; } = false;
         public string LastSeenVersion { get; set; } = "";
         public ProfileSharing RPSharingMode { get; set; } = ProfileSharing.AlwaysShare;
@@ -38,16 +42,24 @@ namespace CharacterSelectPlugin
         public byte LastDozePoseAppliedByPlugin { get; set; } = 255;
         public Dictionary<string, string> LastUsedCharacterByPlayer { get; set; } = new();
         public Dictionary<string, string> CharacterAssignments { get; set; } = new();
+
+        // Job Assignments - maps job IDs or roles to CS+ characters/designs
+        // Key format: "Job_{JobId}" for specific jobs, "Role_{RoleName}" for roles
+        // Value format: "Character:{CharacterName}" or "Design:{CharacterName}:{DesignName}"
+        public Dictionary<string, string> JobAssignments { get; set; } = new();
+        public bool EnableJobAssignments { get; set; } = false;
+        public bool EnableGearsetAssignments { get; set; } = false;
+
         public bool EnableLastUsedCharacterAutoload { get; set; } = false;
         public bool EnableLastUsedDesignAutoload { get; set; } = false;
         public string? LastSessionId { get; set; } = null;
         public string? PreviousSessionId { get; set; }
+        public List<uint> FavoriteIconIds { get; set; } = new();
         [JsonProperty]
         private float _uiScaleMultiplier = 1.0f;
         
         /// <summary>
-        /// UI Scale multiplier with automatic bounds checking (0.5x to 2.0x).
-        /// Note: This setting is no longer exposed in the UI but maintained for backward compatibility.
+        /// UI scale multiplier (0.5-2.0). Legacy setting, no longer in UI.
         /// </summary>
         public float UIScaleMultiplier 
         { 
@@ -61,10 +73,10 @@ namespace CharacterSelectPlugin
         public bool ReapplyDesignOnJobChange { get; set; } = false;
         
         // Pose Settings
-        public bool? UseCommandBasedPoses { get; set; } = true; // null = not set yet, will default to true
+        public bool? UseCommandBasedPoses { get; set; } = true;
         
         // Design Sorting
-        public int CurrentDesignSortIndex { get; set; } = 1; // Default to Alphabetical (matches DesignSortType.Alphabetical)
+        public int CurrentDesignSortIndex { get; set; } = 1;
         public string? LastUsedDesignCharacterKey { get; set; } = null;
         public string? LastUsedCharacterKey { get; set; } = null;
         [DefaultValue(false)]
@@ -77,8 +89,11 @@ namespace CharacterSelectPlugin
         
         // Theme Settings
         public ThemeSelection SelectedTheme { get; set; } = ThemeSelection.Current;
-        
-        // Legacy setting - kept for backward compatibility during migration
+        public CustomThemeConfig CustomTheme { get; set; } = new();
+        public List<ThemePreset> ThemePresets { get; set; } = new();
+        public string? ActivePresetName { get; set; } = null;
+
+        // Legacy (use SelectedTheme)
         [Obsolete("Use SelectedTheme instead")]
         public bool UseSeasonalTheme { get; set; } = false;
         
@@ -92,7 +107,7 @@ namespace CharacterSelectPlugin
         public bool ShowTutorialOnStartup { get; set; } = true;
         public Dictionary<uint, uint> GearsetJobMapping { get; set; } = new();
         public uint? LastUsedGearset { get; set; } = null;
-        public string? GalleryMainCharacter { get; set; } = null; // Format: "CharacterName@Server"
+        public string? GalleryMainCharacter { get; set; } = null;
         public bool EnableGalleryAutoRefresh { get; set; } = true;
         public int GalleryAutoRefreshSeconds { get; set; } = 30;
         [DefaultValue(false)]
@@ -105,9 +120,10 @@ namespace CharacterSelectPlugin
         public HashSet<string> BlockedGalleryProfiles { get; set; } = new();
         public float DesignPanelWidth { get; set; } = 300f;
         
-        // Conflict Resolution settings (formerly Secret Mode)
+        // Conflict Resolution
         public bool EnableConflictResolution { get; set; } = false;
-        public HashSet<string> SecretModeBlacklistedMods { get; set; } = new(); // Keep for backwards compatibility
+        public bool RespectPenumbraInheritance { get; set; } = false;
+        public HashSet<string> SecretModeBlacklistedMods { get; set; } = new();
         public HashSet<string> FollowedPlayers { get; set; } = new();
         [JsonPropertyName("enableDialogueIntegration")]
         public bool EnableDialogueIntegration { get; set; } = false;
@@ -123,7 +139,7 @@ namespace CharacterSelectPlugin
 
         [JsonPropertyName("showDialogueReplacementPreview")]
         public bool ShowDialogueReplacementPreview { get; set; } = false;
-        // New enhanced dialogue settings
+        // Enhanced dialogue
         [JsonPropertyName("enableLuaHookDialogue")]
         public bool EnableLuaHookDialogue { get; set; } = true;
 
@@ -138,10 +154,92 @@ namespace CharacterSelectPlugin
 
         [JsonPropertyName("customGenderNeutralTitle")]
         public string CustomGenderNeutralTitle { get; set; } = "friend";
+        
+        [JsonPropertyName("useFlagBasedDialogueOnly")]
+        public bool UseFlagBasedDialogueOnly { get; set; } = true;
+
+        // Name Replacement
+        [JsonPropertyName("enableNameReplacement")]
+        public bool EnableNameReplacement { get; set; } = false;
+
+        [JsonPropertyName("nameReplacementNameplate")]
+        public bool NameReplacementNameplate { get; set; } = true;
+
+        [JsonPropertyName("nameReplacementChat")]
+        public bool NameReplacementChat { get; set; } = true;
+
+        [JsonPropertyName("nameReplacementPartyList")]
+        public bool NameReplacementPartyList { get; set; } = true;
+
+        [JsonPropertyName("hideFCTagInNameplate")]
+        public bool HideFCTagInNameplate { get; set; } = false;
+
+        // Shared Name Replacement
+        [JsonPropertyName("enableSharedNameReplacement")]
+        public bool EnableSharedNameReplacement { get; set; } = false;
+
+        [JsonPropertyName("allowOthersToSeeMyCSName")]
+        public bool AllowOthersToSeeMyCSName { get; set; } = false;
+
+        // Reveal actual names keybind
+        [JsonPropertyName("enableRevealActualNamesKeybind")]
+        public bool EnableRevealActualNamesKeybind { get; set; } = false;
+
+        [JsonPropertyName("revealActualNamesKey")]
+        public RevealNamesKeyOption RevealActualNamesKey { get; set; } = RevealNamesKeyOption.Alt;
+
+        /// <summary>Custom virtual key code for reveal names (0 = use RevealActualNamesKey enum instead).</summary>
+        [JsonPropertyName("revealActualNamesCustomKey")]
+        public int RevealActualNamesCustomKey { get; set; } = 0;
+
+        /// <summary>Display name for the custom key.</summary>
+        [JsonPropertyName("revealActualNamesCustomKeyName")]
+        public string RevealActualNamesCustomKeyName { get; set; } = "";
+
+        /// <summary>Modifier key for reveal names (0 = none, 0x11 = Ctrl, 0x10 = Shift, 0x12 = Alt).</summary>
+        [JsonPropertyName("revealActualNamesModifier")]
+        public int RevealActualNamesModifier { get; set; } = 0;
+
+        /// <summary>Display name for the modifier key.</summary>
+        [JsonPropertyName("revealActualNamesModifierName")]
+        public string RevealActualNamesModifierName { get; set; } = "";
+
         public bool EnableRaceReplacement { get; set; } = false;
         public DateTime LastSeenAnnouncements { get; set; } = DateTime.MinValue;
         public bool ShowNSFWProfiles { get; set; } = false;
         public int LastAcceptedGalleryTOSVersion { get; set; } = 0;
+
+        // Context menu
+        [JsonPropertyName("showViewRPContextMenu")]
+        public bool ShowViewRPContextMenu { get; set; } = true;
+
+        [JsonPropertyName("showBlockUserContextMenu")]
+        public bool ShowBlockUserContextMenu { get; set; } = true;
+
+        [JsonPropertyName("showReportUserContextMenu")]
+        public bool ShowReportUserContextMenu { get; set; } = true;
+
+        // Blocked CS+ users
+        [JsonPropertyName("blockedCSUsers")]
+        public HashSet<string> BlockedCSUsers { get; set; } = new();
+
+        // Migration
+        public bool HasMigratedHonorificSilent { get; set; } = false;
+
+        // Honorific supporter acknowledgment
+        [JsonPropertyName("hasAcknowledgedHonorificSupport")]
+        public bool HasAcknowledgedHonorificSupport { get; set; } = false;
+
+        /// <summary>
+        /// Features user has seen (versioned keys, e.g. "NameSync_v2.1").
+        /// </summary>
+        public HashSet<string> SeenFeatures { get; set; } = new();
+
+        /// <summary>
+        /// Show patch notes on startup after updates.
+        /// </summary>
+        [DefaultValue(true)]
+        public bool ShowPatchNotesOnStartup { get; set; } = true;
 
         public Configuration(IDalamudPluginInterface pluginInterface)
         {
@@ -153,9 +251,29 @@ namespace CharacterSelectPlugin
             var config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration(pluginInterface);
             config.pluginInterface = pluginInterface;
 
-            // Ensure valid sorting index
+            // Validate sort index
             if (config.CurrentSortIndex < 0 || config.CurrentSortIndex > 4)
                 config.CurrentSortIndex = 0;
+
+            // Ensure collections are initialized (may be null from older config deserialization)
+            config.ThemePresets ??= new List<ThemePreset>();
+            config.CustomTheme ??= new CustomThemeConfig();
+            config.Characters ??= new List<Character>();
+            config.KnownTags ??= new List<string>();
+            config.FavoriteIconIds ??= new List<uint>();
+            config.LastUsedCharacterByPlayer ??= new Dictionary<string, string>();
+            config.CharacterAssignments ??= new Dictionary<string, string>();
+            config.JobAssignments ??= new Dictionary<string, string>();
+            config.LastUsedDesignByCharacter ??= new Dictionary<string, string>();
+            config.FavoriteGalleryProfiles ??= new HashSet<string>();
+            config.LikedGalleryProfiles ??= new HashSet<string>();
+            config.FavoriteSnapshots ??= new List<FavoriteSnapshot>();
+            config.BlockedGalleryProfiles ??= new HashSet<string>();
+            config.SecretModeBlacklistedMods ??= new HashSet<string>();
+            config.FollowedPlayers ??= new HashSet<string>();
+            config.GearsetJobMapping ??= new Dictionary<uint, uint>();
+            config.BlockedCSUsers ??= new HashSet<string>();
+            config.SeenFeatures ??= new HashSet<string>();
 
             return config;
         }
@@ -169,11 +287,18 @@ namespace CharacterSelectPlugin
         }
         public enum GenderNeutralStyle
         {
-            Friend, 
-            HonoredOne, 
-            Traveler, 
-            Adventurer, 
-            Custom  
+            Friend,
+            HonoredOne,
+            Traveler,
+            Adventurer,
+            Custom
+        }
+
+        public enum RevealNamesKeyOption
+        {
+            Alt,
+            Ctrl,
+            Shift
         }
 
         public string GetGenderNeutralTitle()
@@ -204,7 +329,118 @@ namespace CharacterSelectPlugin
 
         public void Save()
         {
-            pluginInterface.SavePluginConfig(this);
+            try
+            {
+                // Ensure pluginInterface is set
+                if (pluginInterface == null)
+                {
+                    Plugin.Log.Warning("[Configuration.Save] pluginInterface is null, skipping save");
+                    return;
+                }
+
+                // Auto-save to active preset (with null checks)
+                if (SelectedTheme == ThemeSelection.Custom && !string.IsNullOrEmpty(ActivePresetName))
+                {
+                    // Ensure collections are initialized
+                    ThemePresets ??= new List<ThemePreset>();
+                    CustomTheme ??= new CustomThemeConfig();
+
+                    var activePreset = ThemePresets.FirstOrDefault(p => p.Name == ActivePresetName);
+                    if (activePreset != null)
+                    {
+                        activePreset.Config = CustomTheme.Clone();
+                    }
+                }
+
+                pluginInterface.SavePluginConfig(this);
+            }
+            catch (Exception ex)
+            {
+                // Log but don't crash - file permission issues (antivirus, cloud sync, etc) shouldn't crash the UI
+                Plugin.Log.Error($"[Configuration.Save] Failed to save configuration: {ex.Message}");
+            }
         }
+    }
+
+    /// <summary>
+    /// Custom theme colour and style overrides.
+    /// </summary>
+    [Serializable]
+    public class CustomThemeConfig
+    {
+        /// <summary>
+        /// Colour overrides (packed RGBA). Keys: "color.windowBg", "color.text", etc.
+        /// </summary>
+        public Dictionary<string, uint?> ColorOverrides { get; set; } = new();
+
+        /// <summary>
+        /// Background image path for main window.
+        /// </summary>
+        public string? BackgroundImagePath { get; set; }
+
+        /// <summary>Background image opacity (0.0-1.0).</summary>
+        public float BackgroundImageOpacity { get; set; } = 0.5f;
+
+        /// <summary>Background zoom (0.5-3.0, 1.0 = fit).</summary>
+        public float BackgroundImageZoom { get; set; } = 1.0f;
+
+        /// <summary>Background X offset (-1.0 to 1.0).</summary>
+        public float BackgroundImageOffsetX { get; set; } = 0f;
+
+        /// <summary>Background Y offset (-1.0 to 1.0).</summary>
+        public float BackgroundImageOffsetY { get; set; } = 0f;
+
+        /// <summary>Favourite icon ID (0 = default Star).</summary>
+        public int FavoriteIconId { get; set; } = 0;
+
+        /// <summary>Use nameplate colour for card glow instead of custom colour.</summary>
+        public bool UseNameplateColorForCardGlow { get; set; } = true;
+
+        /// <summary>Deep copy for preset saving.</summary>
+        public CustomThemeConfig Clone()
+        {
+            return new CustomThemeConfig
+            {
+                ColorOverrides = new Dictionary<string, uint?>(this.ColorOverrides),
+                BackgroundImagePath = this.BackgroundImagePath,
+                BackgroundImageOpacity = this.BackgroundImageOpacity,
+                BackgroundImageZoom = this.BackgroundImageZoom,
+                BackgroundImageOffsetX = this.BackgroundImageOffsetX,
+                BackgroundImageOffsetY = this.BackgroundImageOffsetY,
+                FavoriteIconId = this.FavoriteIconId,
+                UseNameplateColorForCardGlow = this.UseNameplateColorForCardGlow
+            };
+        }
+
+        /// <summary>Copy settings from another config.</summary>
+        public void CopyFrom(CustomThemeConfig other)
+        {
+            this.ColorOverrides = new Dictionary<string, uint?>(other.ColorOverrides);
+            this.BackgroundImagePath = other.BackgroundImagePath;
+            this.BackgroundImageOpacity = other.BackgroundImageOpacity;
+            this.BackgroundImageZoom = other.BackgroundImageZoom;
+            this.BackgroundImageOffsetX = other.BackgroundImageOffsetX;
+            this.BackgroundImageOffsetY = other.BackgroundImageOffsetY;
+            this.FavoriteIconId = other.FavoriteIconId;
+            this.UseNameplateColorForCardGlow = other.UseNameplateColorForCardGlow;
+        }
+    }
+
+    /// <summary>Saved theme preset.</summary>
+    [Serializable]
+    public class ThemePreset
+    {
+        public string Name { get; set; } = "New Preset";
+        public CustomThemeConfig Config { get; set; } = new();
+    }
+
+    /// <summary>Versioned feature keys for new-badge tracking.</summary>
+    public static class FeatureKeys
+    {
+        public const string CustomTheme = "CustomTheme_v2.1";
+        public const string NameSync = "NameSync_v2.1";
+        public const string ExpandedRPProfile = "ExpandedRPProfile_v2.1";
+        public const string JobAssignments = "JobAssignments_v2.1";
+        public const string Honorific = "Honorific_v2.1";
     }
 }

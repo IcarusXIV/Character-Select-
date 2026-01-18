@@ -87,12 +87,58 @@ namespace CharacterSelectPlugin.Managers
 
             if (!string.IsNullOrWhiteSpace(name))
             {
-                args.AddMenuItem(new MenuItem
+                var physicalName = $"{name}@{worldName}";
+
+                // View RP Profile (Priority 0 = top of plugin items, after native)
+                if (plugin.Configuration.ShowViewRPContextMenu)
                 {
-                    Name = "View RP Profile",
-                    OnClicked = _ => Task.Run(() => plugin.TryRequestRPProfile($"{name}@{worldName}")),
-                    IsEnabled = true
-                });
+                    args.AddMenuItem(new MenuItem
+                    {
+                        Name = "View RP Profile",
+                        Priority = 0,
+                        PrefixChar = 'C',
+                        PrefixColor = 37,
+                        OnClicked = _ => Task.Run(() => plugin.TryRequestRPProfile(physicalName)),
+                        IsEnabled = true
+                    });
+                }
+
+                // Get CS+ name from cache (if any)
+                var csEntry = plugin.SharedNameManager?.GetCachedName(physicalName);
+                var csName = csEntry?.CSName;
+
+                // Only show Block/Report options if they have a CS+ name
+                if (!string.IsNullOrEmpty(csName))
+                {
+                    // Block CS+ User (only show if not already blocked)
+                    if (plugin.Configuration.ShowBlockUserContextMenu &&
+                        !plugin.Configuration.BlockedCSUsers.Contains(physicalName))
+                    {
+                        args.AddMenuItem(new MenuItem
+                        {
+                            Name = "Block CS+ User",
+                            Priority = 0,
+                            PrefixChar = 'C',
+                            PrefixColor = 37,
+                            OnClicked = _ => BlockUser(physicalName, csName),
+                            IsEnabled = true
+                        });
+                    }
+
+                    // Report CS+ Name
+                    if (plugin.Configuration.ShowReportUserContextMenu)
+                    {
+                        args.AddMenuItem(new MenuItem
+                        {
+                            Name = "Report CS+ Name",
+                            Priority = 0,
+                            PrefixChar = 'C',
+                            PrefixColor = 37,
+                            OnClicked = _ => plugin.OpenReportWindow(physicalName, csName),
+                            IsEnabled = true
+                        });
+                    }
+                }
             }
         }
 
@@ -111,12 +157,58 @@ namespace CharacterSelectPlugin.Managers
 
                     if (!string.IsNullOrWhiteSpace(characterName) && !string.IsNullOrWhiteSpace(worldName))
                     {
-                        args.AddMenuItem(new MenuItem
+                        var physicalName = $"{characterName}@{worldName}";
+
+                        // View RP Profile (Priority 0 = top of plugin items, after native)
+                        if (plugin.Configuration.ShowViewRPContextMenu)
                         {
-                            Name = "View RP Profile",
-                            OnClicked = _ => Task.Run(() => plugin.TryRequestRPProfile($"{characterName}@{worldName}")),
-                            IsEnabled = true
-                        });
+                            args.AddMenuItem(new MenuItem
+                            {
+                                Name = "View RP Profile",
+                                Priority = 0,
+                                PrefixChar = 'C',
+                                PrefixColor = 37,
+                                OnClicked = _ => Task.Run(() => plugin.TryRequestRPProfile(physicalName)),
+                                IsEnabled = true
+                            });
+                        }
+
+                        // Get CS+ name from cache (if any)
+                        var csEntry = plugin.SharedNameManager?.GetCachedName(physicalName);
+                        var csName = csEntry?.CSName;
+
+                        // Only show Block/Report options if they have a CS+ name
+                        if (!string.IsNullOrEmpty(csName))
+                        {
+                            // Block CS+ User (only show if not already blocked)
+                            if (plugin.Configuration.ShowBlockUserContextMenu &&
+                                !plugin.Configuration.BlockedCSUsers.Contains(physicalName))
+                            {
+                                args.AddMenuItem(new MenuItem
+                                {
+                                    Name = "Block CS+ User",
+                                    Priority = 0,
+                                    PrefixChar = 'C',
+                                    PrefixColor = 37,
+                                    OnClicked = _ => BlockUser(physicalName, csName),
+                                    IsEnabled = true
+                                });
+                            }
+
+                            // Report CS+ Name
+                            if (plugin.Configuration.ShowReportUserContextMenu)
+                            {
+                                args.AddMenuItem(new MenuItem
+                                {
+                                    Name = "Report CS+ Name",
+                                    Priority = 0,
+                                    PrefixChar = 'C',
+                                    PrefixColor = 37,
+                                    OnClicked = _ => plugin.OpenReportWindow(physicalName, csName),
+                                    IsEnabled = true
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -124,6 +216,13 @@ namespace CharacterSelectPlugin.Managers
             {
                 Plugin.Log.Error($"Error handling game object context menu: {ex.Message}");
             }
+        }
+
+        private void BlockUser(string physicalName, string csName)
+        {
+            plugin.Configuration.BlockedCSUsers.Add(physicalName);
+            plugin.Configuration.Save();
+            Plugin.Log.Info($"Blocked CS+ user: {physicalName} (CS+ name: {csName})");
         }
     }
 }

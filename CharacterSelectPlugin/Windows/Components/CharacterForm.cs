@@ -8,7 +8,11 @@ using System.Windows.Forms;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
+using Dalamud.Interface.ImGuiSeStringRenderer;
 using CharacterSelectPlugin.Windows.Styles;
+using SeString = Dalamud.Game.Text.SeStringHandling.SeString;
+using SeStringBuilder = Lumina.Text.SeStringBuilder;
+using DalamudSeStringBuilder = Dalamud.Game.Text.SeStringHandling.SeStringBuilder;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
@@ -26,6 +30,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         // Edit fields
         private string editedCharacterName = "";
+        private string originalCharacterName = ""; // Track original name for warning resolution
         private string editedCharacterMacros = "";
         private string? editedCharacterImagePath = null;
         private string nameValidationError = "";
@@ -36,6 +41,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterTag = "";
         private string editedCharacterAutomation = "";
         private string editedCharacterMoodlePreset = "";
+        private int? editedCharacterGearset = null;
 
         // Honorific fields
         private string editedCharacterHonorificTitle = "";
@@ -43,6 +49,8 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterHonorificSuffix = "Suffix";
         private Vector3 editedCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
         private Vector3 editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+        private int? editedCharacterHonorificGradientSet = null;
+        private string? editedCharacterHonorificAnimationStyle = null;
 
         // Temp fields for live updates
         private string tempHonorificTitle = "";
@@ -50,7 +58,67 @@ namespace CharacterSelectPlugin.Windows.Components
         private string tempHonorificSuffix = "Suffix";
         private Vector3 tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
         private Vector3 tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+        private int? tempHonorificGradientSet = null;
+        private string? tempHonorificAnimationStyle = null;
         private string tempMoodlePreset = "";
+
+        // Gradient preset names and data from Honorific (exact base64 encoded color arrays)
+        private static readonly string[] GradientPresetNames = new[]
+        {
+            "Pride Rainbow", "Transgender", "Lesbian", "Bisexual",
+            "Black & White", "Black & Red", "Black & Blue", "Black & Yellow",
+            "Black & Green", "Black & Pink", "Black & Cyan", "Cherry Blossom",
+            "Golden", "Pastel Rainbow", "Dark Rainbow", "Non-binary"
+        };
+
+        private static readonly string[] GradientPresetData = new[]
+        {
+            "5AMD6RsC7TMC8ksB92MB/HsA/5EA/6IA/7IA/8MA/9QA/+UA5+MEutAKjr0RYaoYNZYeCIMlAHlFAG9rAGaRAF23AFTdAkv9FkXnKj/RPjm8UjOmZi2QcymCcymCcymCcymCcymCcymCZi2QUjOmPjm8Kj/RFkXnAkv9AFTdAF23AGaRAG9rAHlFCIMlNZYeYaoYjr0RutAK5+ME/+UA/9QA/8MA/7IA/6IA/5EA/HsA92MB8ksB7TMC6RsC5AMD", // Pride Rainbow
+            "W876b8nygsXplsDhqbvYvbfQ0LLI5K2/9aq59rXC+MDL+cvU+tbd/OHm/ezv/vf4//z9/fH0/Obr+9zi+tHZ+MbQ97vH9rC+7qu72q/Ex7TMs7nUn77djMLleMftZcz2Zcz2eMftjMLln77ds7nUx7TM2q/E7qu99rC+97vH+MbQ+tHZ+9zi/Obr/fH0//z9/vf4/ezv/OHm+tbd+cvU+MDL9rXC9aq55K2/0LLIvbfQqbvYlsDhgsXpb8nyW876", // Transgender
+            "1S0A2lQT33ol46E46MdL7e5d8Opg9Nhe98Zc+rVZ/aNX/6Rm/7eG/8qm/93H//Hn/fj79Nnp67vY4p3G2n+10WKkzGCgxl2cwVuZvFmVtleRskqJrzqBrCp4qBpvpQpmpQpmqBpvrCp4rzqBskqJtleRvFmVwVuZxl2czGCg0WKk2oC1457H67zY9Nrp/fj7//Hn/93H/8qm/7eG/6Rm/aNX+rVZ98dc9Nhe8Opg7exd6MZK46A43nkl2lMT1S0A", // Lesbian
+            "1gJwzgx1xxZ6vyB/uCmDsDOIqT2NoUeSm0+Wm0+Wm0+Wm0+WlU6XgUuZbUibWUWeRkKgMj+iHjylCjmnCjmnHjylMj+iRkKgWUWebUibgUuZlU6Xm0+Wm0+Wm0+Wm0+WoUeSqT2NsDOIuCmDvyB/xxZ6zgx11gJw", // Bisexual
+            "////9/f37+/v5+fn39/f19fXzs7OxsbGvr6+tra2rq6upqamnp6elpaWjo6OhoaGfX19dXV1bW1tZWVlXV1dVVVVTU1NRUVFPT09NTU1LS0tJCQkHBwcFBQUDAwMBAQEBAQEDAwMFBQUHBwcJCQkLS0tNTU1PT09RUVFTU1NVVVVXV1dZWVlbW1tdXV1fX19hoaGjo6OlpaWnp6epqamrq6utra2vr6+xsbGzs7O19fX39/f5+fn7+/v9/f3////", // Black & White
+            "/wAA9QAA6wAA4QAA1wAAzAAAwgAAuAAArgAApAAAmgAAkAAAhgAAewAAcQAAZwAAXQAAUwAASQAAPwAANQAAKwAAIAAAFgAADAAAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAADAAAFgAAIAAAKgAANQAAPwAASQAAUwAAXQAAZwAAcQAAewAAhgAAkAAAmgAApAAArgAAuAAAwgAAzAAA1wAA4QAA6wAA9QAA/wAA", // Black & Red
+            "AAD/AAD1AADrAADhAADXAADMAADCAAC4AACuAACkAACaAACQAACGAAB7AABxAABnAABdAABTAABJAAA/AAA1AAArAAAgAAAWAAAMAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAMAAAWAAAgAAAqAAA1AAA/AABJAABTAABdAABnAABxAAB7AACGAACQAACaAACkAACuAAC4AADCAADMAADXAADhAADrAAD1AAD/", // Black & Blue
+            "//8A9fUA6+sA4eEA19cAzMwAwsIAuLgArq4ApKQAmpoAkJAAhoYAe3sAcXEAZ2cAXV0AU1MASUkAPz8ANTUAKysAICAAFhYADAwAAgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgIADAwAFhYAICAAKioANTUAPz8ASUkAU1MAXV0AZ2cAcXEAe3sAhoYAkJAAmpoApKQArq4AuLgAwsIAzMwA19cA4eEA6+sA9fUA//8A", // Black & Yellow
+            "AP8AAPUAAOsAAOEAANcAAMwAAMIAALgAAK4AAKQAAJoAAJAAAIYAAHsAAHEAAGcAAF0AAFMAAEkAAD8AADUAACsAACAAABYAAAwAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAwAABYAACAAACoAADUAAD8AAEkAAFMAAF0AAGcAAHEAAHsAAIYAAJAAAJoAAKQAAK4AALgAAMIAAMwAANcAAOEAAOsAAPUAAP8A", // Black & Green
+            "/wD/9QD16wDr4QDh1wDXzADMwgDCuAC4rgCupACkmgCakACQhgCGewB7cQBxZwBnXQBdUwBTSQBJPwA/NQA1KwArIAAgFgAWDAAMAgACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgACDAAMFgAWIAAgKgAqNQA1PwA/SQBJUwBTXQBdZwBncQBxewB7hgCGkACQmgCapACkrgCuuAC4wgDCzADM1wDX4QDh6wDr9QD1/wD/", // Black & Pink
+            "AP//APX1AOvrAOHhANfXAMzMAMLCALi4AK6uAKSkAJqaAJCQAIaGAHt7AHFxAGdnAF1dAFNTAElJAD8/ADU1ACsrACAgABYWAAwMAAICAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAICAAwMABYWACAgACoqADU1AD8/AElJAFNTAF1dAGdnAHFxAHt7AIaGAJCQAJqaAKSkAK6uALi4AMLCAMzMANfXAOHhAOvrAPX1AP//", // Black & Cyan
+            "7s7/7Mj36sPv573n5bje47LW4azO3qbG3KC+2pq32pW13pG84YzD5YjK6ITR7H/Y8Hvg83bm93Lt+m30/Wn5/Wf3+Wbt9GXj72Ta6mPQ5mLH4mK+3mG02mCq1l+h0l6Yzl2Oyl2GymCEzmaI0WyM1HOP13mT2n6X34Sb4oqf5ZCi6Jam65up76Gt8qex9a60+bS4/Lq8/r/A/cHF+8LK+sPQ+cXV98bb9sfg9Mjm88rs8svy8Mz378387s7/7s7/", // Cherry Blossom
+            "/5IA/5QE/5YI/5kL/5sP/50T/58X/6Eb/6Mf/6Yj/6gn/6or/6wv/68z/7E2/7M6/7Y+/7hC/7pG/71J/79N/8FR/8NV/8VZ/8dd/8ph/8xl/85p/9Jz/9mJ/+Cl/+a1/+uu/+2c/++L/+2D/+p+/+Z5/+N0/+Bw/9xr/9lm/9Vh/9Jc/89X/8tS/8hN/8VI/8FE/74//7s6/7c1/7Qx/7As/60n/6oi/6Yd/6MY/58T/5wO/5kK/5UF/5IA/5IA", // Golden
+            "/7y8/8K8/8i8/868/9S8/9q8/+G8/+e8/+28//O8//m8/v68+f+88/+87f+86P+84f+82/+81f+8z/+8yf+8w/+8vf+8vP/BvP/HvP/NvP/TvP/avP/gvP/mvP/svP/yvP/4vP//vPn/vPP/vOz/vOX/vN//vNj/vNL/vMz/vMX/vL//v7z/xrz/zLz/0rz/2rz/4Lz/5rz/7bz/87z/+rz//7z+/7z4/7zx/7zr/7zk/7ze/7zX/7zR/7zK/7y8", // Pastel Rainbow
+            "MgAAMgUAMgkAMg4AMhIAMhcAMhsAMiAAMiUAMioAMi4AMTIALTIAKDIAJDIAHzIAGjIAFTIAETIADDIABzIAAzIAADICADIGADILADIQADIUADIZADIeADIiADInADIrADIwAC8yACsyACYyACEyABwyABgyABMyAA0yAAkyAAQyAQEyBQAyCgAyDwAyEwAyGQAyHgAyIgAyJwAyLAAyMQAyMgAvMgAqMgAlMgAgMgAbMgAWMgASMgANMgAAMgAA", // Dark Rainbow
+            "//Qz//VK//Zg//h3//mO//qk//u7//3S//7o////9O366dr13sjv07Xqx6PlvJDgsX7apmvVm1nQik+5eUWiZzuLVjF0RShcNB5FIhQuEQoXAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEQoXIhQuNB5FRShcVjF0ZzuLeUWiik+5m1nQpmvVsX7avJDgx6Pl07Xq3sjv6dr19O36//////7o//3S//u7//qk//mO//h3//Zg//VK//Qz"  // Non-binary
+        };
+
+        // Decoded gradient color arrays (lazy initialized)
+        private static byte[][,]? _decodedGradients = null;
+        private static byte[][,] DecodedGradients
+        {
+            get
+            {
+                if (_decodedGradients == null)
+                {
+                    _decodedGradients = new byte[GradientPresetData.Length][,];
+                    for (int i = 0; i < GradientPresetData.Length; i++)
+                    {
+                        var arr = Convert.FromBase64String(GradientPresetData[i]);
+                        var arr2 = new byte[arr.Length / 3, 3];
+                        for (var j = 0; j < arr.Length; j += 3)
+                        {
+                            arr2[j / 3, 0] = arr[j];
+                            arr2[j / 3, 1] = arr[j + 1];
+                            arr2[j / 3, 2] = arr[j + 2];
+                        }
+                        _decodedGradients[i] = arr2;
+                    }
+                }
+                return _decodedGradients;
+            }
+        }
+
+        // Animation timer for preview
+        private static readonly System.Diagnostics.Stopwatch AnimationTimer = System.Diagnostics.Stopwatch.StartNew();
         private string advancedCharacterMacroText = "";
 
         public CharacterForm(Plugin plugin, UIStyles uiStyles)
@@ -294,7 +362,14 @@ namespace CharacterSelectPlugin.Windows.Components
             // Idle Pose
             DrawIdlePoseField(labelWidth, inputWidth, inputOffset, scale);
             ImGui.Separator();
-            
+
+            // Assigned Gearset (only if enabled)
+            if (plugin.Configuration.EnableGearsetAssignments)
+            {
+                DrawGearsetField(labelWidth, inputWidth, inputOffset, scale);
+                ImGui.Separator();
+            }
+
             // Mod Manager (Conflict Resolution)
             if (isSecretMode)
             {
@@ -551,14 +626,36 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.EndCombo();
             }
 
-            // Colour pickers
+            // Text colour picker
             ImGui.SameLine();
             ImGui.SetNextItemWidth(40 * scale);
             changed |= ImGui.ColorEdit3("##HonorificColor", ref tempHonorificColor, ImGuiColorEditFlags.NoInputs);
 
+            // Glow picker with gradient options (Honorific-style)
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(40 * scale);
-            changed |= ImGui.ColorEdit3("##HonorificGlow", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs);
+            changed |= DrawGlowPicker(scale);
+
+            // Tooltip
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.Text("\uf05a");
+            ImGui.PopFont();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(300 * scale);
+                ImGui.TextUnformatted("This will set a forced title when you switch to this character.\nThe dropdown selects if the title appears above (prefix) or below (suffix) your name in-game.\nClick the glow color box to access gradient presets.\nUse the Honorific plug-in's 'Clear' button if you need to remove it.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+
+            // Live preview to the right of tooltip
+            if (!string.IsNullOrWhiteSpace(tempHonorificTitle))
+            {
+                ImGui.SameLine(0, 4 * scale);
+                DrawHonorificPreview(scale);
+            }
 
             if (changed)
             {
@@ -585,20 +682,144 @@ namespace CharacterSelectPlugin.Windows.Components
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Draws a glow color picker with gradient options (Honorific-style)
+        /// </summary>
+        private bool DrawGlowPicker(float scale)
+        {
+            bool modified = false;
+            long animOffset = AnimationTimer.ElapsedMilliseconds;
+
+            // When a gradient is selected, show animated color; otherwise show solid glow
+            Vector3 displayColor;
+            if (tempHonorificGradientSet.HasValue)
+            {
+                displayColor = GetGradientPreviewColor(tempHonorificGradientSet.Value, animOffset);
+            }
+            else
+            {
+                displayColor = tempHonorificGlow;
+            }
+
+            // Use ColorButton to match the text color picker size exactly
+            if (ImGui.ColorButton("##GlowPickerBtn", new Vector4(displayColor, 1f), ImGuiColorEditFlags.NoTooltip))
+            {
+                ImGui.OpenPopup("##GlowPickerPopup");
+            }
 
             // Tooltip
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.Text("\uf05a");
-            ImGui.PopFont();
-
             if (ImGui.IsItemHovered())
             {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("This will set a forced title when you switch to this character.\nThe dropdown selects if the title appears above (prefix) or below (suffix) your name in-game.\nUse the Honorific plug-in's 'Clear' button if you need to remove it.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
+                if (tempHonorificGradientSet.HasValue)
+                    ImGui.SetTooltip($"{GradientPresetNames[tempHonorificGradientSet.Value]} ({tempHonorificAnimationStyle ?? "Wave"})");
+                else
+                    ImGui.SetTooltip("Glow (click for gradients)");
+            }
+
+            // The popup with gradient options
+            if (ImGui.BeginPopup("##GlowPickerPopup"))
+            {
+                float popupWidth = 200 * scale;
+
+                // Default Glow option with color picker
+                ImGui.Text("Solid Glow:");
+                ImGui.SameLine();
+                if (ImGui.ColorEdit3("##GlowColorPicker", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.NoLabel))
+                {
+                    tempHonorificGradientSet = null;
+                    tempHonorificAnimationStyle = null;
+                    modified = true;
+                }
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Use##UseGlow"))
+                {
+                    tempHonorificGradientSet = null;
+                    tempHonorificAnimationStyle = null;
+                    modified = true;
+                    ImGui.CloseCurrentPopup();
+                }
+
+                ImGui.Separator();
+                ImGui.Text("Animated Gradients:");
+
+                // Gate animated gradients behind supporter acknowledgment
+                if (plugin.Configuration.HasAcknowledgedHonorificSupport)
+                {
+                    // Tab bar for animation styles
+                    if (ImGui.BeginTabBar("##GradAnimTabs"))
+                    {
+                        foreach (var animStyle in new[] { "Wave", "Pulse", "Static" })
+                        {
+                            if (ImGui.BeginTabItem(animStyle))
+                            {
+                                // Compact child region for presets
+                                float childHeight = Math.Min(180 * scale, GradientPresetNames.Length * ImGui.GetTextLineHeightWithSpacing());
+                                if (ImGui.BeginChild($"##Presets{animStyle}", new Vector2(popupWidth, childHeight)))
+                                {
+                                    var drawList = ImGui.GetWindowDrawList();
+
+                                    for (int i = 0; i < GradientPresetNames.Length; i++)
+                                    {
+                                        bool isSelected = tempHonorificGradientSet == i && tempHonorificAnimationStyle == animStyle;
+
+                                        // Draw invisible selectable
+                                        var selectableSize = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeightWithSpacing());
+                                        var cursorPos = ImGui.GetCursorScreenPos();
+
+                                        if (ImGui.Selectable($"##Preset{animStyle}{i}", isSelected, ImGuiSelectableFlags.None, selectableSize))
+                                        {
+                                            tempHonorificGradientSet = i;
+                                            tempHonorificAnimationStyle = animStyle;
+                                            modified = true;
+                                            ImGui.CloseCurrentPopup();
+                                        }
+
+                                        // Draw the preset name with animated gradient effect on top
+                                        var textPos = cursorPos + ImGui.GetStyle().FramePadding;
+                                        DrawGradientTextForPicker(drawList, textPos, GradientPresetNames[i], i, animStyle);
+                                    }
+                                }
+                                ImGui.EndChild();
+                                ImGui.EndTabItem();
+                            }
+                        }
+                        ImGui.EndTabBar();
+                    }
+                }
+                else
+                {
+                    // Show message when supporter acknowledgment not enabled
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.65f, 1.0f));
+                    ImGui.TextWrapped("Enable in Settings > Visual Settings to use animated gradients.");
+                    ImGui.PopStyleColor();
+                }
+
+                ImGui.EndPopup();
+            }
+
+            return modified;
+        }
+
+        /// <summary>
+        /// Draws text with animated gradient for the picker preview
+        /// </summary>
+        private void DrawGradientTextForPicker(ImDrawListPtr drawList, Vector2 pos, string text, int gradientSet, string animStyle)
+        {
+            long animOffset = AnimationTimer.ElapsedMilliseconds;
+
+            float charX = pos.X;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                string charStr = c.ToString();
+
+                Vector3 charColor = GetGradientColor(gradientSet, i, animOffset, 5, animStyle);
+                uint colorU32 = ImGui.ColorConvertFloat4ToU32(new Vector4(charColor, 1f));
+
+                drawList.AddText(new Vector2(charX, pos.Y), colorU32, charStr);
+                charX += ImGui.CalcTextSize(charStr).X;
             }
         }
 
@@ -707,6 +928,84 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.BeginTooltip();
                 ImGui.PushTextWrapPos(300 * scale);
                 ImGui.TextUnformatted("Sets your character's idle pose (0–6).\nChoose 'None' if you don't want Character Select+ to change your idle.");
+                ImGui.PopTextWrapPos();
+                ImGui.EndTooltip();
+            }
+        }
+
+        private void DrawGearsetField(float labelWidth, float inputWidth, float inputOffset, float scale)
+        {
+            ImGui.SetCursorPosX(10 * scale);
+            ImGui.Text("Assigned Gearset");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(labelWidth + inputOffset);
+            ImGui.SetNextItemWidth(inputWidth);
+
+            // Get available gearsets
+            var gearsets = plugin.GetPlayerGearsets();
+
+            // Get current value
+            int? currentGearset = IsEditWindowOpen ? editedCharacterGearset : plugin.NewCharacterGearset;
+
+            // Build display text for current selection
+            string currentDisplay = "None";
+            if (currentGearset.HasValue)
+            {
+                var matchingGearset = gearsets.FirstOrDefault(g => g.Number == currentGearset.Value);
+                if (matchingGearset.Number > 0)
+                {
+                    currentDisplay = plugin.GetGearsetDisplayName(matchingGearset.Number, matchingGearset.JobId, matchingGearset.Name);
+                }
+                else
+                {
+                    currentDisplay = $"Gearset {currentGearset.Value}";
+                }
+            }
+
+            if (ImGui.BeginCombo("##AssignedGearset", currentDisplay))
+            {
+                // "None" option
+                if (ImGui.Selectable("None", !currentGearset.HasValue))
+                {
+                    if (IsEditWindowOpen)
+                        editedCharacterGearset = null;
+                    else
+                        plugin.NewCharacterGearset = null;
+                }
+                if (!currentGearset.HasValue)
+                    ImGui.SetItemDefaultFocus();
+
+                // Gearset options
+                foreach (var gearset in gearsets)
+                {
+                    string displayName = plugin.GetGearsetDisplayName(gearset.Number, gearset.JobId, gearset.Name);
+                    bool isSelected = currentGearset.HasValue && currentGearset.Value == gearset.Number;
+
+                    if (ImGui.Selectable(displayName, isSelected))
+                    {
+                        if (IsEditWindowOpen)
+                            editedCharacterGearset = gearset.Number;
+                        else
+                            plugin.NewCharacterGearset = gearset.Number;
+                    }
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+
+                ImGui.EndCombo();
+            }
+
+            // Tooltip
+            ImGui.SameLine();
+            ImGui.PushFont(UiBuilder.IconFont);
+            ImGui.TextUnformatted("\uf05a");
+            ImGui.PopFont();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.PushTextWrapPos(300 * scale);
+                ImGui.TextUnformatted("Automatically switch to this gearset when applying this character.\nChoose 'None' to not change gearsets.");
                 ImGui.PopTextWrapPos();
                 ImGui.EndTooltip();
             }
@@ -1086,8 +1385,16 @@ namespace CharacterSelectPlugin.Windows.Components
             if (clearIdx < 0)
             {
                 var insertPos = GetProperInsertPosition(lines, "/honorific force clear");
-                lines.Insert(insertPos, "/honorific force clear");
+                lines.Insert(insertPos, "/honorific force clear | silent");
                 clearIdx = insertPos;
+            }
+            else
+            {
+                // Update existing clear line to include silent
+                if (!lines[clearIdx].Contains("silent", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines[clearIdx] = "/honorific force clear | silent";
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(tempHonorificTitle))
@@ -1096,7 +1403,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 var g = tempHonorificGlow;
                 string colorHex = $"#{(int)(c.X * 255):X2}{(int)(c.Y * 255):X2}{(int)(c.Z * 255):X2}";
                 string glowHex = $"#{(int)(g.X * 255):X2}{(int)(g.Y * 255):X2}{(int)(g.Z * 255):X2}";
-                string setLine = $"/honorific force set {tempHonorificTitle} | {tempHonorificPrefix} | {colorHex} | {glowHex}";
+
+                string gradientPart = "";
+                if (tempHonorificGradientSet.HasValue && !string.IsNullOrEmpty(tempHonorificAnimationStyle))
+                {
+                    gradientPart = $" | +{tempHonorificGradientSet.Value}/{tempHonorificAnimationStyle}";
+                }
+
+                string setLine = $"/honorific force set {tempHonorificTitle} | {tempHonorificPrefix} | {colorHex} | {glowHex}{gradientPart} | silent";
 
                 var setIdx = lines.FindIndex(l =>
                     l.TrimStart().StartsWith("/honorific force set", StringComparison.OrdinalIgnoreCase));
@@ -1194,6 +1508,8 @@ namespace CharacterSelectPlugin.Windows.Components
                 editedCharacterHonorificSuffix = tempHonorificSuffix;
                 editedCharacterHonorificColor = tempHonorificColor;
                 editedCharacterHonorificGlow = tempHonorificGlow;
+                editedCharacterHonorificGradientSet = tempHonorificGradientSet;
+                editedCharacterHonorificAnimationStyle = tempHonorificAnimationStyle;
             }
             else
             {
@@ -1202,7 +1518,168 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.NewCharacterHonorificSuffix = tempHonorificSuffix;
                 plugin.NewCharacterHonorificColor = tempHonorificColor;
                 plugin.NewCharacterHonorificGlow = tempHonorificGlow;
+                plugin.NewCharacterHonorificGradientSet = tempHonorificGradientSet;
+                plugin.NewCharacterHonorificAnimationStyle = tempHonorificAnimationStyle;
             }
+        }
+
+        /// <summary>
+        /// Draws an animated preview of the Honorific title with the current settings in a dark container
+        /// </summary>
+        private void DrawHonorificPreview(float scale)
+        {
+            if (string.IsNullOrWhiteSpace(tempHonorificTitle))
+                return;
+
+            var textSize = ImGui.CalcTextSize(tempHonorificTitle);
+            var padding = new Vector2(8 * scale, 4 * scale);
+            var boxSize = textSize + padding * 2;
+
+            // Draw dark background box
+            var drawList = ImGui.GetWindowDrawList();
+            var boxStart = ImGui.GetCursorScreenPos();
+            var boxEnd = boxStart + boxSize;
+
+            // Dark background with slight border
+            drawList.AddRectFilled(boxStart, boxEnd, ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 1f)), 4f);
+            drawList.AddRect(boxStart, boxEnd, ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.3f, 0.3f, 1f)), 4f);
+
+            // Text position inside the box
+            var textPos = boxStart + padding;
+
+            // Build SeString with proper color and glow
+            SeString seString;
+            if (tempHonorificGradientSet.HasValue)
+            {
+                // For gradients, build per-character SeString with animated colors
+                seString = BuildGradientSeString(tempHonorificTitle, tempHonorificGradientSet.Value,
+                    tempHonorificAnimationStyle ?? "Wave", tempHonorificColor);
+            }
+            else
+            {
+                // Build SeString with solid color and glow
+                seString = BuildColoredSeString(tempHonorificTitle, tempHonorificColor, tempHonorificGlow);
+            }
+
+            // Render using Dalamud's SeString renderer for smooth text
+            ImGuiHelpers.SeStringWrapped(seString.Encode(), new SeStringDrawParams
+            {
+                Color = 0xFFFFFFFF,
+                WrapWidth = float.MaxValue,
+                TargetDrawList = drawList,
+                Font = UiBuilder.DefaultFont,
+                FontSize = UiBuilder.DefaultFontSizePx,
+                ScreenOffset = textPos
+            });
+
+            // Reserve space for the box
+            ImGui.Dummy(boxSize);
+        }
+
+        /// <summary>
+        /// Builds an SeString with solid color and glow effect
+        /// </summary>
+        private SeString BuildColoredSeString(string text, Vector3 color, Vector3 glow)
+        {
+            var builder = new SeStringBuilder();
+
+            // Add text color
+            builder.PushColorRgba(new Vector4(color, 1f));
+
+            // Add edge/glow color
+            builder.PushEdgeColorRgba(new Vector4(glow, 1f));
+
+            builder.Append(text);
+
+            builder.PopEdgeColor();
+            builder.PopColor();
+
+            return SeString.Parse(builder.GetViewAsSpan());
+        }
+
+        /// <summary>
+        /// Builds an SeString with animated gradient glow effect
+        /// </summary>
+        private SeString BuildGradientSeString(string text, int gradientSet, string animStyle, Vector3 textColor)
+        {
+            var builder = new SeStringBuilder();
+            long animOffset = AnimationTimer.ElapsedMilliseconds;
+
+            // Add base text color
+            builder.PushColorRgba(new Vector4(textColor, 1f));
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                // Calculate gradient color for this character
+                Vector3 glowColor = GetGradientColor(gradientSet, i, animOffset, 5, animStyle);
+
+                // Push edge color for this character
+                builder.PushEdgeColorRgba(new Vector4(glowColor, 1f));
+                builder.Append(text[i].ToString());
+                builder.PopEdgeColor();
+            }
+
+            builder.PopColor();
+
+            return SeString.Parse(builder.GetViewAsSpan());
+        }
+
+        /// <summary>
+        /// Gets a color from the gradient using Honorific's exact algorithm
+        /// </summary>
+        private Vector3 GetGradientColor(int gradientSet, int charIndex, long rawMilliseconds, int throttle, string animStyle)
+        {
+            if (gradientSet < 0 || gradientSet >= DecodedGradients.Length)
+                return new Vector3(1f, 1f, 1f);
+
+            var colors = DecodedGradients[gradientSet];
+            var colorCount = colors.GetLength(0);
+
+            // Honorific's exact timing: divide by 15 first, then by throttle
+            var animationOffset = rawMilliseconds / 15;
+
+            int index;
+            if (animStyle == "Pulse")
+            {
+                // Pulse: whole text uses same color (charIndex multiplier = 0)
+                index = (int)((animationOffset / throttle) % colorCount);
+            }
+            else if (animStyle == "Static")
+            {
+                // Static: spread gradient across text length, no animation
+                index = (int)Math.Round(charIndex / (float)Math.Max(1, 16) * colorCount) % colorCount;
+            }
+            else // Wave
+            {
+                // Wave: position based on character index + time (charIndex multiplier = 1)
+                index = (int)((animationOffset / throttle + charIndex) % colorCount);
+            }
+
+            return new Vector3(
+                colors[index, 0] / 255f,
+                colors[index, 1] / 255f,
+                colors[index, 2] / 255f
+            );
+        }
+
+        /// <summary>
+        /// Gets a representative color from a gradient preset (for button preview)
+        /// </summary>
+        private Vector3 GetGradientPreviewColor(int preset, long rawMilliseconds)
+        {
+            if (preset < 0 || preset >= DecodedGradients.Length)
+                return new Vector3(1f, 1f, 1f);
+
+            var colors = DecodedGradients[preset];
+            var colorCount = colors.GetLength(0);
+            // Match Honorific timing: /15 then /5 (throttle)
+            var index = (int)((rawMilliseconds / 15 / 5) % colorCount);
+
+            return new Vector3(
+                colors[index, 0] / 255f,
+                colors[index, 1] / 255f,
+                colors[index, 2] / 255f
+            );
         }
         private string PatchMacroLine(string existing, string prefix, string replacement)
         {
@@ -1308,12 +1785,21 @@ namespace CharacterSelectPlugin.Windows.Components
             if (!string.IsNullOrWhiteSpace(customize))
                 macro += $"/customize profile enable <me>, {customize}\n";
 
-            macro += "/honorific force clear\n";
+            macro += "/honorific force clear | silent\n";
             if (!string.IsNullOrWhiteSpace(honorificTitle))
             {
                 string colorHex = $"#{(int)(honorificColor.X * 255):X2}{(int)(honorificColor.Y * 255):X2}{(int)(honorificColor.Z * 255):X2}";
                 string glowHex = $"#{(int)(honorificGlow.X * 255):X2}{(int)(honorificGlow.Y * 255):X2}{(int)(honorificGlow.Z * 255):X2}";
-                macro += $"/honorific force set {honorificTitle} | {honorificPrefix} | {colorHex} | {glowHex}\n";
+                int? gradientSet = IsEditWindowOpen ? editedCharacterHonorificGradientSet : plugin.NewCharacterHonorificGradientSet;
+                string? animStyle = IsEditWindowOpen ? editedCharacterHonorificAnimationStyle : plugin.NewCharacterHonorificAnimationStyle;
+
+                string gradientPart = "";
+                if (gradientSet.HasValue && !string.IsNullOrEmpty(animStyle))
+                {
+                    gradientPart = $" | +{gradientSet.Value}/{animStyle}";
+                }
+
+                macro += $"/honorific force set {honorificTitle} | {honorificPrefix} | {colorHex} | {glowHex}{gradientPart} | silent\n";
             }
 
             macro += "/moodle remove self preset all\n";
@@ -1337,6 +1823,8 @@ namespace CharacterSelectPlugin.Windows.Components
             string honorPref = IsEditWindowOpen ? editedCharacterHonorificPrefix : plugin.NewCharacterHonorificPrefix;
             Vector3 honorColor = IsEditWindowOpen ? editedCharacterHonorificColor : plugin.NewCharacterHonorificColor;
             Vector3 honorGlow = IsEditWindowOpen ? editedCharacterHonorificGlow : plugin.NewCharacterHonorificGlow;
+            int? honorGradientSet = IsEditWindowOpen ? editedCharacterHonorificGradientSet : plugin.NewCharacterHonorificGradientSet;
+            string? honorAnimStyle = IsEditWindowOpen ? editedCharacterHonorificAnimationStyle : plugin.NewCharacterHonorificAnimationStyle;
             string moodlePreset = IsEditWindowOpen ? editedCharacterMoodlePreset : plugin.NewCharacterMoodlePreset;
             int idlePose = IsEditWindowOpen
                                     ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
@@ -1363,12 +1851,19 @@ namespace CharacterSelectPlugin.Windows.Components
             if (!string.IsNullOrWhiteSpace(customize))
                 sb.AppendLine($"/customize profile enable <me>, {customize}");
 
-            sb.AppendLine("/honorific force clear");
+            sb.AppendLine("/honorific force clear | silent");
             if (!string.IsNullOrWhiteSpace(honorTitle))
             {
                 var colorHex = $"#{(int)(honorColor.X * 255):X2}{(int)(honorColor.Y * 255):X2}{(int)(honorColor.Z * 255):X2}";
                 var glowHex = $"#{(int)(honorGlow.X * 255):X2}{(int)(honorGlow.Y * 255):X2}{(int)(honorGlow.Z * 255):X2}";
-                sb.AppendLine($"/honorific force set {honorTitle} | {honorPref} | {colorHex} | {glowHex}");
+
+                string gradientPart = "";
+                if (honorGradientSet.HasValue && !string.IsNullOrEmpty(honorAnimStyle))
+                {
+                    gradientPart = $" | +{honorGradientSet.Value}/{honorAnimStyle}";
+                }
+
+                sb.AppendLine($"/honorific force set {honorTitle} | {honorPref} | {colorHex} | {glowHex}{gradientPart} | silent");
             }
 
             sb.AppendLine("/moodle remove self preset all");
@@ -1422,6 +1917,8 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.NewCharacterHonorificSuffix = "Suffix";
             plugin.NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             plugin.NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            plugin.NewCharacterHonorificGradientSet = null;
+            plugin.NewCharacterHonorificAnimationStyle = null;
             plugin.NewCharacterMoodlePreset = "";
             plugin.NewCharacterIdlePoseIndex = 7;
             plugin.NewCharacterIsAdvancedMode = false;
@@ -1431,6 +1928,8 @@ namespace CharacterSelectPlugin.Windows.Components
             tempHonorificSuffix = "Suffix";
             tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            tempHonorificGradientSet = null;
+            tempHonorificAnimationStyle = null;
             tempMoodlePreset = "";
 
             // Reset edit fields
@@ -1444,11 +1943,14 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterTag = "";
             editedCharacterAutomation = "";
             editedCharacterMoodlePreset = "";
+            editedCharacterGearset = null;
             editedCharacterHonorificTitle = "";
             editedCharacterHonorificPrefix = "Prefix";
             editedCharacterHonorificSuffix = "Suffix";
             editedCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            editedCharacterHonorificGradientSet = null;
+            editedCharacterHonorificAnimationStyle = null;
 
             advancedCharacterMacroText = "";
 
@@ -1480,7 +1982,10 @@ namespace CharacterSelectPlugin.Windows.Components
             character.HonorificSuffix = editedCharacterHonorificSuffix;
             character.HonorificColor = editedCharacterHonorificColor;
             character.HonorificGlow = editedCharacterHonorificGlow;
+            character.HonorificGradientSet = editedCharacterHonorificGradientSet;
+            character.HonorificAnimationStyle = editedCharacterHonorificAnimationStyle;
             character.MoodlePreset = editedCharacterMoodlePreset;
+            character.AssignedGearset = editedCharacterGearset;
 
             character.Macros = isAdvancedModeCharacter ? advancedCharacterMacroText : editedCharacterMacros;
 
@@ -1493,6 +1998,57 @@ namespace CharacterSelectPlugin.Windows.Components
             // and doesn't need to be copied here since it's already persisted to the character object
 
             plugin.SaveConfiguration();
+
+            // Check if name changed and user has an active warning
+            if (!string.IsNullOrEmpty(editedCharacterName) &&
+                editedCharacterName != originalCharacterName &&
+                plugin.ActiveNameWarning != null)
+            {
+                // Fire and forget - check name change for warning resolution
+                _ = CheckNameChangeForWarningAsync(editedCharacterName);
+            }
+        }
+
+        private async System.Threading.Tasks.Task CheckNameChangeForWarningAsync(string newName)
+        {
+            try
+            {
+                var result = await plugin.CheckNameChangeForWarning(newName);
+
+                if (result.HasWarning && !string.IsNullOrEmpty(result.Message))
+                {
+                    // Show feedback in chat
+                    Plugin.Framework.RunOnTick(() =>
+                    {
+                        if (result.Resolved)
+                        {
+                            // Green success message
+                            var msg = new DalamudSeStringBuilder()
+                                .AddText("[")
+                                .AddGreen("CS+", true)
+                                .AddText("] ")
+                                .AddGreen(result.Message, false)
+                                .Build();
+                            Plugin.ChatGui.Print(msg);
+                        }
+                        else if (result.PendingReview)
+                        {
+                            // Yellow pending message
+                            var msg = new DalamudSeStringBuilder()
+                                .AddText("[")
+                                .AddYellow("CS+", true)
+                                .AddText("] ")
+                                .AddYellow(result.Message, false)
+                                .Build();
+                            Plugin.ChatGui.Print(msg);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[CharacterForm] Error checking name change: {ex.Message}");
+            }
         }
 
         public void OpenEditCharacterWindow(int index)
@@ -1507,6 +2063,7 @@ namespace CharacterSelectPlugin.Windows.Components
             string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
 
             editedCharacterName = character.Name;
+            originalCharacterName = character.Name; // Store original for warning resolution check
             editedCharacterPenumbra = character.PenumbraCollection;
             editedCharacterGlamourer = character.GlamourerDesign;
             editedCharacterCustomize = character.CustomizeProfile ?? "";
@@ -1524,7 +2081,10 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterHonorificSuffix = character.HonorificSuffix ?? "Suffix";
             editedCharacterHonorificColor = character.HonorificColor;
             editedCharacterHonorificGlow = character.HonorificGlow;
+            editedCharacterHonorificGradientSet = character.HonorificGradientSet;
+            editedCharacterHonorificAnimationStyle = character.HonorificAnimationStyle;
             editedCharacterMoodlePreset = character.MoodlePreset ?? "";
+            editedCharacterGearset = character.AssignedGearset;
 
             string safeAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";
             editedCharacterAutomation = safeAutomation;
@@ -1535,6 +2095,8 @@ namespace CharacterSelectPlugin.Windows.Components
             tempHonorificSuffix = editedCharacterHonorificSuffix;
             tempHonorificColor = editedCharacterHonorificColor;
             tempHonorificGlow = editedCharacterHonorificGlow;
+            tempHonorificGradientSet = editedCharacterHonorificGradientSet;
+            tempHonorificAnimationStyle = editedCharacterHonorificAnimationStyle;
             tempMoodlePreset = editedCharacterMoodlePreset;
 
             if (isAdvancedModeCharacter)

@@ -29,6 +29,10 @@ using System.Threading;
 using System.Drawing.Imaging;
 using Dalamud.Game.Text.SeStringHandling;
 using CharacterSelectPlugin.Windows.Styles;
+using CharacterSelectPlugin.Windows.Components;
+using Dalamud.Interface.ManagedFontAtlas;
+using Dalamud.Interface;
+using Dalamud.Game.Gui.NamePlate;
 
 namespace CharacterSelectPlugin
 {
@@ -50,6 +54,8 @@ namespace CharacterSelectPlugin
         [PluginService] internal static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
         [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
+        [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
+        [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
 
         private static readonly string Version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "(Unknown Version)";
         public static readonly string CurrentPluginVersion = Version; // Match repo.json and .csproj version
@@ -63,10 +69,20 @@ namespace CharacterSelectPlugin
         public QuickSwitchWindow QuickSwitchWindow { get; set; } // Quick Switch Window
         public PatchNotesWindow PatchNotesWindow { get; private set; } = null!;
         public RPProfileWindow RPProfileEditor { get; private set; }
+        public RPProfileEditWindow RPProfileEditWindow { get; private set; }
         public RPProfileViewWindow RPProfileViewer { get; private set; }
         public GalleryWindow GalleryWindow { get; private set; } = null!;
         public TutorialManager TutorialManager { get; private set; } = null!;
         public SecretModeModWindow? SecretModeModWindow { get; set; } = null;
+        public ReportUserWindow? ReportUserWindow { get; private set; } = null;
+        public WarningModalWindow? WarningModalWindow { get; private set; } = null;
+
+        // Track active name warning for the current user (to detect when they change their name)
+        public NameWarning? ActiveNameWarning { get; set; } = null;
+
+        private List<RPProfileViewWindow> secondaryProfileWindows = new();
+        private int secondaryWindowCounter = 0;
+        private string? pendingLinkedProfileToOpen = null;
         public enum SortType { Manual, Favorites, Alphabetical, Recent, Oldest }
 
         public List<Character> Characters => Configuration.Characters;
@@ -88,7 +104,9 @@ namespace CharacterSelectPlugin
         public string NewCharacterHonorificPrefix { get; set; } = "";
         public string NewCharacterHonorificSuffix { get; set; } = "";
         public Vector3 NewCharacterHonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
-        public Vector3 NewCharacterHonorificGlow { get; set; } = new Vector3(0.0f, 0.0f, 0.0f); // Default to no glow
+        public Vector3 NewCharacterHonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f); // Default white
+        public int? NewCharacterHonorificGradientSet { get; set; } = null;
+        public string? NewCharacterHonorificAnimationStyle { get; set; } = null;
         public string NewCharacterMoodlePreset { get; set; } = "";
         public PoseManager PoseManager { get; private set; } = null!;
         public byte NewCharacterIdlePoseIndex { get; set; } = 0;
@@ -99,6 +117,9 @@ namespace CharacterSelectPlugin
         // Penumbra Integration
         public PenumbraIntegration PenumbraIntegration { get; private set; } = null!;
         public UserOverrideManager UserOverrideManager { get; private set; } = null!;
+
+        // Shared Name Manager for other CS+ users' names
+        public SharedNameManager? SharedNameManager { get; private set; }
         
         // IPC Provider for other plugins
         private IPCProvider? ipcProvider;
@@ -110,7 +131,10 @@ namespace CharacterSelectPlugin
         // Startup coordination between AutoLoad-LastUsed and DeferredStartup
         private bool characterAlreadyAppliedOnStartup = false;
         private bool autoLoadAlreadyRanThisStartup = false;
-        
+
+        // Feature Discovery System - show chat notification after first login post-update
+        private bool pendingVersionUpdateNotification = false;
+
         // Track when we've applied an assignment for this specific character
         private string? assignmentAppliedForCharacter = null;
         
@@ -132,6 +156,7 @@ namespace CharacterSelectPlugin
         public string NewCharacterTag { get; set; } = "";
         public List<string> KnownTags => Configuration.KnownTags;
         public string NewCharacterAutomation { get; set; } = "";
+        public int? NewCharacterGearset { get; set; } = null;
         private int framesSinceLogin = 0;
         internal byte lastPoseAppliedByPlugin = 255;
         internal byte lastIdlePoseForcedByPlugin = 255;
@@ -147,6 +172,10 @@ namespace CharacterSelectPlugin
         internal int suppressGroundSitSaveForFrames = 0;
         internal int suppressDozeSaveForFrames = 0;
         private DateTime pluginInitTime = DateTime.Now;
+        
+        // Custom font handles for RP Profile View
+        public IFontHandle NameFont { get; private set; }
+        public IFontHandle HeaderFont { get; private set; }
         private string currentSessionId = "";
         private static string CurrentSessionId = Guid.NewGuid().ToString();
         private static string SessionPath => Path.Combine(PluginInterface.ConfigDirectory.FullName, "last_session.txt");
@@ -236,6 +265,7 @@ namespace CharacterSelectPlugin
         public Vector2? GalleryButtonPos { get; set; }
         public Vector2? GalleryButtonSize { get; set; }
         private NPCDialogueProcessor? dialogueProcessor;
+        private PlayerNameProcessor? playerNameProcessor;
         public bool NewCharacterIsAdvancedMode { get; set; } = false;
 
         public unsafe Plugin(IGameInteropProvider gameInteropProvider)
@@ -300,8 +330,16 @@ namespace CharacterSelectPlugin
                     }
                 }
             }
+
+            // One-time migration: Add | silent to honorific commands
+            if (!Configuration.HasMigratedHonorificSilent)
+            {
+                MigrateHonorificSilent();
+                Configuration.HasMigratedHonorificSilent = true;
+            }
+
             Configuration.Save();
-            
+
             // Cache initialization will happen after UserOverrideManager is ready
 
             try
@@ -323,7 +361,10 @@ namespace CharacterSelectPlugin
             // Initialize Penumbra integration services
             PenumbraIntegration = new PenumbraIntegration(PluginInterface, Log);
             UserOverrideManager = new UserOverrideManager(PluginInterface);
-            
+
+            // Initialize shared name manager for other CS+ users' names
+            SharedNameManager = new SharedNameManager(this, Log);
+
             // Initialize mod categorization cache now that UserOverrideManager is ready
             if (Configuration.EnableConflictResolution)
             {
@@ -339,8 +380,15 @@ namespace CharacterSelectPlugin
             RPProfileEditor = new RPProfileWindow(this);
             WindowSystem.AddWindow(RPProfileEditor);
 
+            RPProfileEditWindow = new RPProfileEditWindow(this);
+            WindowSystem.AddWindow(RPProfileEditWindow);
+
             RPProfileViewer = new RPProfileViewWindow(this);
             WindowSystem.AddWindow(RPProfileViewer);
+
+            // Set up callbacks for opening linked profiles from Connections
+            ContentBoxRenderer.OnOpenLinkedProfile = OpenLinkedProfile;
+            ContentBoxRenderer.OnOpenLinkedProfileExternal = OpenLinkedProfileFromServer;
 
             GalleryWindow = new GalleryWindow(this);
             WindowSystem.AddWindow(GalleryWindow);
@@ -349,7 +397,15 @@ namespace CharacterSelectPlugin
             // Initialize SecretModeModWindow (Mod Manager)
             SecretModeModWindow = new SecretModeModWindow(this);
             WindowSystem.AddWindow(SecretModeModWindow);
-            
+
+            // Initialize ReportUserWindow
+            ReportUserWindow = new ReportUserWindow(this);
+            WindowSystem.AddWindow(ReportUserWindow);
+
+            // Initialize WarningModalWindow
+            WarningModalWindow = new WarningModalWindow(this);
+            WindowSystem.AddWindow(WarningModalWindow);
+
             // Initialize IPC provider for other plugins
             ipcProvider = new IPCProvider(this, PluginInterface);
             
@@ -374,12 +430,32 @@ namespace CharacterSelectPlugin
 
             // Patch Notes
             PatchNotesWindow = new PatchNotesWindow(this);
+            bool patchNotesWillShow = false;
             if (Configuration.LastSeenVersion != CurrentPluginVersion)
             {
-                PatchNotesWindow.OpenMainMenuOnClose = true;
-                PatchNotesWindow.IsOpen = true;
+                // Set flag to show chat notification on first login
+                pendingVersionUpdateNotification = true;
+
+                // Show patch notes window (respecting user preference)
+                if (Configuration.ShowPatchNotesOnStartup)
+                {
+                    PatchNotesWindow.OpenMainMenuOnClose = true;
+                    PatchNotesWindow.IsOpen = true;
+                    patchNotesWillShow = true;
+                }
+
+                // Update the last seen version
+                Configuration.LastSeenVersion = CurrentPluginVersion;
+                Configuration.Save();
             }
-            // PatchNotesWindow.IsOpen = true;
+
+            // Restore Main Window state if enabled and patch notes isn't showing
+            // (Patch Notes will open Main Window when closed via OpenMainMenuOnClose)
+            if (Configuration.RememberMainWindowState && Configuration.IsMainWindowOpen && !patchNotesWillShow)
+            {
+                MainWindow.IsOpen = true;
+            }
+
             // Tutorial system - show on first launch
 
             //if (!Configuration.HasSeenTutorial && Configuration.ShowTutorialOnStartup)
@@ -410,6 +486,23 @@ namespace CharacterSelectPlugin
             PluginInterface.UiBuilder.Draw += DrawUI;
             PluginInterface.UiBuilder.OpenConfigUi += ToggleQuickSwitchUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
+            
+            // Initialize custom fonts for RP Profile View
+            NameFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
+            {
+                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansJpMedium, new()
+                {
+                    SizePx = 30  // Large size for character names
+                }));
+            });
+            
+            HeaderFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
+            {
+                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansJpMedium, new()
+                {
+                    SizePx = 26  // Larger size for card headers
+                }));
+            });
             ClientState.Login += OnLogin;
             Framework.Update += FrameworkUpdate;
             string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
@@ -438,7 +531,7 @@ namespace CharacterSelectPlugin
 
             CommandManager.AddHandler("/select", new CommandInfo(OnSelectCommand)
             {
-                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, /select random for random selection, /select jobchange on|off to toggle reapply on job change, /select mods to open Mod Manager, or /select save [CR] to save current look as design."
+                HelpMessage = "Use /select <Character Name> [Design Name] to apply a profile, /select random for random selection, /select jobchange on|off to toggle reapply on job change, /select idle to check current idle pose, /select mods to open Mod Manager, or /select save [CR] to save current look as design."
             });
             // Idles
             CommandManager.AddHandler("/sidle", new CommandInfo((_, args) =>
@@ -454,7 +547,7 @@ namespace CharacterSelectPlugin
                 }
             })
             {
-                HelpMessage = "Set your character’s Idle pose to a specific index."
+                HelpMessage = "Set your character's Idle pose to a specific index."
             });
             // Chair Sits
             CommandManager.AddHandler("/ssit", new CommandInfo((_, args) =>
@@ -509,6 +602,7 @@ namespace CharacterSelectPlugin
             {
                 HelpMessage = "View the RP profile of a character (if shared). Usage: /viewrp self | t | First Last@World"
             });
+
             ClientState.Login += () =>
             {
                 lastAppliedCharacter = null;
@@ -544,6 +638,21 @@ namespace CharacterSelectPlugin
                 Log.Error($"Failed to initialize dialogue processor: {ex.Message}");
             }
 
+            try
+            {
+                playerNameProcessor = new PlayerNameProcessor(
+                    this,
+                    NamePlateGui,
+                    ChatGui,
+                    ClientState,
+                    AddonLifecycle,
+                    Log
+                );
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to initialize player name processor: {ex.Message}");
+            }
 
         }
         public static HttpClient CreateAuthenticatedHttpClient()
@@ -576,8 +685,181 @@ namespace CharacterSelectPlugin
                 Configuration.Save();
                 Plugin.Log.Debug($"[JobSwitch] Primed LastKnownJobId on login = {id}");
             }
+
+            // Show version update notification in chat (Feature Discovery System)
+            if (pendingVersionUpdateNotification)
+            {
+                pendingVersionUpdateNotification = false;
+                ChatGui.Print($"[CS+] Updated to v{CurrentPluginVersion}! Type /select whatsnew to see new features.");
+                Plugin.Log.Info($"[VersionUpdate] Showed update notification for v{CurrentPluginVersion}");
+            }
+
+            // Check for moderation warnings after a short delay to ensure LocalPlayer is ready
+            Task.Run(async () =>
+            {
+                await Task.Delay(3000); // Wait 3 seconds for character to fully load
+                await CheckForModerationWarnings();
+            });
         }
 
+        /// <summary>
+        /// Checks the server for any moderation warnings for the current player.
+        /// Shows warning modal if there are unacknowledged warnings.
+        /// </summary>
+        private async Task CheckForModerationWarnings()
+        {
+            try
+            {
+                if (ClientState.LocalPlayer == null) return;
+
+                var playerName = ClientState.LocalPlayer.Name.TextValue;
+                var world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                var physicalName = $"{playerName}@{world}";
+
+                var encodedName = Uri.EscapeDataString(physicalName);
+                var url = $"https://character-select-profile-server-production.up.railway.app/user/warnings/{encodedName}";
+
+                using var httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+                var response = await httpClient.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Plugin.Log.Debug($"[WarningCheck] Server returned {response.StatusCode}");
+                    return;
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                var warningsResponse = System.Text.Json.JsonSerializer.Deserialize<UserWarningsResponse>(json, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (warningsResponse == null) return;
+
+                // Store active warning for name change detection
+                if (warningsResponse.ActiveWarning != null)
+                {
+                    ActiveNameWarning = warningsResponse.ActiveWarning;
+                    Plugin.Log.Debug($"[WarningCheck] Active warning stored: {ActiveNameWarning.Id} (Strike {ActiveNameWarning.StrikeNumber})");
+                }
+                else
+                {
+                    ActiveNameWarning = null;
+                }
+
+                if (warningsResponse.HasUnacknowledgedWarning && warningsResponse.UnacknowledgedWarnings?.Length > 0)
+                {
+                    var warning = warningsResponse.UnacknowledgedWarnings[0];
+                    Plugin.Log.Info($"[WarningCheck] Found unacknowledged warning: {warning.Id} (Strike {warning.StrikeNumber})");
+
+                    // Also store as active warning
+                    ActiveNameWarning = warning;
+
+                    // Show the warning modal on the main thread
+                    Framework.RunOnTick(() =>
+                    {
+                        WarningModalWindow?.ShowWarning(warning);
+                    });
+                }
+                else
+                {
+                    Plugin.Log.Debug($"[WarningCheck] No unacknowledged warnings for {physicalName}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Debug($"[WarningCheck] Error checking for warnings: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Called when a user changes their CS+ character name.
+        /// Checks if they have an active warning and notifies the server of the name change.
+        /// </summary>
+        public async Task<NameChangeResult> CheckNameChangeForWarning(string newCSName)
+        {
+            // If no active warning, no need to check
+            if (ActiveNameWarning == null)
+            {
+                return new NameChangeResult { HasWarning = false };
+            }
+
+            try
+            {
+                if (ClientState.LocalPlayer == null)
+                {
+                    return new NameChangeResult { HasWarning = false };
+                }
+
+                var playerName = ClientState.LocalPlayer.Name.TextValue;
+                var world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                var physicalName = $"{playerName}@{world}";
+
+                var url = "https://character-select-profile-server-production.up.railway.app/user/check-name-change";
+
+                using var httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(10);
+
+                var requestBody = new
+                {
+                    physicalName = physicalName,
+                    newCSName = newCSName
+                };
+
+                var json = System.Text.Json.JsonSerializer.Serialize(requestBody);
+                var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+                var response = await httpClient.PostAsync(url, content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Plugin.Log.Error($"[NameChange] Server returned {response.StatusCode}");
+                    return new NameChangeResult { HasWarning = true, Error = "Server error" };
+                }
+
+                var responseJson = await response.Content.ReadAsStringAsync();
+                var result = System.Text.Json.JsonSerializer.Deserialize<NameChangeResponse>(responseJson, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (result == null)
+                {
+                    return new NameChangeResult { HasWarning = true, Error = "Invalid response" };
+                }
+
+                // Update local state based on result
+                if (result.Resolved)
+                {
+                    ActiveNameWarning = null;
+                    Plugin.Log.Info($"[NameChange] Warning resolved - name is now visible");
+                    return new NameChangeResult
+                    {
+                        HasWarning = true,
+                        Resolved = true,
+                        Message = "Your CS+ name is now visible to other players!"
+                    };
+                }
+                else if (result.NeedsReview)
+                {
+                    Plugin.Log.Info($"[NameChange] Name change submitted for review");
+                    return new NameChangeResult
+                    {
+                        HasWarning = true,
+                        PendingReview = true,
+                        Message = "Your new name has been submitted for review. It will become visible once approved."
+                    };
+                }
+
+                return new NameChangeResult { HasWarning = true };
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[NameChange] Error: {ex.Message}");
+                return new NameChangeResult { HasWarning = true, Error = ex.Message };
+            }
+        }
 
         private unsafe void ApplyStoredPoses()
         {
@@ -708,50 +990,16 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug($"[SetActiveCharacter] Updated LastUsedCharacterKey = {fullKey}");
                 Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {character.LastInGameName} for profile {character.Name}");
 
-                bool shouldUploadToGallery = ShouldUploadToGallery(character, fullKey);
-
-                if (shouldUploadToGallery)
+                if (ShouldUploadToServer(character))
                 {
-                    var profileToSend = new RPProfile
-                    {
-                        Pronouns = character.RPProfile?.Pronouns,
-                        Gender = character.RPProfile?.Gender,
-                        Age = character.RPProfile?.Age,
-                        Race = character.RPProfile?.Race,
-                        Orientation = character.RPProfile?.Orientation,
-                        Relationship = character.RPProfile?.Relationship,
-                        Occupation = character.RPProfile?.Occupation,
-                        Abilities = character.RPProfile?.Abilities,
-                        Bio = character.RPProfile?.Bio,
-                        Tags = character.RPProfile?.Tags,
-                        CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-                            ? character.RPProfile.CustomImagePath
-                            : character.ImagePath,
-                        ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                        ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                        Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                        ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                        CharacterName = character.Name, // force correct name
-                        NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor, // force correct colour
-                        GalleryStatus = character.GalleryStatus,
-                        Links = character.RPProfile?.Links,
-                        IsNSFW = character.RPProfile?.IsNSFW ?? false,
-
-                        // Include background and effects data
-                        BackgroundImage = character.RPProfile?.BackgroundImage ?? character.BackgroundImage,
-                        Effects = character.RPProfile?.Effects ?? character.Effects ?? new ProfileEffects(),
-
-                        // Include animation theme for backwards compatibility
-                        AnimationTheme = character.RPProfile?.AnimationTheme ?? ProfileAnimationTheme.CircuitBoard,
-                        LastActiveTime = Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null
-                    };
-
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
-                    Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (main character: {fullKey})");
+                    var profileToSend = BuildProfileForUpload(character);
+                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                    Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
                 }
                 else
                 {
-                    Plugin.Log.Info($"[ApplyProfile] ⚠ Skipped gallery upload for {character.Name} (not on main character or not public)");
+                    Plugin.Log.Info($"[ApplyProfile] ⚠ Skipped upload for {character.Name} (NeverShare)");
                 }
             }
             SaveConfiguration();
@@ -802,7 +1050,27 @@ namespace CharacterSelectPlugin
                     Log.Warning($"Failed to switch Penumbra UI collection to: {character.PenumbraCollection}");
                 }
             }
-            
+
+            // Switch gearset if assigned (design-level overrides character-level)
+            if (Configuration.EnableGearsetAssignments)
+            {
+                int? effectiveGearset = null;
+                if (designIndex >= 0 && designIndex < character.Designs.Count)
+                {
+                    var design = character.Designs[designIndex];
+                    effectiveGearset = design.AssignedGearset ?? character.AssignedGearset;
+                }
+                else
+                {
+                    effectiveGearset = character.AssignedGearset;
+                }
+
+                if (effectiveGearset.HasValue)
+                {
+                    SwitchToGearset(effectiveGearset.Value);
+                }
+            }
+
             // Apply the character's macro
             ExecuteMacro(character.Macros, character, null);
             
@@ -877,8 +1145,26 @@ namespace CharacterSelectPlugin
                 }
             }
 
-            // Only apply idle pose if it's not "None"
-            if (isLoginComplete)
+            // Check if design has its own /sidle command - if so, skip character pose application
+            bool shouldApplyCharacterPose = true;
+
+            if (designIndex >= 0 && designIndex < character.Designs.Count)
+            {
+                var design = character.Designs[designIndex];
+                var macro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+
+                bool designHasSidle = !string.IsNullOrEmpty(macro) &&
+                    macro.Split('\n').Any(line => line.Trim().StartsWith("/sidle", StringComparison.OrdinalIgnoreCase));
+
+                if (designHasSidle)
+                {
+                    shouldApplyCharacterPose = false;
+                    Plugin.Log.Debug("[ApplyProfile] Skipping character idle - design contains /sidle command");
+                }
+            }
+
+            // Only apply idle pose if it's not "None" and design doesn't have its own /sidle
+            if (isLoginComplete && shouldApplyCharacterPose)
             {
                 // Apply poses immediately
                 if (character.IdlePoseIndex < 7)
@@ -893,43 +1179,64 @@ namespace CharacterSelectPlugin
                 }
                 PoseRestorer.RestorePosesFor(character);
             }
-            else
+            else if (!isLoginComplete)
             {
                 // Defer until login completes
                 activeCharacter = character;
                 shouldApplyPoses = true;
             }
             this.QuickSwitchWindow.UpdateSelectionFromCharacter(character);
+
+            // Refresh party list name replacement after character switch
+            playerNameProcessor?.RefreshPartyList();
+
             SaveConfiguration();
         }
 
-        private bool ShouldUploadToGallery(Character character, string currentPhysicalCharacter)
+        private bool ShouldUploadToServer(Character character)
         {
-            // Is there a main character set?
-            var userMain = Configuration.GalleryMainCharacter;
-            if (string.IsNullOrEmpty(userMain))
-            {
-                Plugin.Log.Debug($"[ShouldUpload] No main character set - not uploading {character.Name}");
-                return false;
-            }
-
-            // Are we currently on the main character?
-            if (currentPhysicalCharacter != userMain)
-            {
-                Plugin.Log.Debug($"[ShouldUpload] Current character '{currentPhysicalCharacter}' != main '{userMain}' - not uploading {character.Name}");
-                return false;
-            }
-
-            // Is this CS+ character set to public sharing?
             var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
-            if (sharing != ProfileSharing.ShowcasePublic)
+
+            // NeverShare = never upload to server
+            if (sharing == ProfileSharing.NeverShare)
             {
-                Plugin.Log.Debug($"[ShouldUpload] Character '{character.Name}' sharing is '{sharing}' (not public) - not uploading");
+                Plugin.Log.Debug($"[ShouldUpload] NeverShare - not uploading {character.Name}");
                 return false;
             }
 
-            Plugin.Log.Debug($"[ShouldUpload] ✓ All checks passed - will upload {character.Name} as {currentPhysicalCharacter}");
+            // AlwaysShare and ShowcasePublic both upload to server
+            // This allows /viewrp and name visibility to work for everyone
+            Plugin.Log.Debug($"[ShouldUpload] ✓ {sharing} - uploading {character.Name}");
             return true;
+        }
+
+        /// <summary>
+        /// Determines the effective sharing mode to send to server.
+        /// ShowcasePublic only gets sent as ShowcasePublic (appears in Gallery) when on Main Character.
+        /// Otherwise it's sent as AlwaysShare (visible via /viewrp but not in Gallery listing).
+        /// </summary>
+        private ProfileSharing GetEffectiveSharingForUpload(Character character, string currentPhysicalCharacter)
+        {
+            var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
+
+            // NeverShare and AlwaysShare are sent as-is
+            if (sharing != ProfileSharing.ShowcasePublic)
+                return sharing;
+
+            // ShowcasePublic: Only send as ShowcasePublic (gallery listing) if on Main Character
+            var userMain = Configuration.GalleryMainCharacter;
+            bool onMainCharacter = !string.IsNullOrEmpty(userMain) && currentPhysicalCharacter == userMain;
+
+            if (onMainCharacter)
+            {
+                Plugin.Log.Debug($"[SharingMode] ShowcasePublic on Main Character - will appear in Gallery");
+                return ProfileSharing.ShowcasePublic;
+            }
+            else
+            {
+                Plugin.Log.Debug($"[SharingMode] ShowcasePublic but not on Main Character - sending as AlwaysShare (visible via /viewrp, not in Gallery)");
+                return ProfileSharing.AlwaysShare;
+            }
         }
 
         private void EnsureConfigurationDefaults()
@@ -1003,7 +1310,9 @@ namespace CharacterSelectPlugin
             Framework.Update -= FrameworkUpdate; // Fixed: should be -= not +=
             PoseManager?.Dispose();
             dialogueProcessor?.Dispose();
-            
+            playerNameProcessor?.Dispose();
+            SharedNameManager?.Dispose();
+
             // Dispose Penumbra integration services
             PenumbraIntegration?.Dispose();
             
@@ -1042,7 +1351,7 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random [Character Name], /select jobchange on|off, /select mods, or /select save [CR]");
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random [Character Name], /select jobchange on|off, /select idle, /select mods, /select save [CR], or /select whatsnew");
                 return;
             }
 
@@ -1094,6 +1403,26 @@ namespace CharacterSelectPlugin
                 return;
             }
 
+            // Handle idle subcommand
+            if (args.Trim().Equals("idle", StringComparison.OrdinalIgnoreCase))
+            {
+                if (ClientState.LocalPlayer != null)
+                {
+                    unsafe
+                    {
+                        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+                        var currentIdle = charPtr->EmoteController.CPoseState;
+                        
+                        ChatGui.Print($"[CS+] Current idle pose: {currentIdle} (range: 0-6)");
+                    }
+                }
+                else
+                {
+                    ChatGui.PrintError("[CS+] You must be logged in to check idle pose.");
+                }
+                return;
+            }
+
             // Handle save subcommand
             if (args.Trim().StartsWith("save", StringComparison.OrdinalIgnoreCase))
             {
@@ -1131,6 +1460,15 @@ namespace CharacterSelectPlugin
                 return;
             }
 
+            // Handle whatsnew subcommand (Feature Discovery System)
+            if (args.Trim().Equals("whatsnew", StringComparison.OrdinalIgnoreCase))
+            {
+                PatchNotesWindow.OpenMainMenuOnClose = false;
+                PatchNotesWindow.IsOpen = true;
+                ChatGui.Print("[CS+] Opening patch notes window...");
+                return;
+            }
+
             // Rest of the existing method remains the same...
             var matches = Regex.Matches(args, "\"([^\"]+)\"|\\S+")
                 .Cast<Match>()
@@ -1139,7 +1477,7 @@ namespace CharacterSelectPlugin
 
             if (matches.Length < 1)
             {
-                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, /select mods, or /select save [CR]");
+                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, /select mods, /select save [CR], or /select whatsnew");
                 return;
             }
 
@@ -1467,6 +1805,10 @@ namespace CharacterSelectPlugin
 
         private void DrawUI()
         {
+            // Process any pending linked profile opens before drawing
+            ProcessPendingLinkedProfile();
+            ProcessPendingLinkedProfileFromServer();
+
             WindowSystem.Draw();
             TutorialManager.DrawTutorialOverlay();
 
@@ -1477,11 +1819,78 @@ namespace CharacterSelectPlugin
                 Configuration.IsQuickSwitchWindowOpen = currentState;
                 Configuration.Save();
             }
+
+            // Track and persist Main Window state (if enabled)
+            if (Configuration.RememberMainWindowState)
+            {
+                bool mainWindowState = MainWindow.IsOpen;
+                if (Configuration.IsMainWindowOpen != mainWindowState)
+                {
+                    Configuration.IsMainWindowOpen = mainWindowState;
+                    Configuration.Save();
+                }
+            }
         }
 
 
         public void ToggleQuickSwitchUI() => QuickSwitchWindow.Toggle();
         public void ToggleMainUI() => MainWindow.Toggle();
+
+        /// <summary>
+        /// Opens the main window to the Settings tab with a specific section expanded.
+        /// Used by Feature Spotlight cards in patch notes.
+        /// </summary>
+        public void OpenSettingsToSection(string sectionName)
+        {
+            // Open main window
+            MainWindow.IsOpen = true;
+
+            // Switch to Settings tab and expand the requested section
+            MainWindow.SwitchToSettingsSection(sectionName);
+        }
+
+        /// <summary>
+        /// Opens the RP Profile editor for the active character.
+        /// Used by Feature Spotlight cards in patch notes.
+        /// </summary>
+        public void OpenRPProfileEditor()
+        {
+            // Open main window first
+            MainWindow.IsOpen = true;
+
+            // Open RP profile editor for active character
+            if (activeCharacter != null)
+            {
+                RPProfileEditWindow.SetCharacter(activeCharacter);
+                RPProfileEditWindow.IsOpen = true;
+            }
+            else if (Configuration.Characters.Count > 0)
+            {
+                // Fall back to first character if no active character
+                RPProfileEditWindow.SetCharacter(Configuration.Characters[0]);
+                RPProfileEditWindow.IsOpen = true;
+            }
+        }
+
+        /// <summary>
+        /// Opens the RP Profile VIEWER for the active character.
+        /// Used by Feature Spotlight to show the expand button with NEW badge.
+        /// </summary>
+        public void OpenRPProfileForFeatureSpotlight()
+        {
+            Character? character = activeCharacter;
+
+            // Fall back to first character if no active character
+            if (character == null && Configuration.Characters.Count > 0)
+            {
+                character = Configuration.Characters[0];
+            }
+
+            if (character != null)
+            {
+                OpenRPProfileViewWindow(character);
+            }
+        }
 
         public void OpenAddCharacterWindow()
         {
@@ -1519,7 +1928,8 @@ namespace CharacterSelectPlugin
                 ? new List<string>()
                 : NewCharacterTag.Split(',').Select(f => f.Trim()).ToList(),
                     SecretModState = NewSecretModState,
-                    SecretModPins = NewSecretModPins
+                    SecretModPins = NewSecretModPins,
+                    AssignedGearset = NewCharacterGearset
                 };
 
                 // Auto-create a Design based on Glamourer Design if available
@@ -1580,9 +1990,12 @@ namespace CharacterSelectPlugin
                 NewCharacterHonorificSuffix = "";
                 NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
                 NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f); // Reset to white
+                NewCharacterHonorificGradientSet = null;
+                NewCharacterHonorificAnimationStyle = null;
                 NewCharacterMoodlePreset = ""; //MOODLES
                 NewCharacterIdlePoseIndex = 8; // IDLES
                 NewCharacterAutomation = ""; //AUTOMATIONS
+                NewCharacterGearset = null;
             }
         }
 
@@ -1720,7 +2133,14 @@ namespace CharacterSelectPlugin
                     Log.Debug($"[MacroTracker] Cleared design for {character.Name}");
                 }
 
-                Configuration.Save();
+                try
+                {
+                    Configuration.Save();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Failed to save configuration: {ex.Message}");
+                }
             }
         }
         private string GetTargetGearsetFromMacro(string macro)
@@ -1982,7 +2402,7 @@ namespace CharacterSelectPlugin
 
             // For non-Advanced Mode characters, do full sanitization
             AddOrReplace("/customize profile disable <me>");
-            AddOrReplace("/honorific force clear");
+            AddOrReplace("/honorific force clear", "/honorific force clear | silent");
             AddOrReplace("/moodle remove self preset all");
 
             if (!lines.Any(l => l.Contains("/penumbra redraw self")))
@@ -2229,6 +2649,12 @@ namespace CharacterSelectPlugin
 
         public static string SanitizeDesignMacro(string macro, CharacterDesign design, Character character, bool enableAutomations)
         {
+            // For Advanced Mode designs - no automatic modifications, user has full control
+            if (design.IsAdvancedMode)
+            {
+                return macro;
+            }
+
             var lines = macro.Split('\n').Select(l => l.Trim()).ToList();
 
             // Remove automation lines if automations are disabled
@@ -2274,6 +2700,77 @@ namespace CharacterSelectPlugin
 
 
             return string.Join("\n", lines);
+        }
+
+        /// <summary>
+        /// One-time migration to add | silent to existing honorific commands
+        /// </summary>
+        private void MigrateHonorificSilent()
+        {
+            Plugin.Log.Info("[Migration] Adding | silent to honorific commands...");
+            int count = 0;
+
+            foreach (var character in Configuration.Characters)
+            {
+                // Migrate character macro
+                if (!string.IsNullOrWhiteSpace(character.Macros))
+                {
+                    var updated = AddSilentToHonorificCommands(character.Macros);
+                    if (updated != character.Macros)
+                    {
+                        character.Macros = updated;
+                        count++;
+                    }
+                }
+
+                // Migrate design macros
+                foreach (var design in character.Designs)
+                {
+                    if (!string.IsNullOrWhiteSpace(design.Macro))
+                    {
+                        var updated = AddSilentToHonorificCommands(design.Macro);
+                        if (updated != design.Macro)
+                        {
+                            design.Macro = updated;
+                            count++;
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(design.AdvancedMacro))
+                    {
+                        var updated = AddSilentToHonorificCommands(design.AdvancedMacro);
+                        if (updated != design.AdvancedMacro)
+                        {
+                            design.AdvancedMacro = updated;
+                            count++;
+                        }
+                    }
+                }
+            }
+
+            Plugin.Log.Info($"[Migration] Updated {count} macros with | silent");
+        }
+
+        private static string AddSilentToHonorificCommands(string macro)
+        {
+            var lines = macro.Split('\n').ToList();
+            bool changed = false;
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var trimmed = lines[i].TrimStart();
+                if (trimmed.StartsWith("/honorific", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Check if it already ends with | silent
+                    if (!trimmed.TrimEnd().EndsWith("| silent", StringComparison.OrdinalIgnoreCase))
+                    {
+                        lines[i] = lines[i].TrimEnd() + " | silent";
+                        changed = true;
+                    }
+                }
+            }
+
+            return changed ? string.Join("\n", lines) : macro;
         }
 
         public static string ConvertToSecretModeMacro(string macro, string? characterPenumbraCollection = null)
@@ -2372,6 +2869,112 @@ namespace CharacterSelectPlugin
             RPProfileViewer.IsOpen = true;
             IsRPProfileViewerOpen = true;
         }
+
+        public void OpenLinkedProfile(string characterName)
+        {
+            // Defer the window opening to the next frame to avoid issues with opening during Draw
+            pendingLinkedProfileToOpen = characterName;
+        }
+
+        private string? pendingLinkedProfileFromServerToOpen = null;
+
+        public void OpenLinkedProfileFromServer(string inGameName)
+        {
+            // Defer the server fetch to the next frame to avoid issues with opening during Draw
+            pendingLinkedProfileFromServerToOpen = inGameName;
+        }
+
+        private async void ProcessPendingLinkedProfileFromServer()
+        {
+            if (pendingLinkedProfileFromServerToOpen == null) return;
+
+            var inGameName = pendingLinkedProfileFromServerToOpen;
+            pendingLinkedProfileFromServerToOpen = null;
+
+            try
+            {
+                // Fetch the profile from the server
+                var profile = await DownloadProfileAsync(inGameName);
+                if (profile == null || profile.IsEmpty())
+                {
+                    ChatGui.Print($"[Character Select+] Could not find profile for {inGameName}.");
+                    return;
+                }
+
+                // Create a new window with unique name
+                secondaryWindowCounter++;
+                var windowName = $"RPProfileWindow_{secondaryWindowCounter}";
+                var newWindow = new RPProfileViewWindow(this, windowName);
+
+                // Register with window system
+                WindowSystem.AddWindow(newWindow);
+                secondaryProfileWindows.Add(newWindow);
+
+                // Set the external profile and open
+                newWindow.SetExternalProfile(profile);
+                newWindow.IsOpen = true;
+
+                // Position the window to the right of the main viewer window
+                if (RPProfileViewWindowPos.HasValue && RPProfileViewWindowSize.HasValue)
+                {
+                    var mainRight = RPProfileViewWindowPos.Value.X + RPProfileViewWindowSize.Value.X;
+                    var newX = mainRight + 20 + (40 * (secondaryWindowCounter - 1));
+                    var newY = RPProfileViewWindowPos.Value.Y + (30 * (secondaryWindowCounter - 1));
+                    newWindow.SetAbsolutePosition(newX, newY);
+                }
+                else
+                {
+                    newWindow.OffsetPosition(250 * secondaryWindowCounter, 50 * secondaryWindowCounter);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[OpenLinkedProfileFromServer] Error fetching profile: {ex.Message}");
+                ChatGui.PrintError($"[Character Select+] Failed to fetch profile for {inGameName}.");
+            }
+        }
+
+        private void ProcessPendingLinkedProfile()
+        {
+            if (pendingLinkedProfileToOpen == null) return;
+
+            var characterName = pendingLinkedProfileToOpen;
+            pendingLinkedProfileToOpen = null;
+
+            // Find the character by name
+            var character = Characters.FirstOrDefault(c => c.Name.Equals(characterName, StringComparison.OrdinalIgnoreCase));
+            if (character == null)
+            {
+                return;
+            }
+
+            // Create a new window with unique name
+            secondaryWindowCounter++;
+            var windowName = $"RPProfileWindow_{secondaryWindowCounter}";
+            var newWindow = new RPProfileViewWindow(this, windowName);
+
+            // Register with window system
+            WindowSystem.AddWindow(newWindow);
+            secondaryProfileWindows.Add(newWindow);
+
+            // Set the character and open
+            newWindow.SetCharacter(character);
+            newWindow.IsOpen = true;
+
+            // Position the window to the right of the main viewer window
+            if (RPProfileViewWindowPos.HasValue && RPProfileViewWindowSize.HasValue)
+            {
+                var mainRight = RPProfileViewWindowPos.Value.X + RPProfileViewWindowSize.Value.X;
+                var newX = mainRight + 20 + (40 * (secondaryWindowCounter - 1));
+                var newY = RPProfileViewWindowPos.Value.Y + (30 * (secondaryWindowCounter - 1));
+                newWindow.SetAbsolutePosition(newX, newY);
+            }
+            else
+            {
+                newWindow.OffsetPosition(250 * secondaryWindowCounter, 50 * secondaryWindowCounter);
+            }
+        }
+
         private RPProfile HandleProfileRequest(string requestedName)
         {
             // If the sender includes "@World", use it as-is
@@ -2530,54 +3133,40 @@ namespace CharacterSelectPlugin
                 Configuration.LastUsedCharacterKey = character.Name;
 
                 // Write the session info file so the plugin remembers the last applied character name
-                File.WriteAllText(SessionInfoPath, character.Name);
-                Plugin.Log.Debug($"[ApplyProfile] 📝 Wrote session_info.txt = {character.Name}");
+                try
+                {
+                    File.WriteAllText(SessionInfoPath, character.Name);
+                    Plugin.Log.Debug($"[ApplyProfile] 📝 Wrote session_info.txt = {character.Name}");
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Warning($"[SetActiveCharacter] Failed to write session_info.txt: {ex.Message}");
+                }
 
-                Configuration.Save();
+                try
+                {
+                    Configuration.Save();
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error($"[SetActiveCharacter] Failed to save configuration: {ex.Message}");
+                }
 
                 // These log lines now match and won't be skipped
                 Plugin.Log.Debug($"[SetActiveCharacter] Saved: {fullKey} → {pluginCharacterKey}");
                 Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {pluginCharacterKey} for profile {character.Name}");
 
-                // Only upload if we should upload to gallery
-                bool shouldUploadToGallery = ShouldUploadToGallery(character, fullKey);
-
-                if (shouldUploadToGallery)
+                // Upload if sharing allows it
+                if (ShouldUploadToServer(character))
                 {
-                    var profileToSend = new RPProfile
-                    {
-                        Pronouns = character.RPProfile?.Pronouns,
-                        Gender = character.RPProfile?.Gender,
-                        Age = character.RPProfile?.Age,
-                        Race = character.RPProfile?.Race,
-                        Orientation = character.RPProfile?.Orientation,
-                        Relationship = character.RPProfile?.Relationship,
-                        Occupation = character.RPProfile?.Occupation,
-                        Abilities = character.RPProfile?.Abilities,
-                        Bio = character.RPProfile?.Bio,
-                        Tags = character.RPProfile?.Tags,
-                        CustomImagePath = !string.IsNullOrEmpty(character.RPProfile?.CustomImagePath)
-                ? character.RPProfile.CustomImagePath
-                : character.ImagePath,
-                        ImageZoom = character.RPProfile?.ImageZoom ?? 1.0f,
-                        ImageOffset = character.RPProfile?.ImageOffset ?? Vector2.Zero,
-                        Sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare,
-                        ProfileImageUrl = character.RPProfile?.ProfileImageUrl,
-                        CharacterName = character.Name, // force correct name
-                        NameplateColor = character.RPProfile?.ProfileColor ?? character.NameplateColor, // force correct colour
-                        BackgroundImage = character.RPProfile?.BackgroundImage ?? character.BackgroundImage,
-                        Effects = character.RPProfile?.Effects ?? character.Effects ?? new ProfileEffects(),
-                        GalleryStatus = character.GalleryStatus,
-                        Links = character.RPProfile?.Links,
-                        LastActiveTime = Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null
-                    };
-
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name);
-                    Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name}");
+                    var profileToSend = BuildProfileForUpload(character);
+                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                    Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
                 }
                 else
                 {
-                    Plugin.Log.Info($"[SetActiveCharacter] ⚠ Skipped gallery upload for {character.Name}");
+                    Plugin.Log.Info($"[SetActiveCharacter] ⚠ Skipped upload for {character.Name} (NeverShare)");
                 }
             }
         }
@@ -2597,10 +3186,110 @@ namespace CharacterSelectPlugin
             }
         }
 
-        public static async Task UploadProfileAsync(RPProfile profile, string characterName, bool isCharacterApplication = true)
+        /// <summary>
+        /// Opens the report window for reporting a CS+ user.
+        /// </summary>
+        public void OpenReportWindow(string physicalName, string csName)
+        {
+            ReportUserWindow?.Open(physicalName, csName);
+        }
+
+        /// <summary>
+        /// Builds a complete RPProfile for upload from a Character, ensuring all fields are included.
+        /// This is the single source of truth for profile upload construction.
+        /// </summary>
+        public RPProfile BuildProfileForUpload(Character character)
+        {
+            var rp = character.RPProfile;
+
+            return new RPProfile
+            {
+                // Basic fields
+                Pronouns = rp?.Pronouns,
+                Gender = rp?.Gender,
+                Age = rp?.Age,
+                Race = rp?.Race,
+                Orientation = rp?.Orientation,
+                Relationship = rp?.Relationship,
+                Occupation = rp?.Occupation,
+                Abilities = rp?.Abilities,
+                Bio = rp?.Bio,
+                Tags = rp?.Tags,
+                Links = rp?.Links,
+                GalleryStatus = rp?.GalleryStatus ?? character.GalleryStatus,
+
+                // Title and Status
+                Title = rp?.Title,
+                TitleIcon = rp?.TitleIcon ?? 0,
+                Status = rp?.Status,
+                StatusIcon = rp?.StatusIcon ?? 0,
+
+                // Image fields
+                CustomImagePath = !string.IsNullOrEmpty(rp?.CustomImagePath)
+                    ? rp.CustomImagePath
+                    : character.ImagePath,
+                ImageZoom = rp?.ImageZoom ?? 1.0f,
+                ImageOffset = rp?.ImageOffset ?? Vector2.Zero,
+                ProfileImageUrl = rp?.ProfileImageUrl,
+
+                // Banner fields (EXPANDED)
+                BannerImagePath = rp?.BannerImagePath,
+                BannerImageUrl = rp?.BannerImageUrl,
+                BannerZoom = rp?.BannerZoom ?? 1.0f,
+                BannerOffset = rp?.BannerOffset ?? Vector2.Zero,
+
+                // Content boxes (EXPANDED)
+                LeftContentBoxes = rp?.LeftContentBoxes ?? new List<ContentBox>(),
+                RightContentBoxes = rp?.RightContentBoxes ?? new List<ContentBox>(),
+
+                // Gallery images (EXPANDED)
+                GalleryImages = rp?.GalleryImages ?? new List<GalleryImage>(),
+                UseGalleryPreview = rp?.UseGalleryPreview ?? false,
+                SelectedGalleryPreviewIndex = rp?.SelectedGalleryPreviewIndex ?? -1,
+
+                // Sharing and metadata
+                Sharing = rp?.Sharing ?? ProfileSharing.AlwaysShare,
+                CharacterName = character.Name,
+                NameplateColor = rp?.ProfileColor ?? character.NameplateColor,
+                IsNSFW = rp?.IsNSFW ?? false,
+
+                // Visual effects
+                BackgroundImage = rp?.BackgroundImage ?? character.BackgroundImage,
+
+                // URL-based background for Expanded RP Profile
+                BackgroundImageUrl = rp?.BackgroundImageUrl,
+                BackgroundImageOpacity = rp?.BackgroundImageOpacity ?? 1.0f,
+                BackgroundImageZoom = rp?.BackgroundImageZoom ?? 1.0f,
+                BackgroundImageOffsetX = rp?.BackgroundImageOffsetX ?? 0f,
+                BackgroundImageOffsetY = rp?.BackgroundImageOffsetY ?? 0f,
+
+                // URL-based background for compact RP Profile
+                RPBackgroundImageUrl = rp?.RPBackgroundImageUrl,
+                RPBackgroundImageOpacity = rp?.RPBackgroundImageOpacity ?? 0.5f,
+                RPBackgroundImageZoom = rp?.RPBackgroundImageZoom ?? 1.0f,
+                RPBackgroundImageOffsetX = rp?.RPBackgroundImageOffsetX ?? 0f,
+                RPBackgroundImageOffsetY = rp?.RPBackgroundImageOffsetY ?? 0f,
+
+                Effects = rp?.Effects ?? character.Effects ?? new ProfileEffects(),
+                ProfileColor = rp?.ProfileColor,
+
+                // Activity tracking
+                LastActiveTime = Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null,
+            };
+        }
+
+        public static async Task UploadProfileAsync(RPProfile profile, string characterName, bool isCharacterApplication = true, ProfileSharing? sharingOverride = null)
         {
             Stream? imageStream = null;
             StreamContent? imageContent = null;
+
+            // Apply sharing override for this upload (doesn't modify the original profile permanently)
+            var originalSharing = profile.Sharing;
+            if (sharingOverride.HasValue)
+            {
+                profile.Sharing = sharingOverride.Value;
+                Plugin.Log.Debug($"[UploadProfile] Using sharing override: {sharingOverride.Value} (original: {originalSharing})");
+            }
 
             try
             {
@@ -2615,6 +3304,9 @@ namespace CharacterSelectPlugin
                 {
                     // Only set character name if it's not already set
                     profile.CharacterName ??= match.Name;
+
+                    // Sync the shared name visibility setting from Configuration
+                    profile.AllowOthersToSeeMyCSName = config?.AllowOthersToSeeMyCSName ?? true;
 
                     // Only set nameplate colour if it's not set (all zeros)
                     if (profile.NameplateColor.X <= 0f
@@ -2759,6 +3451,14 @@ namespace CharacterSelectPlugin
             catch (Exception ex)
             {
                 Plugin.Log.Error($"[UploadProfile] Exception: {ex}");
+            }
+            finally
+            {
+                // Restore original sharing mode if we overrode it
+                if (sharingOverride.HasValue)
+                {
+                    profile.Sharing = originalSharing;
+                }
             }
         }
 
@@ -2910,6 +3610,12 @@ namespace CharacterSelectPlugin
                 return;
             if (!ClientState.IsLoggedIn || ClientState.LocalPlayer == null)
                 return;
+
+            // Process pending shared name lookups (has internal rate limiting)
+            if (Configuration.EnableSharedNameReplacement && SharedNameManager != null)
+            {
+                _ = SharedNameManager.ProcessPendingLookups();
+            }
             if (Configuration.EnableLoginDelay)
             {
                 secondsSinceLogin += (float)Framework.UpdateDelta.TotalSeconds;
@@ -2921,36 +3627,52 @@ namespace CharacterSelectPlugin
             var player = ClientState.LocalPlayer!;
             uint currentJobId = player.ClassJob.RowId;
 
-            if (Configuration.ReapplyDesignOnJobChange && currentJobId != Configuration.LastKnownJobId)
+            // Job change detection - handles both Job Assignments and Reapply features
+            if (currentJobId != Configuration.LastKnownJobId)
             {
                 var oldJob = Configuration.LastKnownJobId;
                 Configuration.LastKnownJobId = currentJobId;
 
-                if (!Configuration.EnableAutomations)
+                // Skip during login grace period
+                if (DateTime.Now - loginTime < TimeSpan.FromSeconds(10))
                 {
-                    // Check if current character has any assignment - skip job change reapplication to let assignment logic handle it
-                    if (player.HomeWorld.IsValid)
-                    {
-                        string world = player.HomeWorld.Value.Name.ToString();
-                        string fullKey = $"{player.Name.TextValue}@{world}";
-                        
-                        // Skip job change detection during login period to let Character Assignments work first
-                        if (DateTime.Now - loginTime < TimeSpan.FromSeconds(10))
-                        {
-                            Plugin.Log.Debug($"[JobSwitch] Within login grace period - skipping job change detection to let assignments work");
-                            return;
-                        }
-                        
-                        // Skip job change reapplication for characters explicitly assigned "None"
-                        if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName) &&
-                            assignedCharacterName == "None")
-                        {
-                            Plugin.Log.Debug($"[JobSwitch] Character {fullKey} has assignment 'None' - skipping job change reapplication");
-                            return;
-                        }
-                    }
+                    Plugin.Log.Debug($"[JobSwitch] Within login grace period - skipping job change detection");
+                    return;
+                }
 
-                    Plugin.Log.Debug($"[JobSwitch] Detected job change: {oldJob} → {currentJobId}");
+                // Skip if Glamourer Automations are enabled (let Glamourer handle it)
+                if (Configuration.EnableAutomations)
+                {
+                    Plugin.Log.Debug($"[JobSwitch] Glamourer Automations enabled - skipping job change handling");
+                    return;
+                }
+
+                // Check if current physical character has "None" assignment
+                if (player.HomeWorld.IsValid)
+                {
+                    string world = player.HomeWorld.Value.Name.ToString();
+                    string fullKey = $"{player.Name.TextValue}@{world}";
+
+                    if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName) &&
+                        assignedCharacterName == "None")
+                    {
+                        Plugin.Log.Debug($"[JobSwitch] Character {fullKey} has assignment 'None' - skipping job change handling");
+                        return;
+                    }
+                }
+
+                Plugin.Log.Debug($"[JobSwitch] Detected job change: {oldJob} → {currentJobId}");
+
+                // Priority 1: Try Job Assignments first
+                if (Configuration.EnableJobAssignments && TryApplyJobAssignment(currentJobId))
+                {
+                    Plugin.Log.Debug($"[JobSwitch] Job assignment applied for job {currentJobId}");
+                    return;
+                }
+
+                // Priority 2: Fall back to Reapply Last Design/Character
+                if (Configuration.ReapplyDesignOnJobChange)
+                {
                     var reapplied = false;
 
                     if (!string.IsNullOrEmpty(Configuration.LastUsedDesignCharacterKey) &&
@@ -3308,7 +4030,244 @@ namespace CharacterSelectPlugin
             
             return -1; // No design or not found
         }
-        
+
+        #region Job Assignment Helpers
+
+        /// <summary>Get the role category for a job ID.</summary>
+        public static string GetRoleForJob(uint jobId)
+        {
+            return jobId switch
+            {
+                // Tanks
+                19 or 21 or 32 or 37 => "Tank",
+                // Healers
+                24 or 28 or 33 or 40 => "Healer",
+                // Melee DPS
+                20 or 22 or 30 or 34 or 39 or 41 => "Melee",
+                // Ranged Physical DPS
+                23 or 31 or 38 => "Ranged",
+                // Caster DPS
+                25 or 27 or 35 or 42 => "Caster",
+                // Crafters (8-15)
+                >= 8 and <= 15 => "Crafter",
+                // Gatherers (16-18)
+                >= 16 and <= 18 => "Gatherer",
+                // Base classes and other
+                _ => "Other"
+            };
+        }
+
+        /// <summary>Get job name from Lumina data.</summary>
+        public string? GetJobName(uint jobId)
+        {
+            try
+            {
+                var jobSheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>();
+                if (jobSheet != null)
+                {
+                    var job = jobSheet.GetRowOrDefault(jobId);
+                    if (job != null)
+                    {
+                        return job.Value.Name.ToString();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning($"[JobAssignment] Failed to get job name for {jobId}: {ex.Message}");
+            }
+            return null;
+        }
+
+        /// <summary>Parse a job assignment value into character and optional design name.</summary>
+        public (string? CharacterName, string? DesignName) ParseJobAssignment(string assignmentValue)
+        {
+            if (string.IsNullOrEmpty(assignmentValue))
+                return (null, null);
+
+            // Format: "Character:{CharacterName}" or "Design:{CharacterName}:{DesignName}"
+            if (assignmentValue.StartsWith("Character:", StringComparison.OrdinalIgnoreCase))
+            {
+                var characterName = assignmentValue.Substring("Character:".Length);
+                return (characterName, null);
+            }
+            else if (assignmentValue.StartsWith("Design:", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = assignmentValue.Substring("Design:".Length).Split(':', 2);
+                if (parts.Length == 2)
+                {
+                    return (parts[0], parts[1]);
+                }
+                else if (parts.Length == 1)
+                {
+                    return (parts[0], null);
+                }
+            }
+
+            // Legacy format - just character name
+            return (assignmentValue, null);
+        }
+
+        /// <summary>Try to apply a job assignment for the given job ID.</summary>
+        /// <returns>True if an assignment was found and applied.</returns>
+        private bool TryApplyJobAssignment(uint jobId)
+        {
+            if (!Configuration.EnableJobAssignments || Configuration.JobAssignments.Count == 0)
+                return false;
+
+            string? assignmentValue = null;
+
+            // Check job-specific assignment first
+            var jobKey = $"Job_{jobId}";
+            if (Configuration.JobAssignments.TryGetValue(jobKey, out var jobAssignment))
+            {
+                assignmentValue = jobAssignment;
+                Log.Debug($"[JobAssignment] Found job-specific assignment for {jobKey}: {assignmentValue}");
+            }
+            else
+            {
+                // Check role assignment
+                var role = GetRoleForJob(jobId);
+                var roleKey = $"Role_{role}";
+                if (Configuration.JobAssignments.TryGetValue(roleKey, out var roleAssignment))
+                {
+                    assignmentValue = roleAssignment;
+                    Log.Debug($"[JobAssignment] Found role assignment for {roleKey}: {assignmentValue}");
+                }
+            }
+
+            if (string.IsNullOrEmpty(assignmentValue))
+                return false;
+
+            // Parse the assignment
+            var (characterName, designName) = ParseJobAssignment(assignmentValue);
+            if (string.IsNullOrEmpty(characterName))
+                return false;
+
+            // Find the character
+            var character = Characters.FirstOrDefault(c => c.Name == characterName);
+            if (character == null)
+            {
+                Log.Warning($"[JobAssignment] Character '{characterName}' not found for job assignment");
+                return false;
+            }
+
+            // Apply the character (and optionally design)
+            if (!string.IsNullOrEmpty(designName))
+            {
+                var designIndex = character.Designs.FindIndex(d => d.Name == designName);
+                if (designIndex >= 0)
+                {
+                    Log.Info($"[JobAssignment] Applying design '{designName}' on character '{characterName}' for job {jobId}");
+                    ApplyProfile(character, designIndex);
+                }
+                else
+                {
+                    Log.Warning($"[JobAssignment] Design '{designName}' not found on character '{characterName}', applying character only");
+                    ApplyProfile(character, -1);
+                }
+            }
+            else
+            {
+                Log.Info($"[JobAssignment] Applying character '{characterName}' for job {jobId}");
+                ApplyProfile(character, -1);
+            }
+
+            return true;
+        }
+
+        #endregion
+
+        #region Gearset Helpers
+
+        /// <summary>
+        /// Get all available gearsets for the current player.
+        /// Returns a list of (GearsetNumber, JobId, GearsetName) tuples.
+        /// </summary>
+        public unsafe List<(int Number, byte JobId, string Name)> GetPlayerGearsets()
+        {
+            var gearsets = new List<(int Number, byte JobId, string Name)>();
+
+            try
+            {
+                var gearsetModule = RaptureGearsetModule.Instance();
+                if (gearsetModule == null)
+                    return gearsets;
+
+                // FFXIV has 100 gearset slots (1-100), stored at indices 0-99
+                for (int i = 0; i < 100; i++)
+                {
+                    var entry = gearsetModule->GetGearset(i);
+                    if (entry == null)
+                        continue;
+
+                    // Check if gearset is valid/exists (has a job assigned)
+                    if (entry->ClassJob == 0)
+                        continue;
+
+                    // Check if gearset is flagged as existing
+                    if ((entry->Flags & RaptureGearsetModule.GearsetFlag.Exists) == 0)
+                        continue;
+
+                    var name = entry->NameString;
+                    gearsets.Add((i + 1, entry->ClassJob, name)); // Gearset numbers are 1-indexed for users
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Gearset] Failed to get player gearsets: {ex.Message}");
+            }
+
+            return gearsets;
+        }
+
+        /// <summary>
+        /// Switch to a specific gearset by number (1-100).
+        /// </summary>
+        public unsafe void SwitchToGearset(int gearsetNumber)
+        {
+            if (gearsetNumber < 1 || gearsetNumber > 100)
+                return;
+
+            try
+            {
+                var gearsetModule = RaptureGearsetModule.Instance();
+                if (gearsetModule == null)
+                    return;
+
+                // Gearset indices are 0-based internally, but 1-based for users
+                gearsetModule->EquipGearset(gearsetNumber - 1);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Gearset] Failed to switch to gearset {gearsetNumber}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Get a friendly display name for a gearset (e.g., "Paladin" or "My Tank Set").
+        /// Returns the job name if the gearset name matches default, otherwise returns the gearset name.
+        /// </summary>
+        public string GetGearsetDisplayName(int gearsetNumber, byte jobId, string gearsetName)
+        {
+            // If gearset has a custom name, use it
+            if (!string.IsNullOrWhiteSpace(gearsetName))
+            {
+                var jobName = GetJobName(jobId);
+                // If gearset name is different from job name, show both
+                if (jobName != null && !gearsetName.Equals(jobName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return $"{gearsetName} ({jobName})";
+                }
+                return gearsetName;
+            }
+
+            // Fall back to job name
+            return GetJobName(jobId) ?? $"Gearset {gearsetNumber}";
+        }
+
+        #endregion
+
         public string FilterJobChangeCommands(string macro)
         {
             if (string.IsNullOrWhiteSpace(macro))
@@ -3502,6 +4461,22 @@ namespace CharacterSelectPlugin
                 ChatGui.Print(message);
             }
             SaveConfiguration();
+
+            // Upload profile if conditions are met
+            if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
+            {
+                string localName = uploadPlayer.Name.TextValue;
+                string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+
+                if (ShouldUploadToServer(selectedCharacter))
+                {
+                    var profileToSend = BuildProfileForUpload(selectedCharacter);
+                    var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
+                    _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name, sharingOverride: effectiveSharing);
+                    Log.Info($"[RandomSelect] ✓ Uploaded profile for {selectedCharacter.Name} (effective sharing: {effectiveSharing})");
+                }
+            }
         }
 
         public void SelectRandomDesignOnly(string characterName)
@@ -3556,6 +4531,22 @@ namespace CharacterSelectPlugin
             {
                 SeString message = GetRandomSelectionChatMessage(character.Name);
                 ChatGui.Print(message);
+            }
+
+            // Upload profile if conditions are met (design change may affect visible state)
+            if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
+            {
+                string localName = uploadPlayer.Name.TextValue;
+                string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+
+                if (ShouldUploadToServer(character))
+                {
+                    var profileToSend = BuildProfileForUpload(character);
+                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                    Log.Info($"[RandomDesign] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
+                }
             }
         }
 
@@ -3994,13 +4985,29 @@ namespace CharacterSelectPlugin
                         continue;
                     }
                     
-                    // If mod is enabled and not in our selection, disable it
-                    if (settings.Item1 && (!design.SecretModState.ContainsKey(modDir) || !design.SecretModState[modDir]))
+                    // Check if mod is explicitly configured in CR for this design
+                    bool hasExplicitCRState = design.SecretModState.ContainsKey(modDir);
+                    bool crWantsEnabled = hasExplicitCRState && design.SecretModState[modDir];
+
+                    // If mod is enabled and not in our selection, consider disabling it
+                    if (settings.Item1 && !crWantsEnabled)
                     {
+                        // Respect Penumbra inheritance (if enabled): if mod is inherited and not
+                        // explicitly configured in CR, leave it alone (don't disable inherited mods)
+                        if (Configuration.RespectPenumbraInheritance)
+                        {
+                            bool isInherited = settings.Item4; // Item4 = inherited from parent collection
+                            if (!hasExplicitCRState && isInherited)
+                            {
+                                // Skip - inherited mod not explicitly configured, leave as-is
+                                continue;
+                            }
+                        }
+
                         modsToDisable.Add(modDir);
                     }
                 }
-                
+
                 // Second pass: Collect mods that need to be enabled
                 foreach (var (modDir, shouldEnable) in design.SecretModState)
                 {
@@ -4166,9 +5173,25 @@ namespace CharacterSelectPlugin
                         continue;
                     }
                     
-                    // If mod is enabled and not in our selection, disable it
-                    if (settings.Item1 && (!character.SecretModState.ContainsKey(modDir) || !character.SecretModState[modDir]))
+                    // Check if mod is explicitly configured in CR
+                    bool hasExplicitCRState = character.SecretModState.ContainsKey(modDir);
+                    bool crWantsEnabled = hasExplicitCRState && character.SecretModState[modDir];
+
+                    // If mod is enabled and not in our selection, consider disabling it
+                    if (settings.Item1 && !crWantsEnabled)
                     {
+                        // Respect Penumbra inheritance (if enabled): if mod is inherited and not
+                        // explicitly configured in CR, leave it alone (don't disable inherited mods)
+                        if (Configuration.RespectPenumbraInheritance)
+                        {
+                            bool isInherited = settings.Item4; // Item4 = inherited from parent collection
+                            if (!hasExplicitCRState && isInherited)
+                            {
+                                // Skip - inherited mod not explicitly configured, leave as-is
+                                continue;
+                            }
+                        }
+
                         modsToDisable.Add(modDir);
                     }
                 }

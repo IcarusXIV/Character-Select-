@@ -6,7 +6,7 @@ namespace CharacterSelectPlugin.Windows.Styles
     {
         public static class Dark
         {
-            // Updated to match the new matte black theme
+            // Matte black theme colours
             public static readonly Vector4 WindowBackground = new(0.06f, 0.06f, 0.06f, 0.98f);
             public static readonly Vector4 ChildBackground = new(0.08f, 0.08f, 0.08f, 0.95f);
             public static readonly Vector4 PopupBackground = new(0.06f, 0.06f, 0.06f, 0.98f);

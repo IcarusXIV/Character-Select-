@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using Newtonsoft.Json;
+using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -54,6 +55,14 @@ namespace CharacterSelectPlugin.Windows
         private int selectedBackgroundIndex = 0;
         private bool isNSFW = false;
         private bool originalIsNSFW = false;
+
+        private string rpBackgroundUrlInput = "";
+        private string? originalRPBackgroundImageUrl = null;
+        private float originalRPBackgroundImageOpacity = 0.5f;
+        private float originalRPBackgroundImageZoom = 1.0f;
+        private float originalRPBackgroundImageOffsetX = 0f;
+        private float originalRPBackgroundImageOffsetY = 0f;
+        private readonly HashSet<string> downloadingRPBackgrounds = new();
 
         public RPProfileWindow(Plugin plugin) : base("Roleplay Profile", ImGuiWindowFlags.None)
         {
@@ -203,7 +212,6 @@ namespace CharacterSelectPlugin.Windows
 
             var rp = character.RPProfile ??= new RPProfile();
 
-            // Sync NSFW status from server before opening editor
             string? currentPlayerName = null;
             string? currentWorldName = null;
             var currentPlayer = Plugin.ClientState.LocalPlayer;
@@ -212,10 +220,8 @@ namespace CharacterSelectPlugin.Windows
                 currentPlayerName = currentPlayer.Name.TextValue;
                 currentWorldName = currentPlayer.HomeWorld.Value.Name.ToString();
             }
-            
             _ = SyncNSFWFromServerAsync(character, currentPlayerName, currentWorldName);
 
-            // Store current values
             pronouns = rp.Pronouns ?? "";
             race = rp.Race ?? "";
             gender = rp.Gender ?? "";
@@ -229,7 +235,6 @@ namespace CharacterSelectPlugin.Windows
             links = rp.Links ?? "";
             isNSFW = rp.IsNSFW;
 
-            // Store original values for cancel functionality
             originalPronouns = pronouns;
             originalRace = race;
             originalGender = gender;
@@ -242,6 +247,12 @@ namespace CharacterSelectPlugin.Windows
             originalBio = bio;
             originalTags = tags;
             originalBackgroundImage = rp.BackgroundImage;
+            originalRPBackgroundImageUrl = rp.RPBackgroundImageUrl;
+            originalRPBackgroundImageOpacity = rp.RPBackgroundImageOpacity;
+            originalRPBackgroundImageZoom = rp.RPBackgroundImageZoom;
+            originalRPBackgroundImageOffsetX = rp.RPBackgroundImageOffsetX;
+            originalRPBackgroundImageOffsetY = rp.RPBackgroundImageOffsetY;
+            rpBackgroundUrlInput = rp.RPBackgroundImageUrl ?? "";
             originalEffects = new ProfileEffects
             {
                 CircuitBoard = rp.Effects.CircuitBoard,
@@ -261,11 +272,6 @@ namespace CharacterSelectPlugin.Windows
             originalIsNSFW = isNSFW;
             originalProfileColor = rp.ProfileColor;
 
-            if (rp.ProfileColor == null)
-            {
-            }
-
-            // Set background selection
             selectedBackgroundIndex = 0;
             if (!string.IsNullOrEmpty(rp.BackgroundImage))
             {
@@ -284,24 +290,8 @@ namespace CharacterSelectPlugin.Windows
                 return;
             }
 
-            // Dark stylin' on 'em
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.08f, 0.08f, 0.08f, 0.95f));
-            ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.06f, 0.06f, 0.06f, 0.98f));
-            ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0.04f, 0.04f, 0.04f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, new Vector4(0.3f, 0.3f, 0.3f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, new Vector4(0.4f, 0.4f, 0.4f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.25f, 0.25f, 0.25f, 0.6f));
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.92f, 0.92f, 0.92f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.5f, 0.5f, 0.5f, 0.8f));
-
-            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8 * totalScale, 4 * totalScale));
-            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * totalScale, 6 * totalScale));
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * totalScale);
-            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0f * totalScale);
-            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * totalScale);
-            ImGui.PushStyleVar(ImGuiStyleVar.ScrollbarRounding, 8.0f * totalScale);
+            int themeColorCount = ThemeHelper.PushThemeColors(plugin.Configuration);
+            int themeStyleVarCount = ThemeHelper.PushThemeStyleVars(plugin.Configuration.UIScaleMultiplier);
 
             try
             {
@@ -315,7 +305,6 @@ namespace CharacterSelectPlugin.Windows
                 var leftColumnWidth = availableWidth * 0.40f;
                 var rightColumnWidth = availableWidth * 0.58f;
 
-                // Image and appearance
                 ImGui.BeginChild("##LeftColumn", new Vector2(leftColumnWidth, contentHeight), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
                 ImGui.TextColored(new Vector4(0.7f, 0.9f, 1f, 1f), "Profile Image");
@@ -363,7 +352,6 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.Spacing();
 
-                // Image preview
                 string pluginDir = plugin.PluginDirectory;
                 string fallback = Path.Combine(pluginDir, "Assets", "Default.png");
                 string finalImagePath = !string.IsNullOrEmpty(rp.CustomImagePath) && File.Exists(rp.CustomImagePath)
@@ -378,7 +366,7 @@ namespace CharacterSelectPlugin.Windows
                     if (texture != null)
                     {
                         float frameSize = 140f * totalScale;
-                        float zoom = Math.Clamp(rp.ImageZoom, 0.5f, 5.0f);
+                        float zoom = Math.Clamp(rp.ImageZoom, 0.1f, 10.0f);
                         Vector2 offset = rp.ImageOffset * totalScale;
 
                         float imgAspect = (float)texture.Width / texture.Height;
@@ -398,12 +386,10 @@ namespace CharacterSelectPlugin.Windows
                         Vector2 drawSize = new(drawWidth, drawHeight);
                         Vector2 drawPos = ImGui.GetCursorScreenPos() + offset;
 
-                        // Background border
                         var cursor = ImGui.GetCursorScreenPos();
                         var drawList = ImGui.GetWindowDrawList();
                         drawList.AddRectFilled(cursor - new Vector2(2 * totalScale, 2 * totalScale), cursor + new Vector2(frameSize + (2 * totalScale)), ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.4f, 0.4f, 1f)), 4 * totalScale);
 
-                        // Crop region
                         ImGui.BeginChild("ImageCropFrame", new Vector2(frameSize), false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
                         ImGui.SetCursorScreenPos(drawPos);
                         ImGui.Image((ImTextureID)texture.Handle, drawSize);
@@ -421,7 +407,6 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.Spacing();
 
-                // Image controls
                 ImGui.Text("Image Position:");
                 Vector2 newOffset = rp.ImageOffset;
                 ImGui.PushItemWidth(160 * totalScale);
@@ -474,7 +459,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PopStyleVar(1);
                 ImGui.PopStyleColor(8);
 
-                // Color picker (ONLY show if custom colour is selected)
                 if (!useNameplateColor)
                 {
                     ImGui.Spacing();
@@ -493,7 +477,6 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.Spacing();
 
-                // Background section
                 ImGui.Text("Background:");
                 ImGui.SameLine();
                 ImGui.TextDisabled("ⓘ");
@@ -507,7 +490,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * totalScale);
                 ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
 
-                // Previous/Next buttons
                 if (ImGui.Button("◀", new Vector2(25 * totalScale, 0)))
                 {
                     selectedBackgroundIndex = selectedBackgroundIndex > 0 ? selectedBackgroundIndex - 1 : backgroundDisplayNames.Length - 1;
@@ -518,7 +500,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PopStyleVar(2);
                 ImGui.PopStyleColor(4);
 
-                // Apply
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
@@ -536,7 +517,6 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.SameLine();
 
-                // Apply button styling
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.15f, 0.15f, 0.15f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.25f, 0.25f, 0.25f, 1.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.35f, 0.35f, 0.35f, 1.0f));
@@ -555,7 +535,102 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.Spacing();
 
-                // Effects
+                ImGui.Text("Or use a custom image URL:");
+                ImGui.SameLine();
+                ImGui.TextDisabled("ⓘ");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Enter a direct URL to an image file. This overrides the preset selection above.\nTip: For Imgur, right-click the image → 'Open image in new tab' → copy that URL.");
+
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
+
+                ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - (160 * totalScale));
+                if (string.IsNullOrEmpty(rpBackgroundUrlInput) && !string.IsNullOrEmpty(rp.RPBackgroundImageUrl))
+                    rpBackgroundUrlInput = rp.RPBackgroundImageUrl;
+                ImGui.InputTextWithHint("##RPBackgroundUrl", "https://example.com/background.png", ref rpBackgroundUrlInput, 500);
+
+                ImGui.SameLine();
+
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.5f, 0.2f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.3f, 0.6f, 0.3f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.25f, 0.55f, 0.25f, 1.0f));
+                if (ImGui.Button("Apply##RPBgUrl", new Vector2(70 * totalScale, 0)) && !string.IsNullOrWhiteSpace(rpBackgroundUrlInput))
+                {
+                    rp.RPBackgroundImageUrl = rpBackgroundUrlInput.Trim();
+                    if (!downloadingRPBackgrounds.Contains(rp.RPBackgroundImageUrl))
+                        System.Threading.Tasks.Task.Run(async () => await DownloadRPBackgroundImageAsync(rp.RPBackgroundImageUrl));
+                }
+                ImGui.PopStyleColor(3);
+
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.2f, 0.2f, 0.9f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.6f, 0.3f, 0.3f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.55f, 0.25f, 0.25f, 1.0f));
+                if (!string.IsNullOrEmpty(rp.RPBackgroundImageUrl) && ImGui.Button("Clear##RPBgUrl", new Vector2(70 * totalScale, 0)))
+                {
+                    rp.RPBackgroundImageUrl = null;
+                    rpBackgroundUrlInput = "";
+                }
+                ImGui.PopStyleColor(3);
+
+                ImGui.PopStyleColor(3);
+
+                if (!string.IsNullOrEmpty(rp.RPBackgroundImageUrl))
+                {
+                    if (downloadingRPBackgrounds.Contains(rp.RPBackgroundImageUrl))
+                        ImGui.TextColored(new Vector4(1f, 0.8f, 0.3f, 1f), "Downloading...");
+                    else if (File.Exists(GetRPBackgroundImageCachePath(rp.RPBackgroundImageUrl)))
+                        ImGui.TextColored(new Vector4(0.5f, 1f, 0.5f, 1f), "Background loaded");
+                    else
+                        ImGui.TextColored(new Vector4(1f, 0.5f, 0.5f, 1f), "Failed to load");
+
+                    ImGui.Text("Background Adjustments:");
+                    ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, 0.9f));
+                    ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, 0.9f));
+                    ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
+                    ImGui.PushStyleColor(ImGuiCol.SliderGrab, new Vector4(character.NameplateColor.X, character.NameplateColor.Y, character.NameplateColor.Z, 1.0f));
+                    ImGui.PushStyleColor(ImGuiCol.SliderGrabActive, new Vector4(character.NameplateColor.X * 1.2f, character.NameplateColor.Y * 1.2f, character.NameplateColor.Z * 1.2f, 1.0f));
+                    ImGui.PushItemWidth(160 * totalScale);
+
+                    var rpOpacity = rp.RPBackgroundImageOpacity;
+                    if (ImGui.SliderFloat("Opacity##RPBg", ref rpOpacity, 0.1f, 1.0f, "%.1f"))
+                    {
+                        rp.RPBackgroundImageOpacity = rpOpacity;
+                    }
+
+                    var rpZoom = rp.RPBackgroundImageZoom;
+                    if (ImGui.SliderFloat("Zoom##RPBg", ref rpZoom, 0.5f, 3.0f, "%.1fx"))
+                    {
+                        rp.RPBackgroundImageZoom = rpZoom;
+                    }
+
+                    var rpPosX = rp.RPBackgroundImageOffsetX;
+                    if (ImGui.SliderFloat("X Offset##RPBg", ref rpPosX, -1.0f, 1.0f, "%.2f"))
+                    {
+                        rp.RPBackgroundImageOffsetX = rpPosX;
+                    }
+
+                    var rpPosY = rp.RPBackgroundImageOffsetY;
+                    if (ImGui.SliderFloat("Y Offset##RPBg", ref rpPosY, -1.0f, 1.0f, "%.2f"))
+                    {
+                        rp.RPBackgroundImageOffsetY = rpPosY;
+                    }
+
+                    ImGui.PopItemWidth();
+
+                    if (ImGui.Button("Reset Position##RPBg"))
+                    {
+                        rp.RPBackgroundImageZoom = 1.0f;
+                        rp.RPBackgroundImageOffsetX = 0f;
+                        rp.RPBackgroundImageOffsetY = 0f;
+                    }
+
+                    ImGui.PopStyleColor(5);
+                }
+
+                ImGui.Spacing();
+
                 ImGui.Text("Visual Effects:");
                 ImGui.SameLine();
                 ImGui.TextDisabled("ⓘ");
@@ -570,7 +645,6 @@ namespace CharacterSelectPlugin.Windows
                 bool fire = rp.Effects.Fire;
                 bool smoke = rp.Effects.Smoke;
 
-                // Checkbox styling
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
@@ -578,7 +652,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * totalScale);
 
-                // Effects
                 var effectsStartPos = ImGui.GetCursorScreenPos();
                 plugin.RPVisualEffectsPos = effectsStartPos;
 
@@ -596,7 +669,6 @@ namespace CharacterSelectPlugin.Windows
                 var effectsEndPos = ImGui.GetCursorScreenPos();
                 plugin.RPVisualEffectsSize = new Vector2(ImGui.GetContentRegionAvail().X, effectsEndPos.Y - effectsStartPos.Y);
 
-                // Save 
                 rp.Effects.CircuitBoard = circuitBoard;
                 rp.Effects.Fireflies = fireflies;
                 rp.Effects.FallingLeaves = leaves;
@@ -607,7 +679,6 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.Spacing();
 
-                // Colour scheme with styling
                 ImGui.Text("Particle Colours:");
                 ImGui.SameLine();
                 ImGui.TextDisabled("ⓘ");
@@ -656,14 +727,12 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.EndChild();
 
-                // Profile info
                 ImGui.SameLine();
                 ImGui.BeginChild("##RightColumn", new Vector2(rightColumnWidth, contentHeight), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
                 ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), $"{character.Name} – Profile Info");
                 ImGui.Separator();
 
-                // Keep stylin on 'em 
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.28f, 0.28f, 0.28f, 0.9f));
@@ -671,7 +740,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * totalScale);
                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(6 * totalScale, 4 * totalScale));
 
-                // Profile fields
                 ImGui.Text("Pronouns:");
                 ImGui.SetNextItemWidth(-1);
                 ImGui.InputText("##editPronouns", ref pronouns, 100);
@@ -738,7 +806,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Separator();
                 ImGui.Spacing();
 
-                // Profile sharing
                 ImGui.Text("Profile Sharing:");
                 var sharing = profile.Sharing;
 
@@ -765,7 +832,6 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.PopStyleColor(3);
 
-                // NSFW Checkbox
                 ImGui.SameLine();
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
                 ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.22f, 0.22f, 0.22f, 0.9f));
@@ -773,10 +839,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleColor(ImGuiCol.CheckMark, new Vector4(1.0f, 0.6f, 0.2f, 1.0f));
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 4.0f * totalScale);
 
-                if (ImGui.Checkbox("NSFW", ref isNSFW))
-                {
-                    // Checkbox changed
-                }
+                ImGui.Checkbox("NSFW", ref isNSFW);
 
                 ImGui.PopStyleVar(1);
                 ImGui.PopStyleColor(4);
@@ -845,28 +908,29 @@ namespace CharacterSelectPlugin.Windows
 
                     if (!string.IsNullOrWhiteSpace(character.LastInGameName))
                     {
-                        // Check if we should upload to gallery based on main character setting
                         if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
                         {
                             string localName = player.Name.TextValue;
                             string worldName = player.HomeWorld.Value.Name.ToString();
                             string fullKey = $"{localName}@{worldName}";
 
-                            // Use the same ShouldUploadToGallery logic
-                            var userMain = plugin.Configuration.GalleryMainCharacter;
-                            bool shouldUpload = !string.IsNullOrEmpty(userMain) &&
-                                               fullKey == userMain &&
-                                               profile.Sharing == ProfileSharing.ShowcasePublic;
-
-                            if (shouldUpload)
+                            if (profile.Sharing != ProfileSharing.NeverShare)
                             {
-                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName, isCharacterApplication: false);
+                                ProfileSharing effectiveSharing = profile.Sharing;
+                                if (profile.Sharing == ProfileSharing.ShowcasePublic)
+                                {
+                                    var userMain = plugin.Configuration.GalleryMainCharacter;
+                                    bool onMainCharacter = !string.IsNullOrEmpty(userMain) && fullKey == userMain;
+                                    effectiveSharing = onMainCharacter ? ProfileSharing.ShowcasePublic : ProfileSharing.AlwaysShare;
+                                }
+
+                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName, isCharacterApplication: false, sharingOverride: effectiveSharing);
                                 plugin.GalleryWindow.RefreshLikeStatesAfterProfileUpdate(character.Name);
-                                Plugin.Log.Info($"[RPProfile] ✅ Uploaded profile for {character.Name} from RP editor");
+                                Plugin.Log.Info($"[RPProfile] ✅ Uploaded profile for {character.Name} from RP editor (effective sharing: {effectiveSharing})");
                             }
                             else
                             {
-                                Plugin.Log.Info($"[RPProfile] ⚠ Skipped gallery upload from RP editor - main character check failed");
+                                Plugin.Log.Debug($"[RPProfile] ⚠ Skipped upload from RP editor (NeverShare)");
                             }
                         }
                     }
@@ -874,13 +938,11 @@ namespace CharacterSelectPlugin.Windows
                     IsOpen = false;
                     plugin.IsRPProfileEditorOpen = false;
 
-                    // Auto-open view window with new profile
                     plugin.RPProfileViewer.SetCharacter(character);
                     plugin.RPProfileViewer.IsOpen = true;
                 }
                 else
                 {
-                    // Capture position for Tutorial
                     plugin.SaveRPProfileButtonPos = ImGui.GetItemRectMin();
                     plugin.SaveRPProfileButtonSize = ImGui.GetItemRectSize();
                 }
@@ -899,6 +961,11 @@ namespace CharacterSelectPlugin.Windows
                     rp.Bio = originalBio;
                     profile.Tags = originalTags;
                     rp.BackgroundImage = originalBackgroundImage;
+                    rp.RPBackgroundImageUrl = originalRPBackgroundImageUrl;
+                    rp.RPBackgroundImageOpacity = originalRPBackgroundImageOpacity;
+                    rp.RPBackgroundImageZoom = originalRPBackgroundImageZoom;
+                    rp.RPBackgroundImageOffsetX = originalRPBackgroundImageOffsetX;
+                    rp.RPBackgroundImageOffsetY = originalRPBackgroundImageOffsetY;
                     rp.Effects = originalEffects;
                     rp.ImageZoom = originalImageZoom;
                     rp.ImageOffset = originalImageOffset;
@@ -913,11 +980,19 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.PopStyleVar(2);
                 ImGui.PopStyleColor(4);
+
+                if (profile.Sharing == ProfileSharing.NeverShare)
+                {
+                    ImGui.Spacing();
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.7f, 0.3f, 1.0f));
+                    ImGui.TextWrapped("Note: Private profiles won't be visible to other Name Sync users.");
+                    ImGui.PopStyleColor();
+                }
             }
             finally
             {
-                ImGui.PopStyleVar(6);
-                ImGui.PopStyleColor(10);
+                ThemeHelper.PopThemeStyleVars(themeStyleVarCount);
+                ThemeHelper.PopThemeColors(themeColorCount);
             }
         }
 
@@ -943,7 +1018,7 @@ namespace CharacterSelectPlugin.Windows
 
         private string GetColorSchemeDisplayName(ParticleColorScheme scheme) => scheme switch
         {
-            ParticleColorScheme.Auto => "Auto (Match Background)",
+            ParticleColorScheme.Auto => "Profile Accent",
             ParticleColorScheme.Warm => "Warm (Orange/Gold)",
             ParticleColorScheme.Cool => "Cool (Blue/Teal)",
             ParticleColorScheme.Forest => "Forest (Green)",
@@ -998,9 +1073,72 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
             }
+            catch
+            {
+            }
+        }
+
+        private string GetRPBackgroundImageCachePath(string imageUrl)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    return "";
+
+                var fileName = $"rpbg_{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(imageUrl)).Replace('/', '_').Replace('+', '-')}";
+                return Path.Combine(Plugin.PluginInterface.GetPluginConfigDirectory(), fileName);
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private async System.Threading.Tasks.Task DownloadRPBackgroundImageAsync(string imageUrl)
+        {
+            if (string.IsNullOrWhiteSpace(imageUrl))
+                return;
+
+            var imagePath = GetRPBackgroundImageCachePath(imageUrl);
+
+            if (File.Exists(imagePath))
+                return;
+
+            lock (downloadingRPBackgrounds)
+            {
+                if (downloadingRPBackgrounds.Contains(imageUrl))
+                    return;
+                downloadingRPBackgrounds.Add(imageUrl);
+            }
+
+            try
+            {
+                if (File.Exists(imagePath))
+                    return;
+
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(15);
+                var response = await client.GetAsync(imageUrl);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                    var tempPath = imagePath + ".tmp";
+                    await File.WriteAllBytesAsync(tempPath, imageBytes);
+                    File.Move(tempPath, imagePath);
+                    Plugin.Log.Info($"Downloaded RP background image: {imageUrl}");
+                }
+            }
             catch (Exception ex)
             {
-                // Silently handle sync errors
+                Plugin.Log.Error($"Failed to download RP background image {imageUrl}: {ex.Message}");
+            }
+            finally
+            {
+                lock (downloadingRPBackgrounds)
+                {
+                    downloadingRPBackgrounds.Remove(imageUrl);
+                }
             }
         }
     }

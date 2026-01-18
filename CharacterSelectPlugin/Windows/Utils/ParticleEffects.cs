@@ -59,21 +59,21 @@ namespace CharacterSelectPlugin.Effects
                 if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
                 {
                     baseColor = isFavorited
-                        ? new Vector4(1f, 1f, 1f, 1f) // Pure white for winter/Christmas favorites
-                        : new Vector4(0.7f, 0.7f, 0.8f, 1f); // Light gray for unfavorited
+                        ? new Vector4(1f, 1f, 1f, 1f) // Pure white for winter/Christmas favourites
+                        : new Vector4(0.7f, 0.7f, 0.8f, 1f); // Light grey for unfavourited
                 }
                 else
                 {
                     baseColor = isFavorited
-                        ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favorited (default/other themes)
-                        : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Gray for unfavorited
+                        ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favourited (default/other themes)
+                        : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Grey for unfavourited
                 }
             }
             else
             {
                 baseColor = isFavorited
-                    ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favorited (default)
-                    : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Gray for unfavorited
+                    ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favourited (default)
+                    : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Grey for unfavourited
             }
 
             for (int i = 0; i < particleCount; i++)
