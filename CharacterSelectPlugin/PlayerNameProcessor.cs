@@ -42,6 +42,9 @@ namespace CharacterSelectPlugin
         // Target bar addons
         private static readonly string[] TargetAddonNames = { "_TargetInfo", "_TargetInfoMainTarget", "_TargetInfoCastBar" };
 
+        // Track which physical names we've replaced on nameplates (to properly reset them)
+        private readonly HashSet<string> replacedNameplateNames = new();
+
         public PlayerNameProcessor(
             Plugin plugin,
             INamePlateGui namePlateGui,
@@ -164,12 +167,16 @@ namespace CharacterSelectPlugin
             return true;
         }
 
-        /// <summary>Create coloured name with wave glow effect.</summary>
+        /// <summary>Create coloured name with wave glow effect and italics.</summary>
         private SeString CreateColoredName(string name, Vector3 glowColor)
         {
-            var builder = new LuminaSeStringBuilder();
+            var payloads = new List<Payload>();
 
-            // White text
+            // Italics on
+            payloads.Add(EmphasisItalicPayload.ItalicsOn);
+
+            // Build coloured part with wave glow
+            var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
 
             // Per-char wave glow
@@ -183,10 +190,16 @@ namespace CharacterSelectPlugin
 
             builder.PopColor();
 
-            return SeString.Parse(builder.GetViewAsSpan());
+            var coloredPart = SeString.Parse(builder.GetViewAsSpan());
+            payloads.AddRange(coloredPart.Payloads);
+
+            // Italics off
+            payloads.Add(EmphasisItalicPayload.ItalicsOff);
+
+            return new SeString(payloads);
         }
 
-        /// <summary>Replace name in text, preserving context (level, FC tag, etc.).</summary>
+        /// <summary>Replace name in text, preserving context (level, FC tag, etc.) with italics.</summary>
         private SeString? CreateColoredNameWithContext(string fullText, string nameToReplace, string newName, Vector3 glowColor)
         {
             var nameIndex = fullText.IndexOf(nameToReplace, StringComparison.OrdinalIgnoreCase);
@@ -196,15 +209,19 @@ namespace CharacterSelectPlugin
             var beforeName = fullText.Substring(0, nameIndex);
             var afterName = fullText.Substring(nameIndex + nameToReplace.Length);
 
-            var builder = new LuminaSeStringBuilder();
+            var payloads = new List<Payload>();
 
-            // Text before name
+            // Text before name (not italicized)
             if (!string.IsNullOrEmpty(beforeName))
             {
-                builder.Append(beforeName);
+                payloads.Add(new TextPayload(beforeName));
             }
 
+            // Italics on for the name
+            payloads.Add(EmphasisItalicPayload.ItalicsOn);
+
             // Name with wave glow
+            var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
             for (int i = 0; i < newName.Length; i++)
             {
@@ -215,13 +232,19 @@ namespace CharacterSelectPlugin
             }
             builder.PopColor();
 
-            // Text after name
+            var coloredPart = SeString.Parse(builder.GetViewAsSpan());
+            payloads.AddRange(coloredPart.Payloads);
+
+            // Italics off
+            payloads.Add(EmphasisItalicPayload.ItalicsOff);
+
+            // Text after name (not italicized)
             if (!string.IsNullOrEmpty(afterName))
             {
-                builder.Append(afterName);
+                payloads.Add(new TextPayload(afterName));
             }
 
-            return SeString.Parse(builder.GetViewAsSpan());
+            return new SeString(payloads);
         }
 
         /// <summary>Create chat name with italics and solid glow.</summary>
@@ -265,11 +288,12 @@ namespace CharacterSelectPlugin
             if (!selfReplacementEnabled && !sharedReplacementEnabled)
                 return;
 
-            // Reveal actual names while keybind held
-            if (IsRevealKeybindHeld())
-                return;
+            // Check if reveal keybind is held - we still need to process nameplates
+            // to ensure they show original names (can't just return early as modifications persist)
+            var revealActualNames = IsRevealKeybindHeld();
 
             var activeChar = selfReplacementEnabled ? plugin.GetActiveCharacter() : null;
+            if (activeChar?.ExcludeFromNameSync == true) activeChar = null; // Per-character opt-out
 
             foreach (var handler in handlers)
             {
@@ -286,12 +310,20 @@ namespace CharacterSelectPlugin
                 {
                     if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
                     {
-                        handler.NameParts.Text = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
-
-                        // Hide FC tag
-                        if (plugin.Configuration.HideFCTagInNameplate)
+                        if (revealActualNames)
                         {
-                            handler.RemoveFreeCompanyTag();
+                            // Explicitly set back to original name (nameplate might have cached our modification)
+                            handler.NameParts.Text = new SeString(new TextPayload(localPlayer.Name.TextValue));
+                        }
+                        else
+                        {
+                            handler.NameParts.Text = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+
+                            // Hide FC tag
+                            if (plugin.Configuration.HideFCTagInNameplate)
+                            {
+                                handler.RemoveFreeCompanyTag();
+                            }
                         }
                     }
                 }
@@ -310,16 +342,29 @@ namespace CharacterSelectPlugin
 
                     var physicalName = $"{playerName}@{worldName}";
 
-                    // Queue lookup (handles refresh internally)
+                    // Always queue lookup so cache stays fresh
                     plugin.SharedNameManager?.QueueLookup(physicalName);
 
-                    // Check cache
+                    // Check if this player has a CS+ name
                     var sharedEntry = plugin.SharedNameManager?.GetCachedName(physicalName);
 
-                    if (sharedEntry != null)
+                    if (sharedEntry != null && !revealActualNames)
                     {
                         // Replace with their CS+ name
                         handler.NameParts.Text = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
+                        replacedNameplateNames.Add(physicalName);
+                    }
+                    else if (replacedNameplateNames.Contains(physicalName))
+                    {
+                        // Reset to original name: either reveal is held, or they no longer have a CS+ name
+                        handler.NameParts.Text = new SeString(new TextPayload(playerName));
+
+                        // Only remove from tracking if they truly don't have a CS+ name anymore
+                        // (not just reveal being held)
+                        if (!revealActualNames)
+                        {
+                            replacedNameplateNames.Remove(physicalName);
+                        }
                     }
                 }
             }
@@ -355,7 +400,7 @@ namespace CharacterSelectPlugin
             if (selfReplacementEnabled && senderText.Contains(localName))
             {
                 var activeChar = plugin.GetActiveCharacter();
-                if (activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
+                if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(activeChar.Name))
                 {
                     sender = ReplaceSenderName(sender, localName, activeChar.Name, activeChar.NameplateColor);
                     return;
@@ -440,8 +485,10 @@ namespace CharacterSelectPlugin
             if (!selfReplacementEnabled && !sharedReplacementEnabled)
                 return;
 
-            // Reveal actual names while keybind held
-            if (IsRevealKeybindHeld())
+            // Check reveal keybind - if held, don't apply name replacements
+            // The game will naturally update target bar with original names
+            var revealActualNames = IsRevealKeybindHeld();
+            if (revealActualNames)
                 return;
 
             try
@@ -457,7 +504,7 @@ namespace CharacterSelectPlugin
                 if (selfReplacementEnabled)
                 {
                     var activeChar = plugin.GetActiveCharacter();
-                    if (activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
+                    if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(activeChar.Name))
                     {
                         var localName = localPlayer.Name.TextValue;
                         ReplaceNameInAllTextNodes(addon, localName, activeChar.Name, activeChar.NameplateColor);
@@ -591,6 +638,7 @@ namespace CharacterSelectPlugin
             var localName = localPlayer.Name.TextValue;
 
             var activeChar = selfReplacementEnabled ? plugin.GetActiveCharacter() : null;
+            if (activeChar?.ExcludeFromNameSync == true) activeChar = null; // Per-character opt-out
 
             // Build set of all OUR CS+ character names (for identifying our slot)
             var ourCSNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

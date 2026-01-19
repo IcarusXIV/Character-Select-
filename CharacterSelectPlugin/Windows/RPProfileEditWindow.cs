@@ -176,7 +176,8 @@ namespace CharacterSelectPlugin.Windows
         {
             if (character?.RPProfile?.LeftContentBoxes?.Count > 0)
             {
-                leftContentBoxes = new List<ContentBox>(character.RPProfile.LeftContentBoxes);
+                // Deep clone to avoid modifying original data
+                leftContentBoxes = character.RPProfile.LeftContentBoxes.Select(b => b.Clone()).ToList();
                 foreach (var box in leftContentBoxes)
                 {
                     if (box.LayoutType == ContentBoxLayoutType.Standard)
@@ -201,7 +202,8 @@ namespace CharacterSelectPlugin.Windows
 
             if (character?.RPProfile?.RightContentBoxes?.Count > 0)
             {
-                rightContentBoxes = new List<ContentBox>(character.RPProfile.RightContentBoxes);
+                // Deep clone to avoid modifying original data
+                rightContentBoxes = character.RPProfile.RightContentBoxes.Select(b => b.Clone()).ToList();
                 foreach (var box in rightContentBoxes)
                 {
                     if (box.LayoutType == ContentBoxLayoutType.Standard)

@@ -3305,8 +3305,9 @@ namespace CharacterSelectPlugin
                     // Only set character name if it's not already set
                     profile.CharacterName ??= match.Name;
 
-                    // Sync the shared name visibility setting from Configuration
-                    profile.AllowOthersToSeeMyCSName = config?.AllowOthersToSeeMyCSName ?? true;
+                    // Sync the shared name visibility setting - respect per-character exclusion
+                    bool globalSetting = config?.AllowOthersToSeeMyCSName ?? true;
+                    profile.AllowOthersToSeeMyCSName = match.ExcludeFromNameSync ? false : globalSetting;
 
                     // Only set nameplate colour if it's not set (all zeros)
                     if (profile.NameplateColor.X <= 0f
@@ -3934,10 +3935,10 @@ namespace CharacterSelectPlugin
             autoLoadAlreadyRanThisStartup = true;
 
             // First check for specific character assignment
-            if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName))
+            if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignmentValue))
             {
                 // Check if assignment is "None" - skip all auto-application
-                if (assignedCharacterName == "None")
+                if (assignmentValue == "None")
                 {
                     Plugin.Log.Debug($"[AutoLoad-Assignment] ⚠ Assignment set to 'None' for {fullKey} - skipping all auto-application");
                     lastAppliedCharacter = fullKey;
@@ -3945,12 +3946,34 @@ namespace CharacterSelectPlugin
                     return;
                 }
 
+                // Parse the assignment to get character name and optional design name
+                var (assignedCharacterName, assignedDesignName) = ParseCharacterAssignment(assignmentValue);
+
                 var assignedCharacter = Characters.FirstOrDefault(c => c.Name == assignedCharacterName);
                 if (assignedCharacter != null)
                 {
-                    Plugin.Log.Debug($"[AutoLoad-Assignment] ✅ Applying assigned character {assignedCharacter.Name} for {fullKey}");
-                    int designIndex = GetLastUsedDesignIndex(assignedCharacter);
-                    Plugin.Log.Debug($"[AutoLoad-Assignment] Design index for {assignedCharacter.Name}: {designIndex}");
+                    int designIndex;
+                    if (!string.IsNullOrEmpty(assignedDesignName))
+                    {
+                        // Use specified design from assignment
+                        designIndex = assignedCharacter.Designs.FindIndex(d => d.Name == assignedDesignName);
+                        if (designIndex < 0)
+                        {
+                            Plugin.Log.Warning($"[AutoLoad-Assignment] Design '{assignedDesignName}' not found, using last used design");
+                            designIndex = GetLastUsedDesignIndex(assignedCharacter);
+                        }
+                        else
+                        {
+                            Plugin.Log.Debug($"[AutoLoad-Assignment] Using assigned design: {assignedDesignName}");
+                        }
+                    }
+                    else
+                    {
+                        // No design specified, use last used
+                        designIndex = GetLastUsedDesignIndex(assignedCharacter);
+                    }
+
+                    Plugin.Log.Debug($"[AutoLoad-Assignment] ✅ Applying assigned character {assignedCharacter.Name} for {fullKey} (design index: {designIndex})");
                     ApplyProfile(assignedCharacter, designIndex);
                     lastAppliedCharacter = fullKey;
                     assignmentAppliedForCharacter = fullKey;
@@ -3961,11 +3984,8 @@ namespace CharacterSelectPlugin
                 {
                     Plugin.Log.Debug($"[AutoLoad-Assignment] ❌ Assigned character '{assignedCharacterName}' not found for {fullKey}");
                     // Remove invalid assignment (but keep "None" assignments)
-                    if (assignedCharacterName != "None")
-                    {
-                        Configuration.CharacterAssignments.Remove(fullKey);
-                        Configuration.Save();
-                    }
+                    Configuration.CharacterAssignments.Remove(fullKey);
+                    Configuration.Save();
                 }
             }
 
@@ -4081,6 +4101,36 @@ namespace CharacterSelectPlugin
 
         /// <summary>Parse a job assignment value into character and optional design name.</summary>
         public (string? CharacterName, string? DesignName) ParseJobAssignment(string assignmentValue)
+        {
+            if (string.IsNullOrEmpty(assignmentValue))
+                return (null, null);
+
+            // Format: "Character:{CharacterName}" or "Design:{CharacterName}:{DesignName}"
+            if (assignmentValue.StartsWith("Character:", StringComparison.OrdinalIgnoreCase))
+            {
+                var characterName = assignmentValue.Substring("Character:".Length);
+                return (characterName, null);
+            }
+            else if (assignmentValue.StartsWith("Design:", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = assignmentValue.Substring("Design:".Length).Split(':', 2);
+                if (parts.Length == 2)
+                {
+                    return (parts[0], parts[1]);
+                }
+                else if (parts.Length == 1)
+                {
+                    return (parts[0], null);
+                }
+            }
+
+            // Legacy format - just character name
+            return (assignmentValue, null);
+        }
+
+        /// <summary>Parse a character assignment value into character and optional design name.</summary>
+        /// <remarks>Supports formats: "CharName" (legacy), "Character:CharName", "Design:CharName:DesignName"</remarks>
+        public (string? CharacterName, string? DesignName) ParseCharacterAssignment(string assignmentValue)
         {
             if (string.IsNullOrEmpty(assignmentValue))
                 return (null, null);

@@ -10,6 +10,10 @@ namespace CharacterSelectPlugin
     public class Character
     {
         public string Name { get; set; }
+
+        /// <summary>When true, this character's name won't be shared via Name Sync regardless of global setting.</summary>
+        public bool ExcludeFromNameSync { get; set; } = false;
+
         public string Macros { get; set; } = ""; 
         public string? ImagePath { get; set; }
         public List<CharacterDesign> Designs { get; set; }

@@ -1955,8 +1955,8 @@ namespace CharacterSelectPlugin.Windows
             // Main card background
             drawList.AddRectFilled(cardMin, cardMax, ImGui.GetColorU32(bgColor), cornerRadius);
 
-            // Accent border
-            drawList.AddRectFilled(cardMin, cardMin + new Vector2(4f * scale, cardSize.Y), ImGui.GetColorU32(accentColor), cornerRadius, ImDrawFlags.RoundCornersLeft);
+            // Accent border (use smaller corner radius so the thin bar renders properly)
+            drawList.AddRectFilled(cardMin, cardMin + new Vector2(4f * scale, cardSize.Y), ImGui.GetColorU32(accentColor), 2f * scale, ImDrawFlags.RoundCornersLeft);
 
             // Card border
             drawList.AddRect(cardMin, cardMax, ImGui.GetColorU32(borderColor), cornerRadius, ImDrawFlags.None, 1f * scale);
@@ -1969,6 +1969,8 @@ namespace CharacterSelectPlugin.Windows
             }
 
             string uniqueId = $"card_{characterKey}";
+            // Push transparent background so the accent bar shows through
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0, 0, 0, 0));
             ImGui.BeginChild(uniqueId, cardSize, false);
 
             // Profile loading optimization
@@ -2558,6 +2560,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.EndPopup();
             }
             ImGui.EndChild();
+            ImGui.PopStyleColor(); // Pop transparent ChildBg
         }
 
 
@@ -3305,8 +3308,8 @@ namespace CharacterSelectPlugin.Windows
             // Main card background
             drawList.AddRectFilled(cardMin, cardMax, ImGui.GetColorU32(bgColor), cornerRadius);
 
-            // Accent border
-            drawList.AddRectFilled(cardMin, cardMin + new Vector2(4f * scale, cardSize.Y), ImGui.GetColorU32(accentColor), cornerRadius, ImDrawFlags.RoundCornersLeft);
+            // Accent border (use smaller corner radius so the thin bar renders properly)
+            drawList.AddRectFilled(cardMin, cardMin + new Vector2(4f * scale, cardSize.Y), ImGui.GetColorU32(accentColor), 2f * scale, ImDrawFlags.RoundCornersLeft);
 
             // Card border
             drawList.AddRect(cardMin, cardMax, ImGui.GetColorU32(borderColor), cornerRadius, ImDrawFlags.None, 1f * scale);
@@ -3319,6 +3322,8 @@ namespace CharacterSelectPlugin.Windows
             }
 
             string uniqueId = $"friend_card_{characterKey}";
+            // Push transparent background so the accent bar shows through
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0, 0, 0, 0));
             ImGui.BeginChild(uniqueId, cardSize, false);
 
             // Profile loading optimization
@@ -3819,6 +3824,7 @@ namespace CharacterSelectPlugin.Windows
             }
 
             ImGui.EndChild();
+            ImGui.PopStyleColor(); // Pop transparent ChildBg
         }
 
         private List<GalleryProfile> GetPlayerProfiles(string physicalCharacterKey)

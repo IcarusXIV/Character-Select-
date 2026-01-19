@@ -2116,6 +2116,13 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             plugin.ExecuteMacro(character.Macros, character, null);
+
+            // Switch gearset if assigned at character level
+            if (plugin.Configuration.EnableGearsetAssignments && character.AssignedGearset.HasValue)
+            {
+                plugin.SwitchToGearset(character.AssignedGearset.Value);
+            }
+
             plugin.SetActiveCharacter(character);
 
             // Check if we should upload to server
@@ -2379,6 +2386,12 @@ namespace CharacterSelectPlugin.Windows.Components
         public void ClearTextCache()
         {
             textSizeCache.Clear();
+        }
+
+        /// <summary>Returns currently visible characters (respects search and tag filters).</summary>
+        public List<Character> GetVisibleCharacters()
+        {
+            return GetFilteredCharacters();
         }
 
     }

@@ -3786,15 +3786,16 @@ namespace CharacterSelectPlugin.Windows
                                         GetSelectedGalleryPreviewPath() == imagePath;
                     
                     // Apply zoom and offset - use gallery settings if displaying gallery image
+                    // Scale offset proportionally since expanded uses 160px frame vs 140px in editor/collapsed
                     float zoom = Math.Clamp(rp.ImageZoom, 0.1f, 10.0f);
-                    Vector2 offset = rp.ImageOffset * scale;
+                    Vector2 offset = rp.ImageOffset * scale * (imageSize / (140f * scale));
                     
                     // Override with gallery image settings if displaying a gallery image
                     if (isGalleryImage && rp.SelectedGalleryPreviewIndex >= 0 && rp.SelectedGalleryPreviewIndex < rp.GalleryImages.Count)
                     {
                         var selectedImage = rp.GalleryImages[rp.SelectedGalleryPreviewIndex];
                         zoom = Math.Clamp(selectedImage.Zoom, 0.1f, 10.0f);
-                        offset = selectedImage.Offset * scale;
+                        offset = selectedImage.Offset * scale * (imageSize / (140f * scale));
                     }
                     
                     // Calculate the actual draw size with zoom

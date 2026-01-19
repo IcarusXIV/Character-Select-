@@ -42,6 +42,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterAutomation = "";
         private string editedCharacterMoodlePreset = "";
         private int? editedCharacterGearset = null;
+        private bool editedCharacterExcludeFromNameSync = false;
 
         // Honorific fields
         private string editedCharacterHonorificTitle = "";
@@ -231,10 +232,25 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 if (IsEditWindowOpen) editedCharacterName = tempName;
                 else plugin.NewCharacterName = tempName;
-                
+
                 // Validate name on change
                 ValidateCharacterName(tempName);
-            }, "Enter your OC's name or nickname for profile here.", scale);
+            }, "Enter your OC's name or nickname for profile here.", scale,
+            // Name Sync exclusion checkbox - after tooltip, only show if Name Sync sharing is enabled
+            plugin.Configuration.AllowOthersToSeeMyCSName ? () =>
+            {
+                ImGui.SameLine();
+                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 4 * scale); // Small gap
+                bool tempExclude = IsEditWindowOpen ? editedCharacterExcludeFromNameSync : false;
+                if (ImGui.Checkbox("Exclude from Name Sync", ref tempExclude))
+                {
+                    if (IsEditWindowOpen) editedCharacterExcludeFromNameSync = tempExclude;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("When checked, Name Sync won't apply to this character.");
+                }
+            } : null);
 
             ImGui.Separator();
 
@@ -390,7 +406,7 @@ namespace CharacterSelectPlugin.Windows.Components
         }
 
         private void DrawFormField(string label, float labelWidth, float inputWidth, float inputOffset,
-                                 System.Action drawInput, string tooltip, float scale)
+                                 System.Action drawInput, string tooltip, float scale, System.Action? afterTooltip = null)
         {
             ImGui.SetCursorPosX(10 * scale);
             ImGui.Text(label);
@@ -414,6 +430,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopTextWrapPos();
                 ImGui.EndTooltip();
             }
+
+            // Optional content after tooltip
+            afterTooltip?.Invoke();
         }
 
         private void DrawSecretModeModsField(float labelWidth, float inputWidth, float inputOffset, float scale)
@@ -1986,6 +2005,7 @@ namespace CharacterSelectPlugin.Windows.Components
             character.HonorificAnimationStyle = editedCharacterHonorificAnimationStyle;
             character.MoodlePreset = editedCharacterMoodlePreset;
             character.AssignedGearset = editedCharacterGearset;
+            character.ExcludeFromNameSync = editedCharacterExcludeFromNameSync;
 
             character.Macros = isAdvancedModeCharacter ? advancedCharacterMacroText : editedCharacterMacros;
 
@@ -2085,6 +2105,7 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterHonorificAnimationStyle = character.HonorificAnimationStyle;
             editedCharacterMoodlePreset = character.MoodlePreset ?? "";
             editedCharacterGearset = character.AssignedGearset;
+            editedCharacterExcludeFromNameSync = character.ExcludeFromNameSync;
 
             string safeAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";
             editedCharacterAutomation = safeAutomation;

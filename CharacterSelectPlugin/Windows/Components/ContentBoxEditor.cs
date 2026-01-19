@@ -565,18 +565,19 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             
             // Key-value pairs
-            List<KeyValuePairData>? toRemove = null;
-            
+            int? indexToRemove = null;
+
             if (ImGui.BeginTable("##kvEditor", 3, ImGuiTableFlags.None))
             {
                 ImGui.TableSetupColumn("Key", ImGuiTableColumnFlags.WidthFixed, 150 * scale);
                 ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("", ImGuiTableColumnFlags.WidthFixed, 25 * scale);
-                
-                foreach (var pair in pairs)
+
+                for (int i = 0; i < pairs.Count; i++)
                 {
+                    var pair = pairs[i];
                     ImGui.TableNextRow();
-                    ImGui.PushID(pair.Id);
+                    ImGui.PushID(i);  // Use stable index instead of random GUID
                     
                     // Key
                     ImGui.TableNextColumn();
@@ -602,22 +603,20 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.TableNextColumn();
                     if (ImGui.Button("X"))
                     {
-                        toRemove ??= new List<KeyValuePairData>();
-                        toRemove.Add(pair);
+                        indexToRemove = i;
                         modified = true;
                     }
-                    
+
                     ImGui.PopID();
                 }
-                
+
                 ImGui.EndTable();
             }
-            
-            // Remove marked pairs
-            if (toRemove != null)
+
+            // Remove marked pair by index
+            if (indexToRemove.HasValue)
             {
-                foreach (var pair in toRemove)
-                    pairs.Remove(pair);
+                pairs.RemoveAt(indexToRemove.Value);
             }
             
             // Add button
@@ -917,17 +916,21 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
         
-        private static List<KeyValuePairData> ParseKeyValuePairs(string keys, string values)
+        private static List<KeyValuePairData> ParseKeyValuePairs(string? keys, string? values)
         {
             var pairs = new List<KeyValuePairData>();
+
+            if (string.IsNullOrEmpty(keys) || string.IsNullOrEmpty(values))
+                return pairs;
+
             var keyArray = keys.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             var valueArray = values.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            
+
             for (int i = 0; i < Math.Min(keyArray.Length, valueArray.Length); i++)
             {
                 pairs.Add(new KeyValuePairData { Key = keyArray[i], Value = valueArray[i] });
             }
-            
+
             return pairs;
         }
         

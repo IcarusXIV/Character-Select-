@@ -37,8 +37,12 @@ namespace CharacterSelectPlugin.Windows.Components
         private int selectedBlockedUserIndex = -1;
         private string newRealCharacterBuffer = "";
         private string newCSCharacterBuffer = "";
+        private bool newAssignmentUseDesign = false;
+        private string newAssignmentDesignBuffer = "";
         private string editingAssignmentKey = "";
         private string editingAssignmentValue = "";
+        private bool editingAssignmentUseDesign = false;
+        private string editingAssignmentDesignBuffer = "";
         private string backupNameBuffer = "";
         private List<BackupFileInfo> availableBackups = new();
         private string lastBackupStatusMessage = "";
@@ -1413,18 +1417,31 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.Text("→");
                     ImGui.SameLine();
 
-                    // Different color for "None" assignments
+                    // Parse and display the assignment value
                     if (assignment.Value == "None")
                     {
                         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.6f, 0.6f, 1f)); // Reddish for None
                         ImGui.Text("None (No Auto-Apply)");
+                        ImGui.PopStyleColor();
                     }
                     else
                     {
+                        var (charName, designName) = ParseCharacterAssignmentValue(assignment.Value);
                         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
-                        ImGui.Text(assignment.Value);
+                        if (!string.IsNullOrEmpty(designName))
+                        {
+                            ImGui.Text($"{charName}");
+                            ImGui.PopStyleColor();
+                            ImGui.SameLine();
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.7f, 0.9f, 1f));
+                            ImGui.Text($"({designName})");
+                        }
+                        else
+                        {
+                            ImGui.Text(charName);
+                        }
+                        ImGui.PopStyleColor();
                     }
-                    ImGui.PopStyleColor();
 
                     // Add edit and remove buttons
                     ImGui.SameLine();
@@ -1437,7 +1454,10 @@ namespace CharacterSelectPlugin.Windows.Components
                     if (ImGui.SmallButton($"Edit##{assignment.Key}"))
                     {
                         editingAssignmentKey = assignment.Key;
-                        editingAssignmentValue = assignment.Value;
+                        var (charName, designName) = ParseCharacterAssignmentValue(assignment.Value);
+                        editingAssignmentValue = charName;
+                        editingAssignmentUseDesign = !string.IsNullOrEmpty(designName);
+                        editingAssignmentDesignBuffer = designName ?? "";
                     }
                     ImGui.PopStyleColor(3);
                     
@@ -1492,6 +1512,8 @@ namespace CharacterSelectPlugin.Windows.Components
                     if (ImGui.Selectable("None", editingAssignmentValue == "None"))
                     {
                         editingAssignmentValue = "None";
+                        editingAssignmentUseDesign = false;
+                        editingAssignmentDesignBuffer = "";
                     }
 
                     // Add separator
@@ -1503,12 +1525,48 @@ namespace CharacterSelectPlugin.Windows.Components
                         bool isSelected = character.Name == editingAssignmentValue;
                         if (ImGui.Selectable(character.Name, isSelected))
                         {
-                            editingAssignmentValue = character.Name;
+                            if (editingAssignmentValue != character.Name)
+                            {
+                                editingAssignmentValue = character.Name;
+                                editingAssignmentUseDesign = false;
+                                editingAssignmentDesignBuffer = "";
+                            }
                         }
                         if (isSelected)
                             ImGui.SetItemDefaultFocus();
                     }
                     ImGui.EndCombo();
+                }
+
+                // Design selection (only show if a valid character is selected)
+                var editSelectedChar = plugin.Configuration.Characters.FirstOrDefault(c => c.Name == editingAssignmentValue);
+                if (editSelectedChar != null && editSelectedChar.Designs.Any())
+                {
+                    ImGui.Spacing();
+                    if (ImGui.Checkbox("Use specific design##Edit", ref editingAssignmentUseDesign))
+                    {
+                        if (!editingAssignmentUseDesign)
+                            editingAssignmentDesignBuffer = "";
+                    }
+
+                    if (editingAssignmentUseDesign)
+                    {
+                        ImGui.SetNextItemWidth(300f);
+                        if (ImGui.BeginCombo("##EditDesign", string.IsNullOrEmpty(editingAssignmentDesignBuffer) ? "Select Design" : editingAssignmentDesignBuffer))
+                        {
+                            foreach (var design in editSelectedChar.Designs.OrderBy(d => d.Name))
+                            {
+                                bool isSelected = design.Name == editingAssignmentDesignBuffer;
+                                if (ImGui.Selectable(design.Name, isSelected))
+                                {
+                                    editingAssignmentDesignBuffer = design.Name;
+                                }
+                                if (isSelected)
+                                    ImGui.SetItemDefaultFocus();
+                            }
+                            ImGui.EndCombo();
+                        }
+                    }
                 }
 
                 ImGui.Spacing();
@@ -1520,10 +1578,13 @@ namespace CharacterSelectPlugin.Windows.Components
                 
                 if (ImGui.Button("Save Changes"))
                 {
-                    plugin.Configuration.CharacterAssignments[editingAssignmentKey] = editingAssignmentValue;
+                    string designToSave = editingAssignmentUseDesign ? editingAssignmentDesignBuffer : null;
+                    plugin.Configuration.CharacterAssignments[editingAssignmentKey] = BuildCharacterAssignmentValue(editingAssignmentValue, designToSave);
                     plugin.Configuration.Save();
                     editingAssignmentKey = "";
                     editingAssignmentValue = "";
+                    editingAssignmentUseDesign = false;
+                    editingAssignmentDesignBuffer = "";
                 }
                 ImGui.PopStyleColor(3);
 
@@ -1537,6 +1598,8 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     editingAssignmentKey = "";
                     editingAssignmentValue = "";
+                    editingAssignmentUseDesign = false;
+                    editingAssignmentDesignBuffer = "";
                 }
                 ImGui.PopStyleColor(3);
 
@@ -1619,6 +1682,8 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (ImGui.Selectable("None", newCSCharacter == "None"))
                 {
                     newCSCharacterBuffer = "None";
+                    newAssignmentUseDesign = false;
+                    newAssignmentDesignBuffer = "";
                 }
 
                 // Add separator
@@ -1629,12 +1694,48 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     if (ImGui.Selectable(character.Name, character.Name == newCSCharacter))
                     {
-                        newCSCharacterBuffer = character.Name;
+                        if (newCSCharacterBuffer != character.Name)
+                        {
+                            newCSCharacterBuffer = character.Name;
+                            newAssignmentUseDesign = false;
+                            newAssignmentDesignBuffer = "";
+                        }
                     }
                 }
                 ImGui.EndCombo();
             }
             DrawTooltip("Choose which CS+ character should auto-apply for this in-game character.\nSelect 'None' to prevent any auto-application for this character.");
+
+            // Design selection (only show if a valid character is selected)
+            var newSelectedChar = plugin.Characters.FirstOrDefault(c => c.Name == newCSCharacterBuffer);
+            if (newSelectedChar != null && newSelectedChar.Designs.Any())
+            {
+                ImGui.Spacing();
+                if (ImGui.Checkbox("Use specific design##New", ref newAssignmentUseDesign))
+                {
+                    if (!newAssignmentUseDesign)
+                        newAssignmentDesignBuffer = "";
+                }
+
+                if (newAssignmentUseDesign)
+                {
+                    ImGui.SetNextItemWidth(300f);
+                    if (ImGui.BeginCombo("##NewDesign", string.IsNullOrEmpty(newAssignmentDesignBuffer) ? "Select Design" : newAssignmentDesignBuffer))
+                    {
+                        foreach (var design in newSelectedChar.Designs.OrderBy(d => d.Name))
+                        {
+                            bool isSelected = design.Name == newAssignmentDesignBuffer;
+                            if (ImGui.Selectable(design.Name, isSelected))
+                            {
+                                newAssignmentDesignBuffer = design.Name;
+                            }
+                            if (isSelected)
+                                ImGui.SetItemDefaultFocus();
+                        }
+                        ImGui.EndCombo();
+                    }
+                }
+            }
 
             ImGui.Spacing();
 
@@ -1647,11 +1748,14 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (ImGui.Button("Add Assignment"))
             {
-                plugin.Configuration.CharacterAssignments[newRealCharacterBuffer] = newCSCharacterBuffer;
+                string designToSave = newAssignmentUseDesign ? newAssignmentDesignBuffer : null;
+                plugin.Configuration.CharacterAssignments[newRealCharacterBuffer] = BuildCharacterAssignmentValue(newCSCharacterBuffer, designToSave);
                 plugin.Configuration.Save();
-                Plugin.Log.Debug($"[CharacterAssignment] Added: {newRealCharacterBuffer} → {newCSCharacterBuffer}");
+                Plugin.Log.Debug($"[CharacterAssignment] Added: {newRealCharacterBuffer} → {BuildCharacterAssignmentValue(newCSCharacterBuffer, designToSave)}");
                 newRealCharacterBuffer = "";
                 newCSCharacterBuffer = "";
+                newAssignmentUseDesign = false;
+                newAssignmentDesignBuffer = "";
             }
 
             if (!canAdd)
@@ -3448,6 +3552,44 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Set pending section to force ImGui to open it on next draw
             pendingExpandSection = sectionName;
+        }
+
+        /// <summary>
+        /// Parses a character assignment value into character name and optional design name.
+        /// Supports formats: "CharName" (legacy), "Character:CharName", "Design:CharName:DesignName"
+        /// </summary>
+        private (string CharacterName, string? DesignName) ParseCharacterAssignmentValue(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value == "None")
+                return (value ?? "", null);
+
+            if (value.StartsWith("Design:", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = value.Substring("Design:".Length).Split(':', 2);
+                return parts.Length >= 2 ? (parts[0], parts[1]) : (parts[0], null);
+            }
+
+            if (value.StartsWith("Character:", StringComparison.OrdinalIgnoreCase))
+            {
+                return (value.Substring("Character:".Length), null);
+            }
+
+            // Legacy format - just the character name
+            return (value, null);
+        }
+
+        /// <summary>
+        /// Builds a character assignment value string from character name and optional design name.
+        /// </summary>
+        private string BuildCharacterAssignmentValue(string characterName, string? designName)
+        {
+            if (characterName == "None")
+                return "None";
+
+            if (!string.IsNullOrEmpty(designName))
+                return $"Design:{characterName}:{designName}";
+
+            return $"Character:{characterName}";
         }
     }
 }

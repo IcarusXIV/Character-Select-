@@ -60,6 +60,14 @@ namespace CharacterSelectPlugin.Windows
                     MinimumSize = new System.Numerics.Vector2(360 * scale, 28 * scale),
                     MaximumSize = new System.Numerics.Vector2(360 * scale, 28 * scale),
                 };
+
+                // Push opaque button colours for compact mode (NoBackground means semi-transparent buttons are see-through)
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.16f, 0.16f, 0.16f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.22f, 0.22f, 0.22f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.28f, 0.28f, 0.28f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, 1.0f));
             }
             else
             {
@@ -234,6 +242,11 @@ namespace CharacterSelectPlugin.Windows
             }
             finally
             {
+                // Pop compact mode opaque colours if we pushed them
+                if (plugin.Configuration.QuickSwitchCompact)
+                {
+                    ImGui.PopStyleColor(6);
+                }
                 ThemeHelper.PopThemeColors(themeColorCount);
             }
         }

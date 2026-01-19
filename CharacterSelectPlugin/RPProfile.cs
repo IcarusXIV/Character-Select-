@@ -315,7 +315,7 @@ namespace CharacterSelectPlugin
         public string Dislikes { get; set; } = "";     // For Likes & Dislikes type
         public ContentBoxType Type { get; set; } = ContentBoxType.CoreIdentity;
         public ContentBoxLayoutType LayoutType { get; set; } = ContentBoxLayoutType.Standard;
-        
+
         // Additional fields for new layout types
         public string LeftColumn { get; set; } = "";   // For ProsCons, KeyValue layouts
         public string RightColumn { get; set; } = "";  // For ProsCons, KeyValue layouts
@@ -323,6 +323,26 @@ namespace CharacterSelectPlugin
         public string TaggedData { get; set; } = "";   // For Tagged layout
         public string QuoteText { get; set; } = "";    // For Quote layout
         public string QuoteAuthor { get; set; } = "";  // For Quote layout attribution
+
+        public ContentBox Clone()
+        {
+            return new ContentBox
+            {
+                Title = Title,
+                Subtitle = Subtitle,
+                Content = Content,
+                Likes = Likes,
+                Dislikes = Dislikes,
+                Type = Type,
+                LayoutType = LayoutType,
+                LeftColumn = LeftColumn,
+                RightColumn = RightColumn,
+                TimelineData = TimelineData,
+                TaggedData = TaggedData,
+                QuoteText = QuoteText,
+                QuoteAuthor = QuoteAuthor
+            };
+        }
     }
 
     public enum ContentBoxType
