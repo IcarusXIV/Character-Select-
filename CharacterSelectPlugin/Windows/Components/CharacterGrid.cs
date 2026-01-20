@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
@@ -57,6 +58,7 @@ namespace CharacterSelectPlugin.Windows.Components
         // Cache expensive string operations
         private readonly Dictionary<string, bool> fileExistsCache = new();
         private readonly Dictionary<string, Vector2> textSizeCache = new();
+        private volatile bool isCacheWarming = false;
 
         // Frame limiting for animations
         private float lastAnimationUpdate = 0f;
@@ -981,20 +983,29 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             if (!string.IsNullOrEmpty(characterImagePath))
             {
-                if (!fileExistsCache.TryGetValue(characterImagePath, out bool exists))
+                bool exists;
+                lock (fileExistsCache)
                 {
-                    exists = File.Exists(characterImagePath);
-                    fileExistsCache[characterImagePath] = exists;
+                    if (!fileExistsCache.TryGetValue(characterImagePath, out exists))
+                    {
+                        // Not in cache yet - check synchronously (should be rare if pre-warm ran)
+                        exists = File.Exists(characterImagePath);
+                        fileExistsCache[characterImagePath] = exists;
+                    }
                 }
 
                 if (exists)
                     return characterImagePath;
             }
 
-            if (!fileExistsCache.TryGetValue(defaultImagePath, out bool defaultExists))
+            bool defaultExists;
+            lock (fileExistsCache)
             {
-                defaultExists = File.Exists(defaultImagePath);
-                fileExistsCache[defaultImagePath] = defaultExists;
+                if (!fileExistsCache.TryGetValue(defaultImagePath, out defaultExists))
+                {
+                    defaultExists = File.Exists(defaultImagePath);
+                    fileExistsCache[defaultImagePath] = defaultExists;
+                }
             }
 
             return defaultExists ? defaultImagePath : "";
@@ -2380,6 +2391,70 @@ namespace CharacterSelectPlugin.Windows.Components
         public void ClearFileCache()
         {
             fileExistsCache.Clear();
+        }
+
+        /// <summary>
+        /// Pre-warms the file exists cache on a background thread.
+        /// This prevents UI freezing when opening the window for the first time,
+        /// especially for images on network paths.
+        /// </summary>
+        public void PreWarmCacheAsync()
+        {
+            if (isCacheWarming) return;
+            isCacheWarming = true;
+
+            Task.Run(() =>
+            {
+                try
+                {
+                    var characters = plugin.Configuration.Characters;
+                    string pluginDirectory = plugin.PluginDirectory;
+                    string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
+
+                    // Pre-check default image
+                    var defaultExists = File.Exists(defaultImagePath);
+                    lock (fileExistsCache)
+                    {
+                        fileExistsCache[defaultImagePath] = defaultExists;
+                    }
+
+                    // Pre-check all character images
+                    foreach (var character in characters.ToList())
+                    {
+                        if (!string.IsNullOrEmpty(character.ImagePath))
+                        {
+                            var exists = File.Exists(character.ImagePath);
+                            lock (fileExistsCache)
+                            {
+                                fileExistsCache[character.ImagePath] = exists;
+                            }
+                        }
+
+                        // Also check design preview images
+                        foreach (var design in character.Designs ?? Enumerable.Empty<CharacterDesign>())
+                        {
+                            if (!string.IsNullOrEmpty(design.PreviewImagePath))
+                            {
+                                var exists = File.Exists(design.PreviewImagePath);
+                                lock (fileExistsCache)
+                                {
+                                    fileExistsCache[design.PreviewImagePath] = exists;
+                                }
+                            }
+                        }
+                    }
+
+                    Plugin.Log.Info($"[CharacterGrid] Pre-warmed file cache for {fileExistsCache.Count} paths");
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error($"[CharacterGrid] Error pre-warming cache: {ex.Message}");
+                }
+                finally
+                {
+                    isCacheWarming = false;
+                }
+            });
         }
 
         // Method to clear text cache when font changes

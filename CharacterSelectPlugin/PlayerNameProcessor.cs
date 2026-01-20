@@ -170,6 +170,12 @@ namespace CharacterSelectPlugin
         /// <summary>Create coloured name with wave glow effect and italics.</summary>
         private SeString CreateColoredName(string name, Vector3 glowColor)
         {
+            // Use simple glow if configured (for compatibility with some systems)
+            if (plugin.Configuration.UseSimpleNameplateGlow)
+            {
+                return CreateSimpleColoredName(name, glowColor);
+            }
+
             var payloads = new List<Payload>();
 
             // Italics on
@@ -194,6 +200,25 @@ namespace CharacterSelectPlugin
             payloads.AddRange(coloredPart.Payloads);
 
             // Italics off
+            payloads.Add(EmphasisItalicPayload.ItalicsOff);
+
+            return new SeString(payloads);
+        }
+
+        /// <summary>Create coloured name with simple solid glow (no wave animation).</summary>
+        private SeString CreateSimpleColoredName(string name, Vector3 glowColor)
+        {
+            // Simple glow with italics - testing if italics work without wave effect
+            var payloads = new List<Payload>();
+            payloads.Add(EmphasisItalicPayload.ItalicsOn);
+
+            var builder = new LuminaSeStringBuilder();
+            builder.PushEdgeColorRgba(new Vector4(glowColor, 1f));
+            builder.Append(name);
+            builder.PopEdgeColor();
+
+            var coloredPart = SeString.Parse(builder.GetViewAsSpan());
+            payloads.AddRange(coloredPart.Payloads);
             payloads.Add(EmphasisItalicPayload.ItalicsOff);
 
             return new SeString(payloads);
@@ -284,8 +309,10 @@ namespace CharacterSelectPlugin
                                          plugin.Configuration.NameReplacementNameplate;
             var sharedReplacementEnabled = plugin.Configuration.EnableSharedNameReplacement &&
                                            plugin.Configuration.NameReplacementNameplate;
+            var rpProfileLookupEnabled = plugin.Configuration.ShowViewRPContextMenu;
 
-            if (!selfReplacementEnabled && !sharedReplacementEnabled)
+            // Continue if any feature needs nameplate processing
+            if (!selfReplacementEnabled && !sharedReplacementEnabled && !rpProfileLookupEnabled)
                 return;
 
             // Check if reveal keybind is held - we still need to process nameplates
@@ -327,8 +354,8 @@ namespace CharacterSelectPlugin
                         }
                     }
                 }
-                // Other players
-                else if (sharedReplacementEnabled)
+                // Other players - process for shared name replacement or RP profile lookup
+                else if (sharedReplacementEnabled || rpProfileLookupEnabled)
                 {
                     var playerChar = handler.PlayerCharacter;
                     if (playerChar == null)
@@ -342,28 +369,34 @@ namespace CharacterSelectPlugin
 
                     var physicalName = $"{playerName}@{worldName}";
 
-                    // Always queue lookup so cache stays fresh
-                    plugin.SharedNameManager?.QueueLookup(physicalName);
+                    // Queue lookups for both systems (they have internal checks)
+                    if (sharedReplacementEnabled)
+                        plugin.SharedNameManager?.QueueLookup(physicalName);
+                    if (rpProfileLookupEnabled)
+                        plugin.RPProfileLookupManager?.QueueLookup(physicalName);
 
-                    // Check if this player has a CS+ name
-                    var sharedEntry = plugin.SharedNameManager?.GetCachedName(physicalName);
-
-                    if (sharedEntry != null && !revealActualNames)
+                    // Name replacement only when shared replacement is enabled
+                    if (sharedReplacementEnabled)
                     {
-                        // Replace with their CS+ name
-                        handler.NameParts.Text = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
-                        replacedNameplateNames.Add(physicalName);
-                    }
-                    else if (replacedNameplateNames.Contains(physicalName))
-                    {
-                        // Reset to original name: either reveal is held, or they no longer have a CS+ name
-                        handler.NameParts.Text = new SeString(new TextPayload(playerName));
+                        var sharedEntry = plugin.SharedNameManager?.GetCachedName(physicalName);
 
-                        // Only remove from tracking if they truly don't have a CS+ name anymore
-                        // (not just reveal being held)
-                        if (!revealActualNames)
+                        if (sharedEntry != null && !revealActualNames)
                         {
-                            replacedNameplateNames.Remove(physicalName);
+                            // Replace with their CS+ name
+                            handler.NameParts.Text = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
+                            replacedNameplateNames.Add(physicalName);
+                        }
+                        else if (replacedNameplateNames.Contains(physicalName))
+                        {
+                            // Reset to original name: either reveal is held, or they no longer have a CS+ name
+                            handler.NameParts.Text = new SeString(new TextPayload(playerName));
+
+                            // Only remove from tracking if they truly don't have a CS+ name anymore
+                            // (not just reveal being held)
+                            if (!revealActualNames)
+                            {
+                                replacedNameplateNames.Remove(physicalName);
+                            }
                         }
                     }
                 }

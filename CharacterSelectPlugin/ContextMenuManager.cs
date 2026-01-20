@@ -89,7 +89,11 @@ namespace CharacterSelectPlugin.Managers
             {
                 var physicalName = $"{name}@{worldName}";
 
-                // View RP Profile (Priority 0 = top of plugin items, after native)
+                // Queue lookup for this player (for future interactions)
+                plugin.RPProfileLookupManager?.QueueLookup(physicalName);
+
+                // View RP Profile - for UI menus (chat, friend list, FC, etc.) always show
+                // since we can't pre-fetch non-nearby players
                 if (plugin.Configuration.ShowViewRPContextMenu)
                 {
                     args.AddMenuItem(new MenuItem
@@ -159,8 +163,13 @@ namespace CharacterSelectPlugin.Managers
                     {
                         var physicalName = $"{characterName}@{worldName}";
 
-                        // View RP Profile (Priority 0 = top of plugin items, after native)
-                        if (plugin.Configuration.ShowViewRPContextMenu)
+                        // Queue lookup for this player (backup, should already be cached via nameplate)
+                        plugin.RPProfileLookupManager?.QueueLookup(physicalName);
+
+                        // View RP Profile - for nearby players, only show if confirmed they have a profile
+                        // (pre-fetched via nameplate processing)
+                        if (plugin.Configuration.ShowViewRPContextMenu &&
+                            plugin.RPProfileLookupManager?.HasSharedProfile(physicalName) == true)
                         {
                             args.AddMenuItem(new MenuItem
                             {

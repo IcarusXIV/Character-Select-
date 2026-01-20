@@ -34,6 +34,9 @@ namespace CharacterSelectPlugin
         public bool IsMainWindowOpen { get; set; } = false;
         public bool EnableAutomations { get; set; } = false;
         public string LastSeenVersion { get; set; } = "";
+
+        /// <summary>Last seen patch notes version (e.g., "2.1"). Only changes when patch notes content changes.</summary>
+        public string LastSeenPatchNotesVersion { get; set; } = "";
         public ProfileSharing RPSharingMode { get; set; } = ProfileSharing.AlwaysShare;
         public List<string> KnownTags { get; set; } = new();
         public byte LastIdlePoseAppliedByPlugin { get; set; } = 255;
@@ -173,6 +176,10 @@ namespace CharacterSelectPlugin
 
         [JsonPropertyName("hideFCTagInNameplate")]
         public bool HideFCTagInNameplate { get; set; } = false;
+
+        /// <summary>Use simple solid glow instead of wave effect on nameplates (for compatibility).</summary>
+        [JsonPropertyName("useSimpleNameplateGlow")]
+        public bool UseSimpleNameplateGlow { get; set; } = false;
 
         // Shared Name Replacement
         [JsonPropertyName("enableSharedNameReplacement")]

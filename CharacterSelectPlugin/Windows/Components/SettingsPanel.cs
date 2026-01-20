@@ -975,6 +975,9 @@ namespace CharacterSelectPlugin.Windows.Components
                     plugin.Configuration.EnableSmartGrammarInDialogue = true;
                     plugin.Configuration.EnableRaceReplacement = true;
                     plugin.Configuration.ShowDialogueReplacementPreview = false; // Keep off by default
+
+                    // Initialize the processor on-demand (deferred from startup for performance)
+                    plugin.EnsureDialogueProcessorInitialized();
                 }
 
                 plugin.Configuration.Save();
@@ -1088,6 +1091,17 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PopStyleColor();
             ImGui.Spacing();
 
+            // Simple glow option - always visible so users can enable it before the main toggle
+            bool simpleGlow = plugin.Configuration.UseSimpleNameplateGlow;
+            if (ImGui.Checkbox("Use simple glow (compatibility)", ref simpleGlow))
+            {
+                plugin.Configuration.UseSimpleNameplateGlow = simpleGlow;
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("Use a simple solid glow instead of the animated wave effect.\nEnable this FIRST if Name Sync causes crashes.");
+
+            ImGui.Spacing();
+
             // Main toggle
             bool enableNameReplacement = plugin.Configuration.EnableNameReplacement;
             if (ImGui.Checkbox("Show my CS+ name to myself", ref enableNameReplacement))
@@ -1101,6 +1115,9 @@ namespace CharacterSelectPlugin.Windows.Components
                     plugin.Configuration.NameReplacementChat = true;
                     plugin.Configuration.NameReplacementPartyList = true;
                     // HideFCTagInNameplate stays at its current value (default false)
+
+                    // Initialize the processor on-demand (deferred from startup for performance)
+                    plugin.EnsurePlayerNameProcessorInitialized();
                 }
 
                 plugin.Configuration.Save();
@@ -1192,6 +1209,13 @@ namespace CharacterSelectPlugin.Windows.Components
             if (ImGui.Checkbox("Show other CS+ users' names", ref enableShared))
             {
                 plugin.Configuration.EnableSharedNameReplacement = enableShared;
+
+                // Initialize the processor on-demand (deferred from startup for performance)
+                if (enableShared)
+                {
+                    plugin.EnsurePlayerNameProcessorInitialized();
+                }
+
                 plugin.Configuration.Save();
             }
             DrawTooltip("See other CS+ users' character names instead of their in-game names.\nOnly shows for users who have opted in to share their name.\nThis is independent of self name replacement - you can use one without the other.");

@@ -53,6 +53,10 @@ namespace CharacterSelectPlugin.Windows
             this.designPanel = new DesignPanel(plugin, uiStyles);
             this.settingsPanel = new SettingsPanel(plugin, uiStyles, this);
             this.reorderWindow = new ReorderWindow(plugin, uiStyles);
+
+            // Pre-warm the file cache on a background thread to prevent UI freezing
+            // when opening the window for the first time (especially for network paths)
+            characterGrid.PreWarmCacheAsync();
         }
 
         public override void PreDraw()

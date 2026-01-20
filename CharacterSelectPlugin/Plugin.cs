@@ -60,6 +60,9 @@ namespace CharacterSelectPlugin
         private static readonly string Version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "(Unknown Version)";
         public static readonly string CurrentPluginVersion = Version; // Match repo.json and .csproj version
 
+        /// <summary>Patch notes content version. Only bump this when patch notes content actually changes.</summary>
+        public const string PatchNotesVersion = "2.1";
+
 
         private const string CommandName = "/select";
 
@@ -120,7 +123,10 @@ namespace CharacterSelectPlugin
 
         // Shared Name Manager for other CS+ users' names
         public SharedNameManager? SharedNameManager { get; private set; }
-        
+
+        // RP Profile Lookup Manager for context menu
+        public RPProfileLookupManager? RPProfileLookupManager { get; private set; }
+
         // IPC Provider for other plugins
         private IPCProvider? ipcProvider;
         
@@ -270,23 +276,27 @@ namespace CharacterSelectPlugin
 
         public unsafe Plugin(IGameInteropProvider gameInteropProvider)
         {
-            try
+            Instance = this;
+            GameInteropProvider = gameInteropProvider;
+
+            // Initialize cache file path
+            ModCacheFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "mod_categorization_cache.json");
+
+            // Run backup on background thread to prevent UI freeze
+            var existingConfig = PluginInterface.GetPluginConfig() as Configuration;
+            if (existingConfig != null)
             {
-                Instance = this;
-                GameInteropProvider = gameInteropProvider;
-                
-                // Initialize cache file path
-                ModCacheFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "mod_categorization_cache.json");
-                
-                var existingConfig = PluginInterface.GetPluginConfig() as Configuration;
-                if (existingConfig != null)
+                Task.Run(() =>
                 {
-                    BackupManager.CreateBackupIfNeeded(existingConfig, CurrentPluginVersion);
-                }
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.Warning($"[Backup] Could not create pre-load backup: {ex.Message}");
+                    try
+                    {
+                        BackupManager.CreateBackupIfNeeded(existingConfig, CurrentPluginVersion);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning($"[Backup] Could not create pre-load backup: {ex.Message}");
+                    }
+                });
             }
 
             // Load configuration
@@ -295,12 +305,6 @@ namespace CharacterSelectPlugin
             Configuration = Configuration.Load(PluginInterface);
             EnsureConfigurationDefaults();
             
-            // Initialize Penumbra integration and services
-            PenumbraIntegration = new PenumbraIntegration(PluginInterface, Log);
-            
-            // Test available IPC methods for debugging
-            PenumbraIntegration.TestOnScreenMethods();
-
             // Patch macros only after loading config + setting
             foreach (var character in Configuration.Characters)
             {
@@ -365,10 +369,13 @@ namespace CharacterSelectPlugin
             // Initialize shared name manager for other CS+ users' names
             SharedNameManager = new SharedNameManager(this, Log);
 
-            // Initialize mod categorization cache now that UserOverrideManager is ready
+            // Initialize RP profile lookup manager for context menu
+            RPProfileLookupManager = new RPProfileLookupManager(this, Log);
+
+            // Initialize mod categorization cache on background thread to prevent UI freeze
             if (Configuration.EnableConflictResolution)
             {
-                InitializeModCategorizationCache();
+                Task.Run(() => InitializeModCategorizationCache());
             }
 
             // Initialize the MainWindow and ConfigWindow
@@ -431,21 +438,29 @@ namespace CharacterSelectPlugin
             // Patch Notes
             PatchNotesWindow = new PatchNotesWindow(this);
             bool patchNotesWillShow = false;
-            if (Configuration.LastSeenVersion != CurrentPluginVersion)
+
+            // Check if plugin version changed (for chat notification)
+            bool isNewPluginVersion = Configuration.LastSeenVersion != CurrentPluginVersion;
+            if (isNewPluginVersion)
             {
                 // Set flag to show chat notification on first login
                 pendingVersionUpdateNotification = true;
-
-                // Show patch notes window (respecting user preference)
-                if (Configuration.ShowPatchNotesOnStartup)
-                {
-                    PatchNotesWindow.OpenMainMenuOnClose = true;
-                    PatchNotesWindow.IsOpen = true;
-                    patchNotesWillShow = true;
-                }
-
-                // Update the last seen version
                 Configuration.LastSeenVersion = CurrentPluginVersion;
+            }
+
+            // Check if patch notes content changed (for patch notes window)
+            // This prevents showing the same patch notes for hotfix versions (2.1.0.1, 2.1.0.2, etc.)
+            bool isNewPatchNotes = Configuration.LastSeenPatchNotesVersion != PatchNotesVersion;
+            if (isNewPatchNotes && Configuration.ShowPatchNotesOnStartup)
+            {
+                PatchNotesWindow.OpenMainMenuOnClose = true;
+                PatchNotesWindow.IsOpen = true;
+                patchNotesWillShow = true;
+                Configuration.LastSeenPatchNotesVersion = PatchNotesVersion;
+            }
+
+            if (isNewPluginVersion || isNewPatchNotes)
+            {
                 Configuration.Save();
             }
 
@@ -610,33 +625,105 @@ namespace CharacterSelectPlugin
             };
 
             contextMenuManager = new ContextMenuManager(this, Plugin.ContextMenu);
-            this.CleanupUnusedProfileImages();
-            
-            // Cleanup orphaned design preview images
-            try
+
+            // Cleanup orphaned images on background thread to prevent UI freeze (especially for network paths)
+            Task.Run(() =>
             {
-                Windows.Components.DesignPanel.CleanupOrphanedPreviewImages(this);
-            }
-            catch (Exception ex)
+                try
+                {
+                    CleanupUnusedProfileImages();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Failed to cleanup profile images: {ex.Message}");
+                }
+
+                try
+                {
+                    Windows.Components.DesignPanel.CleanupOrphanedPreviewImages(this);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning($"Failed to cleanup orphaned preview images: {ex.Message}");
+                }
+            });
+            // Only initialize dialogue processor if the feature is enabled (sig scanning can be slow)
+            if (Configuration.EnableDialogueIntegration)
             {
-                Log.Warning($"Failed to cleanup orphaned preview images: {ex.Message}");
+                try
+                {
+                    dialogueProcessor = new NPCDialogueProcessor(
+                        this,
+                        SigScanner,
+                        GameInteropProvider,
+                        ChatGui,
+                        ClientState,
+                        Log,
+                        Condition
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Failed to initialize dialogue processor: {ex.Message}");
+                }
             }
+
+            // Only initialize player name processor if name replacement is enabled
+            if (Configuration.EnableNameReplacement || Configuration.EnableSharedNameReplacement)
+            {
+                try
+                {
+                    playerNameProcessor = new PlayerNameProcessor(
+                        this,
+                        NamePlateGui,
+                        ChatGui,
+                        ClientState,
+                        AddonLifecycle,
+                        Log
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Failed to initialize player name processor: {ex.Message}");
+                }
+            }
+
+        }
+
+        /// <summary>
+        /// Initializes the dialogue processor if not already initialized.
+        /// Called when user enables Immersive Dialogue in settings.
+        /// </summary>
+        public void EnsureDialogueProcessorInitialized()
+        {
+            if (dialogueProcessor != null) return;
+
             try
             {
                 dialogueProcessor = new NPCDialogueProcessor(
-                    this, 
-                    SigScanner, 
+                    this,
+                    SigScanner,
                     GameInteropProvider,
-                    ChatGui, 
-                    ClientState, 
+                    ChatGui,
+                    ClientState,
                     Log,
                     Condition
                 );
+                Log.Info("[Dialogue] Dialogue processor initialized on-demand.");
             }
             catch (Exception ex)
             {
                 Log.Error($"Failed to initialize dialogue processor: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Initializes the player name processor if not already initialized.
+        /// Called when user enables Name Sync in settings.
+        /// </summary>
+        public void EnsurePlayerNameProcessorInitialized()
+        {
+            if (playerNameProcessor != null) return;
 
             try
             {
@@ -648,13 +735,14 @@ namespace CharacterSelectPlugin
                     AddonLifecycle,
                     Log
                 );
+                Log.Info("[NameSync] Player name processor initialized on-demand.");
             }
             catch (Exception ex)
             {
                 Log.Error($"Failed to initialize player name processor: {ex.Message}");
             }
-
         }
+
         public static HttpClient CreateAuthenticatedHttpClient()
         {
             var client = new HttpClient();
@@ -994,7 +1082,7 @@ namespace CharacterSelectPlugin
                 {
                     var profileToSend = BuildProfileForUpload(character);
                     var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
                     Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
                 }
                 else
@@ -1312,6 +1400,7 @@ namespace CharacterSelectPlugin
             dialogueProcessor?.Dispose();
             playerNameProcessor?.Dispose();
             SharedNameManager?.Dispose();
+            RPProfileLookupManager?.Dispose();
 
             // Dispose Penumbra integration services
             PenumbraIntegration?.Dispose();
@@ -3161,7 +3250,7 @@ namespace CharacterSelectPlugin
                 {
                     var profileToSend = BuildProfileForUpload(character);
                     var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
                     Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
                 }
                 else
@@ -3278,7 +3367,7 @@ namespace CharacterSelectPlugin
             };
         }
 
-        public static async Task UploadProfileAsync(RPProfile profile, string characterName, bool isCharacterApplication = true, ProfileSharing? sharingOverride = null)
+        public static async Task UploadProfileAsync(RPProfile profile, string characterName, bool isCharacterApplication = true, ProfileSharing? sharingOverride = null, bool? excludeFromNameSync = null)
         {
             Stream? imageStream = null;
             StreamContent? imageContent = null;
@@ -3296,7 +3385,7 @@ namespace CharacterSelectPlugin
                 using var http = new HttpClient();
                 using var form = new MultipartFormDataContent();
 
-                // Get character match from config
+                // Get character match from config (for fallback data like nameplate colour)
                 var config = PluginInterface.GetPluginConfig() as Configuration;
                 Character? match = config?.Characters.FirstOrDefault(c => c.LastInGameName == characterName);
 
@@ -3305,9 +3394,10 @@ namespace CharacterSelectPlugin
                     // Only set character name if it's not already set
                     profile.CharacterName ??= match.Name;
 
-                    // Sync the shared name visibility setting - respect per-character exclusion
+                    // Sync the shared name visibility setting - use passed value if available, otherwise fall back to match
                     bool globalSetting = config?.AllowOthersToSeeMyCSName ?? true;
-                    profile.AllowOthersToSeeMyCSName = match.ExcludeFromNameSync ? false : globalSetting;
+                    bool isExcluded = excludeFromNameSync ?? match.ExcludeFromNameSync;
+                    profile.AllowOthersToSeeMyCSName = isExcluded ? false : globalSetting;
 
                     // Only set nameplate colour if it's not set (all zeros)
                     if (profile.NameplateColor.X <= 0f
@@ -3617,6 +3707,13 @@ namespace CharacterSelectPlugin
             {
                 _ = SharedNameManager.ProcessPendingLookups();
             }
+
+            // Process pending RP profile lookups for context menu (has internal rate limiting)
+            if (Configuration.ShowViewRPContextMenu && RPProfileLookupManager != null)
+            {
+                _ = RPProfileLookupManager.ProcessPendingLookups();
+            }
+
             if (Configuration.EnableLoginDelay)
             {
                 secondsSinceLogin += (float)Framework.UpdateDelta.TotalSeconds;
@@ -4472,6 +4569,19 @@ namespace CharacterSelectPlugin
                 Configuration.LastUsedDesignByCharacter[selectedCharacter.Name] = selectedDesign.Name;
             }
 
+            // Set active character for Name Sync
+            activeCharacter = selectedCharacter;
+
+            // Update ActiveProfilesByPlayerName for GetActiveCharacter() (used by name sync)
+            if (ClientState.LocalPlayer != null)
+            {
+                string localName = ClientState.LocalPlayer.Name.TextValue;
+                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                ActiveProfilesByPlayerName[fullKey] = selectedCharacter.Name;
+                selectedCharacter.LastInGameName = fullKey;
+            }
+
             // Apply poses if login is complete
             if (isLoginComplete)
             {
@@ -4485,9 +4595,11 @@ namespace CharacterSelectPlugin
             }
             else
             {
-                activeCharacter = selectedCharacter;
                 shouldApplyPoses = true;
             }
+
+            // Refresh party list name replacement after character switch
+            playerNameProcessor?.RefreshPartyList();
 
             // Update character tracking for job change and quick switch features
             if (ClientState.LocalPlayer != null)
@@ -4523,7 +4635,7 @@ namespace CharacterSelectPlugin
                 {
                     var profileToSend = BuildProfileForUpload(selectedCharacter);
                     var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name, sharingOverride: effectiveSharing);
+                    _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name, sharingOverride: effectiveSharing, excludeFromNameSync: selectedCharacter.ExcludeFromNameSync);
                     Log.Info($"[RandomSelect] ✓ Uploaded profile for {selectedCharacter.Name} (effective sharing: {effectiveSharing})");
                 }
             }
@@ -4536,6 +4648,19 @@ namespace CharacterSelectPlugin
             {
                 ChatGui.PrintError($"[Character Select+] Character '{characterName}' not found.");
                 return;
+            }
+
+            // Set active character for Name Sync
+            activeCharacter = character;
+
+            // Update ActiveProfilesByPlayerName for GetActiveCharacter() (used by name sync)
+            if (ClientState.LocalPlayer != null)
+            {
+                string localName = ClientState.LocalPlayer.Name.TextValue;
+                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                ActiveProfilesByPlayerName[fullKey] = character.Name;
+                character.LastInGameName = fullKey;
             }
 
             // Get available designs for the character
@@ -4576,6 +4701,9 @@ namespace CharacterSelectPlugin
             Configuration.LastUsedDesignByCharacter[character.Name] = selectedDesign.Name;
             Configuration.Save();
 
+            // Refresh party list name replacement after character switch
+            playerNameProcessor?.RefreshPartyList();
+
             // Send themed chat message if enabled
             if (Configuration.ShowRandomSelectionChatMessages)
             {
@@ -4594,7 +4722,7 @@ namespace CharacterSelectPlugin
                 {
                     var profileToSend = BuildProfileForUpload(character);
                     var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
                     Log.Info($"[RandomDesign] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
                 }
             }
