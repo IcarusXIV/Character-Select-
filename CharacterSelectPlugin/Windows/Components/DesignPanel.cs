@@ -2638,7 +2638,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (isSecretDesignMode)
             {
                 string collection = character.PenumbraCollection;
-                
+
                 // Only add bulk-tag lines if Conflict Resolution is disabled
                 if (!plugin.Configuration.EnableConflictResolution)
                 {
@@ -2647,7 +2647,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     sb.AppendLine($"/penumbra bulktag enable {collection} | {glamourer}");
                     sb.AppendLine("/glamour apply no clothes | self");
                 }
-                
+
                 sb.AppendLine($"/glamour apply {glamourer} | self");
             }
             else

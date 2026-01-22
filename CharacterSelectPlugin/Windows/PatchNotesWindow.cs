@@ -581,7 +581,6 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("Helps prevent broken Conflict Resolution configurations from deleted mods");
             ImGui.Spacing();
 
-
             // Bug Fixes
             DrawFeatureSection("\uf188", "QoL & Bug Fixes", new Vector4(0.9f, 0.4f, 0.4f, 1.0f));
             ImGui.BulletText("Added option to use In-game file browser (found in Behavior Settings)");

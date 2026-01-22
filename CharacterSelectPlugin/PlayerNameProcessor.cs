@@ -171,9 +171,8 @@ namespace CharacterSelectPlugin
             return true;
         }
 
-        // Max text elements for wave animation (prevents SeString payload overflow)
-        // Each text element gets a color push/pop, so limit to prevent overflow
-        private const int MaxWaveTextElements = 25;
+        // Note: Previously had MaxWaveTextElements = 25 to switch to pair grouping for long names.
+        // Now always use pair grouping to avoid conflicts with Honorific (both using per-char causes crash).
 
         /// <summary>Get text elements (grapheme clusters) from a string. Handles emojis correctly.</summary>
         private static List<string> GetTextElements(string name)
@@ -211,48 +210,23 @@ namespace CharacterSelectPlugin
             var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
 
-            // For long names (>25 chars), group by pairs to reduce payloads (like Honorific does)
-            if (textElements.Count > MaxWaveTextElements)
+            // Always use pair grouping for wave glow to avoid conflicts with Honorific
+            // (both plugins using per-char wave on same nameplate causes crash)
+            for (int i = 0; i < textElements.Count; i += 2)
             {
-                for (int i = 0; i < textElements.Count; i += 2)
+                var waveColor = GetWaveColor(glowColor, i);
+                builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
+
+                // Append current element
+                builder.Append(textElements[i]);
+
+                // Append next element if exists (pair grouping)
+                if (i + 1 < textElements.Count)
                 {
-                    var waveColor = GetWaveColor(glowColor, i);
-                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
-
-                    // Append current element
-                    if (textElements[i].Length == 1)
-                        builder.AppendChar(textElements[i][0]);
-                    else
-                        builder.Append(textElements[i]);
-
-                    // Append next element if exists (pair grouping)
-                    if (i + 1 < textElements.Count)
-                    {
-                        if (textElements[i + 1].Length == 1)
-                            builder.AppendChar(textElements[i + 1][0]);
-                        else
-                            builder.Append(textElements[i + 1]);
-                    }
-
-                    builder.PopEdgeColor();
+                    builder.Append(textElements[i + 1]);
                 }
-            }
-            else
-            {
-                // Per-element wave glow for short names
-                for (int i = 0; i < textElements.Count; i++)
-                {
-                    var waveColor = GetWaveColor(glowColor, i);
-                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
 
-                    // Use AppendChar for single chars (preserves original behavior), Append for multi-char (emojis)
-                    if (textElements[i].Length == 1)
-                        builder.AppendChar(textElements[i][0]);
-                    else
-                        builder.Append(textElements[i]);
-
-                    builder.PopEdgeColor();
-                }
+                builder.PopEdgeColor();
             }
 
             builder.PopColor();
@@ -326,45 +300,23 @@ namespace CharacterSelectPlugin
                 builder.Append(newName);
                 builder.PopEdgeColor();
             }
-            // For long names (>25 chars), group by pairs to reduce payloads (like Honorific does)
-            else if (textElements.Count > MaxWaveTextElements)
+            else
             {
+                // Always use pair grouping for wave glow to avoid conflicts with Honorific
+                // (both plugins using per-char wave on same nameplate causes crash)
                 for (int i = 0; i < textElements.Count; i += 2)
                 {
                     var waveColor = GetWaveColor(glowColor, i);
                     builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
 
                     // Append current element
-                    if (textElements[i].Length == 1)
-                        builder.AppendChar(textElements[i][0]);
-                    else
-                        builder.Append(textElements[i]);
+                    builder.Append(textElements[i]);
 
                     // Append next element if exists (pair grouping)
                     if (i + 1 < textElements.Count)
                     {
-                        if (textElements[i + 1].Length == 1)
-                            builder.AppendChar(textElements[i + 1][0]);
-                        else
-                            builder.Append(textElements[i + 1]);
+                        builder.Append(textElements[i + 1]);
                     }
-
-                    builder.PopEdgeColor();
-                }
-            }
-            else
-            {
-                // Per-element wave glow for short names
-                for (int i = 0; i < textElements.Count; i++)
-                {
-                    var waveColor = GetWaveColor(glowColor, i);
-                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
-
-                    // Use AppendChar for single chars (preserves original behavior), Append for multi-char (emojis)
-                    if (textElements[i].Length == 1)
-                        builder.AppendChar(textElements[i][0]);
-                    else
-                        builder.Append(textElements[i]);
 
                     builder.PopEdgeColor();
                 }
@@ -790,52 +742,10 @@ namespace CharacterSelectPlugin
 
                 if (isOurSlot && selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
                 {
-                    if (rawBytes != null && rawBytes.Length > 0)
+                    // Always construct level prefix from player's level to avoid malformed SeString issues
+                    // (raw bytes from party list may contain incomplete SeString sequences)
+                    try
                     {
-                        // Find where the name starts - could be original name OR our CS+ name if already replaced
-                        int nameStartIndex = -1;
-
-                        // First try: find the original in-game name
-                        var realNameBytes = System.Text.Encoding.UTF8.GetBytes(localName);
-                        nameStartIndex = FindByteSequence(rawBytes, realNameBytes);
-
-                        // Second try: if not found, search for the CS+ name (we may have already replaced it)
-                        if (nameStartIndex < 0)
-                        {
-                            // The CS+ name might be in the SeString - search for it in plain text form
-                            var csNameBytes = System.Text.Encoding.UTF8.GetBytes(activeChar.Name);
-                            nameStartIndex = FindByteSequence(rawBytes, csNameBytes);
-                        }
-
-                        // Third try: use pattern detection to find where level icons end
-                        if (nameStartIndex < 0)
-                        {
-                            var patternPrefix = FindLevelPrefixByPattern(rawBytes);
-                            if (patternPrefix != null)
-                            {
-                                nameStartIndex = patternPrefix.Length;
-                            }
-                        }
-
-                        if (nameStartIndex > 0)
-                        {
-                            // Found where name starts - everything before it is the level prefix
-                            var prefixBytes = rawBytes.Take(nameStartIndex).ToArray();
-                            cachedLevelPrefixBytes = prefixBytes; // Cache for future use
-
-                            // Build: [level prefix] + [colored CS+ name]
-                            var coloredName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
-                            var coloredBytes = coloredName.Encode();
-
-                            var finalBytes = new byte[prefixBytes.Length + coloredBytes.Length];
-                            Array.Copy(prefixBytes, 0, finalBytes, 0, prefixBytes.Length);
-                            Array.Copy(coloredBytes, 0, finalBytes, prefixBytes.Length, coloredBytes.Length);
-
-                            nameNode->SetText(finalBytes);
-                            continue;
-                        }
-
-                        // Last resort: construct prefix from player's level
                         if (localPlayer != null && localPlayer.Level > 0)
                         {
                             var prefixBytes = ConstructLevelPrefix(localPlayer.Level);
@@ -844,18 +754,28 @@ namespace CharacterSelectPlugin
                             var coloredName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
                             var coloredBytes = coloredName.Encode();
 
-                            var finalBytes = new byte[prefixBytes.Length + coloredBytes.Length];
+                            // +1 for null terminator - SetText expects null-terminated C string
+                            var finalBytes = new byte[prefixBytes.Length + coloredBytes.Length + 1];
                             Array.Copy(prefixBytes, 0, finalBytes, 0, prefixBytes.Length);
                             Array.Copy(coloredBytes, 0, finalBytes, prefixBytes.Length, coloredBytes.Length);
+                            // finalBytes[last] is already 0 from array initialization
 
                             nameNode->SetText(finalBytes);
-                            continue;
+                        }
+                        else
+                        {
+                            // Fallback: no prefix available at all - Encode() doesn't include null terminator
+                            var fallbackName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+                            var fallbackBytes = fallbackName.Encode();
+                            var nullTerminated = new byte[fallbackBytes.Length + 1];
+                            Array.Copy(fallbackBytes, 0, nullTerminated, 0, fallbackBytes.Length);
+                            nameNode->SetText(nullTerminated);
                         }
                     }
-
-                    // Fallback: no prefix available at all
-                    var fallbackName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
-                    nameNode->SetText(fallbackName.Encode());
+                    catch (Exception ex)
+                    {
+                        log.Debug($"Failed to set party list name (self): {ex.Message}");
+                    }
                 }
                 // Check for shared name replacement (other players - slots 1+)
                 else if (!isOurSlot && sharedReplacementEnabled && plugin.SharedNameManager != null)
@@ -870,52 +790,41 @@ namespace CharacterSelectPlugin
                         // Store this slot's physical name for future lookups (when they switch CS+ characters)
                         partySlotToPhysicalName[i] = originalName;
 
-                        // Capture this slot's level prefix from raw bytes (each player has their own level)
+                        // Use pattern detection to get ONLY the level icon bytes (safe, no SeString issues)
                         byte[]? slotPrefix = null;
                         if (rawBytes != null && rawBytes.Length > 0)
                         {
-                            // First try: find the original in-game name
-                            var nameBytes = System.Text.Encoding.UTF8.GetBytes(originalName);
-                            int nameIndex = FindByteSequence(rawBytes, nameBytes);
-
-                            // Second try: find the CS+ name (we may have already replaced it)
-                            if (nameIndex < 0)
+                            slotPrefix = FindLevelPrefixByPattern(rawBytes);
+                            if (slotPrefix != null)
                             {
-                                var csNameBytes = System.Text.Encoding.UTF8.GetBytes(sharedEntry.CSName);
-                                nameIndex = FindByteSequence(rawBytes, csNameBytes);
-                            }
-
-                            // Third try: pattern detection
-                            if (nameIndex < 0)
-                            {
-                                var patternPrefix = FindLevelPrefixByPattern(rawBytes);
-                                if (patternPrefix != null)
-                                {
-                                    nameIndex = patternPrefix.Length;
-                                }
-                            }
-
-                            if (nameIndex > 0)
-                            {
-                                slotPrefix = rawBytes.Take(nameIndex).ToArray();
                                 partySlotPrefixBytes[i] = slotPrefix;
                             }
                         }
 
                         // Replace with their CS+ name using the captured prefix
-                        var coloredName = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
-                        if (slotPrefix != null)
+                        try
                         {
+                            var coloredName = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
                             var coloredBytes = coloredName.Encode();
-                            var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length];
-                            Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
-                            Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
-                            nameNode->SetText(finalBytes);
+                            if (slotPrefix != null)
+                            {
+                                // +1 for null terminator - SetText expects null-terminated C string
+                                var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length + 1];
+                                Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
+                                Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
+                                nameNode->SetText(finalBytes);
+                            }
+                            else
+                            {
+                                // Fallback if no prefix captured - add null terminator
+                                var nullTerminated = new byte[coloredBytes.Length + 1];
+                                Array.Copy(coloredBytes, 0, nullTerminated, 0, coloredBytes.Length);
+                                nameNode->SetText(nullTerminated);
+                            }
                         }
-                        else
+                        catch (Exception ex)
                         {
-                            // Fallback if no prefix captured
-                            nameNode->SetText(coloredName.Encode());
+                            log.Debug($"Failed to set party list name (shared): {ex.Message}");
                         }
                     }
                     // If no match by physical name in text, check if we have a stored physical name for this slot
@@ -934,63 +843,58 @@ namespace CharacterSelectPlugin
                             var entry = plugin.SharedNameManager.GetCachedNameByCharacterName(storedPhysicalName);
                             if (entry != null && !string.IsNullOrEmpty(entry.CSName))
                             {
-                                // Try to capture/update prefix from current raw bytes
+                                // Use pattern detection or stored prefix (safe level icon bytes only)
                                 byte[]? slotPrefix = null;
                                 if (rawBytes != null && rawBytes.Length > 0)
                                 {
-                                    // Try to find the CS+ name in raw bytes
-                                    var csNameBytes = System.Text.Encoding.UTF8.GetBytes(entry.CSName);
-                                    int nameIndex = FindByteSequence(rawBytes, csNameBytes);
-
-                                    // Try pattern detection
-                                    if (nameIndex < 0)
+                                    slotPrefix = FindLevelPrefixByPattern(rawBytes);
+                                    if (slotPrefix != null)
                                     {
-                                        var patternPrefix = FindLevelPrefixByPattern(rawBytes);
-                                        if (patternPrefix != null)
-                                        {
-                                            nameIndex = patternPrefix.Length;
-                                        }
-                                    }
-
-                                    if (nameIndex > 0)
-                                    {
-                                        slotPrefix = rawBytes.Take(nameIndex).ToArray();
                                         partySlotPrefixBytes[i] = slotPrefix;
                                     }
-                                    else if (partySlotPrefixBytes.TryGetValue(i, out var storedPrefix))
-                                    {
-                                        slotPrefix = storedPrefix;
-                                    }
                                 }
 
-                                var coloredName = CreateColoredName(entry.CSName, entry.NameplateColor);
-                                if (slotPrefix != null)
+                                // Fall back to stored prefix if pattern detection failed
+                                if (slotPrefix == null && partySlotPrefixBytes.TryGetValue(i, out var storedPrefix))
                                 {
-                                    var coloredBytes = coloredName.Encode();
-                                    var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length];
-                                    Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
-                                    Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
-                                    nameNode->SetText(finalBytes);
+                                    slotPrefix = storedPrefix;
                                 }
-                                else
+
+                                try
                                 {
-                                    nameNode->SetText(coloredName.Encode());
+                                    var coloredName = CreateColoredName(entry.CSName, entry.NameplateColor);
+                                    var coloredBytes = coloredName.Encode();
+                                    if (slotPrefix != null)
+                                    {
+                                        // +1 for null terminator - SetText expects null-terminated C string
+                                        var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length + 1];
+                                        Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
+                                        Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
+                                        nameNode->SetText(finalBytes);
+                                    }
+                                    else
+                                    {
+                                        // Fallback - add null terminator
+                                        var nullTerminated = new byte[coloredBytes.Length + 1];
+                                        Array.Copy(coloredBytes, 0, nullTerminated, 0, coloredBytes.Length);
+                                        nameNode->SetText(nullTerminated);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    log.Debug($"Failed to set party list name (stored shared): {ex.Message}");
                                 }
                             }
                             else
                             {
-                                // No CS+ name found - revert to in-game name
-                                if (partySlotPrefixBytes.TryGetValue(i, out var slotPrefix) && slotPrefix != null)
-                                {
-                                    var inGameNameBytes = System.Text.Encoding.UTF8.GetBytes(storedPhysicalName);
-                                    var finalBytes = new byte[slotPrefix.Length + inGameNameBytes.Length];
-                                    Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
-                                    Array.Copy(inGameNameBytes, 0, finalBytes, slotPrefix.Length, inGameNameBytes.Length);
-                                    nameNode->SetText(finalBytes);
-                                }
-                                else
+                                // No CS+ name found - revert to in-game name (just use plain text, no prefix concat)
+                                try
                                 {
                                     nameNode->SetText(storedPhysicalName);
+                                }
+                                catch (Exception ex)
+                                {
+                                    log.Debug($"Failed to revert party list name: {ex.Message}");
                                 }
                                 partySlotToPhysicalName.Remove(i);
                                 partySlotPrefixBytes.Remove(i);
@@ -1132,7 +1036,14 @@ namespace CharacterSelectPlugin
                     var replacedSeString = CreateColoredNameWithContext(plainText, originalName, newName, glowColor, useWave: false);
                     if (replacedSeString != null)
                     {
-                        textNode->SetText(replacedSeString.Encode());
+                        try
+                        {
+                            textNode->SetText(replacedSeString.Encode());
+                        }
+                        catch
+                        {
+                            // Silently fail - prevents crash from propagating
+                        }
                     }
                 }
             }
@@ -1186,7 +1097,14 @@ namespace CharacterSelectPlugin
                     var replacedSeString = CreateColoredNameWithContext(plainText, originalName, sharedEntry.CSName, sharedEntry.NameplateColor, useWave: false);
                     if (replacedSeString != null)
                     {
-                        textNode->SetText(replacedSeString.Encode());
+                        try
+                        {
+                            textNode->SetText(replacedSeString.Encode());
+                        }
+                        catch
+                        {
+                            // Silently fail - prevents crash from propagating
+                        }
                     }
                 }
             }
