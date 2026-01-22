@@ -79,6 +79,7 @@ namespace CharacterSelectPlugin
         public SecretModeModWindow? SecretModeModWindow { get; set; } = null;
         public ReportUserWindow? ReportUserWindow { get; private set; } = null;
         public WarningModalWindow? WarningModalWindow { get; private set; } = null;
+        public ImGuiFileBrowserWindow? FileBrowserWindow { get; private set; } = null;
 
         // Track active name warning for the current user (to detect when they change their name)
         public NameWarning? ActiveNameWarning { get; set; } = null;
@@ -126,6 +127,9 @@ namespace CharacterSelectPlugin
 
         // RP Profile Lookup Manager for context menu
         public RPProfileLookupManager? RPProfileLookupManager { get; private set; }
+
+        // Integration List Provider for autocomplete dropdowns
+        public Managers.IntegrationListProvider? IntegrationListProvider { get; private set; }
 
         // IPC Provider for other plugins
         private IPCProvider? ipcProvider;
@@ -372,6 +376,9 @@ namespace CharacterSelectPlugin
             // Initialize RP profile lookup manager for context menu
             RPProfileLookupManager = new RPProfileLookupManager(this, Log);
 
+            // Initialize integration list provider for autocomplete dropdowns
+            IntegrationListProvider = new Managers.IntegrationListProvider(this);
+
             // Initialize mod categorization cache on background thread to prevent UI freeze
             if (Configuration.EnableConflictResolution)
             {
@@ -412,6 +419,10 @@ namespace CharacterSelectPlugin
             // Initialize WarningModalWindow
             WarningModalWindow = new WarningModalWindow(this);
             WindowSystem.AddWindow(WarningModalWindow);
+
+            // Initialize ImGui File Browser
+            FileBrowserWindow = new ImGuiFileBrowserWindow();
+            WindowSystem.AddWindow(FileBrowserWindow);
 
             // Initialize IPC provider for other plugins
             ipcProvider = new IPCProvider(this, PluginInterface);
@@ -1078,17 +1089,19 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug($"[SetActiveCharacter] Updated LastUsedCharacterKey = {fullKey}");
                 Plugin.Log.Debug($"[ApplyProfile] Set LastInGameName = {character.LastInGameName} for profile {character.Name}");
 
-                if (ShouldUploadToServer(character))
-                {
-                    var profileToSend = BuildProfileForUpload(character);
-                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
-                    Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
-                }
-                else
-                {
-                    Plugin.Log.Info($"[ApplyProfile] ⚠ Skipped upload for {character.Name} (NeverShare)");
-                }
+                // Always upload to keep server in sync - server uses sharing/exclusion flags to decide visibility
+                var profileToSend = BuildProfileForUpload(character);
+                var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+
+                // If profile is private/unmade or excluded, tell server not to show the name
+                bool shouldHideName = character.ExcludeFromNameSync ||
+                                      character.RPProfile == null ||
+                                      character.RPProfile.Sharing == ProfileSharing.NeverShare;
+
+                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
+                    sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
+                    excludeFromNameSync: character.ExcludeFromNameSync);
+                Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {character.ExcludeFromNameSync})");
             }
             SaveConfiguration();
             if (character == null) return;
@@ -1136,26 +1149,6 @@ namespace CharacterSelectPlugin
                 else
                 {
                     Log.Warning($"Failed to switch Penumbra UI collection to: {character.PenumbraCollection}");
-                }
-            }
-
-            // Switch gearset if assigned (design-level overrides character-level)
-            if (Configuration.EnableGearsetAssignments)
-            {
-                int? effectiveGearset = null;
-                if (designIndex >= 0 && designIndex < character.Designs.Count)
-                {
-                    var design = character.Designs[designIndex];
-                    effectiveGearset = design.AssignedGearset ?? character.AssignedGearset;
-                }
-                else
-                {
-                    effectiveGearset = character.AssignedGearset;
-                }
-
-                if (effectiveGearset.HasValue)
-                {
-                    SwitchToGearset(effectiveGearset.Value);
                 }
             }
 
@@ -1233,6 +1226,29 @@ namespace CharacterSelectPlugin
                 }
             }
 
+            // Switch gearset AFTER Glamourer design is applied (via macros above)
+            // This ensures Lightless sees the correct appearance when the gearset switch triggers a model refresh
+            if (Configuration.EnableGearsetAssignments)
+            {
+                int? effectiveGearset = null;
+                if (designIndex >= 0 && designIndex < character.Designs.Count)
+                {
+                    var designForGearset = character.Designs[designIndex];
+                    effectiveGearset = designForGearset.AssignedGearset ?? character.AssignedGearset;
+                }
+                else
+                {
+                    effectiveGearset = character.AssignedGearset;
+                }
+
+                if (effectiveGearset.HasValue)
+                {
+                    // Small delay to let Glamourer finish applying before gearset switch
+                    var gearsetToSwitch = effectiveGearset.Value;
+                    Framework.RunOnTick(() => SwitchToGearset(gearsetToSwitch), delayTicks: 5);
+                }
+            }
+
             // Check if design has its own /sidle command - if so, skip character pose application
             bool shouldApplyCharacterPose = true;
 
@@ -1283,7 +1299,14 @@ namespace CharacterSelectPlugin
 
         private bool ShouldUploadToServer(Character character)
         {
-            var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
+            // No RPProfile configured = don't upload (user hasn't set up sharing)
+            if (character.RPProfile == null)
+            {
+                Plugin.Log.Debug($"[ShouldUpload] No RPProfile - not uploading {character.Name}");
+                return false;
+            }
+
+            var sharing = character.RPProfile.Sharing;
 
             // NeverShare = never upload to server
             if (sharing == ProfileSharing.NeverShare)
@@ -1385,7 +1408,59 @@ namespace CharacterSelectPlugin
             if (updated) Configuration.Save();
         }
 
+        /// <summary>
+        /// Opens a file picker dialog. Uses ImGui file browser if UseImGuiFilePicker is enabled,
+        /// otherwise uses the Windows file dialog.
+        /// </summary>
+        /// <param name="title">Dialog title</param>
+        /// <param name="filter">File filter (e.g., "PNG files (*.png)|*.png")</param>
+        /// <param name="onFileSelected">Callback when file is selected</param>
+        /// <param name="startDirectory">Optional starting directory</param>
+        public void OpenFilePicker(string title, string filter, Action<string> onFileSelected, string? startDirectory = null)
+        {
+            if (Configuration.UseImGuiFilePicker)
+            {
+                // Use ImGui file browser
+                if (FileBrowserWindow != null)
+                {
+                    FileBrowserWindow.OnFileSelected = onFileSelected;
+                    FileBrowserWindow.Open(startDirectory);
+                }
+            }
+            else
+            {
+                // Use Windows file dialog - requires STA thread
+                var thread = new Thread(() =>
+                {
+                    try
+                    {
+                        using (var openFileDialog = new System.Windows.Forms.OpenFileDialog())
+                        {
+                            openFileDialog.Filter = filter;
+                            openFileDialog.Title = title;
 
+                            if (!string.IsNullOrEmpty(startDirectory) && Directory.Exists(startDirectory))
+                            {
+                                openFileDialog.InitialDirectory = startDirectory;
+                            }
+
+                            if (openFileDialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                            {
+                                var selectedPath = openFileDialog.FileName;
+                                // Invoke callback on framework thread
+                                Framework.RunOnFrameworkThread(() => onFileSelected(selectedPath));
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"Error opening file picker: {ex.Message}");
+                    }
+                });
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Start();
+            }
+        }
 
         public void Dispose()
         {
@@ -1401,6 +1476,7 @@ namespace CharacterSelectPlugin
             playerNameProcessor?.Dispose();
             SharedNameManager?.Dispose();
             RPProfileLookupManager?.Dispose();
+            IntegrationListProvider?.Dispose();
 
             // Dispose Penumbra integration services
             PenumbraIntegration?.Dispose();
@@ -1440,7 +1516,7 @@ namespace CharacterSelectPlugin
         {
             if (string.IsNullOrWhiteSpace(args))
             {
-                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Optional Design Name], /select random [Character Name], /select jobchange on|off, /select idle, /select mods, /select save [CR], or /select whatsnew");
+                ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Design], /select random [Name], /select jobchange on|off, /select idle|sit|groundsit|doze [0-6], /select mods, /select save [CR], or /select whatsnew");
                 return;
             }
 
@@ -1453,15 +1529,25 @@ namespace CharacterSelectPlugin
                     // /select random - random character and design
                     SelectRandomCharacterAndDesign();
                 }
-                else if (randomArgs.Length == 2)
+                else if (randomArgs.Length >= 2)
                 {
-                    // /select random CHARACTER - random design only from specific character
-                    var targetCharacterName = randomArgs[1];
-                    SelectRandomDesignOnly(targetCharacterName);
-                }
-                else
-                {
-                    ChatGui.PrintError("[Character Select+] Usage: /select random [Character Name]");
+                    // Could be /select random GROUPNAME or /select random CHARACTER
+                    var targetName = string.Join(" ", randomArgs.Skip(1));
+
+                    // Check if it's a group name first
+                    var group = Configuration.RandomGroups.FirstOrDefault(g =>
+                        g.Name.Equals(targetName, StringComparison.OrdinalIgnoreCase));
+
+                    if (group != null)
+                    {
+                        // /select random GROUPNAME - random from group
+                        SelectRandomFromGroup(group);
+                    }
+                    else
+                    {
+                        // /select random CHARACTER - random design only from specific character
+                        SelectRandomDesignOnly(targetName);
+                    }
                 }
                 return;
             }
@@ -1492,22 +1578,85 @@ namespace CharacterSelectPlugin
                 return;
             }
 
-            // Handle idle subcommand
-            if (args.Trim().Equals("idle", StringComparison.OrdinalIgnoreCase))
+            // Handle idle subcommand - /select idle [0-6]
+            if (args.Trim().StartsWith("idle", StringComparison.OrdinalIgnoreCase))
             {
-                if (ClientState.LocalPlayer != null)
+                var idleArgs = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (idleArgs.Length == 1)
                 {
-                    unsafe
+                    // /select idle - check current pose
+                    if (ClientState.LocalPlayer != null)
                     {
-                        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
-                        var currentIdle = charPtr->EmoteController.CPoseState;
-                        
-                        ChatGui.Print($"[CS+] Current idle pose: {currentIdle} (range: 0-6)");
+                        unsafe
+                        {
+                            var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+                            var currentIdle = charPtr->EmoteController.CPoseState;
+
+                            ChatGui.Print($"[CS+] Current idle pose: {currentIdle} (range: 0-6)");
+                        }
                     }
+                    else
+                    {
+                        ChatGui.PrintError("[CS+] You must be logged in to check idle pose.");
+                    }
+                }
+                else if (idleArgs.Length >= 2 && byte.TryParse(idleArgs[1], out var poseIndex))
+                {
+                    // /select idle <0-6> - set pose
+                    PoseManager.ApplyPose(EmoteController.PoseType.Idle, poseIndex);
+                    ExecuteMacro("/penumbra redraw self");
                 }
                 else
                 {
-                    ChatGui.PrintError("[CS+] You must be logged in to check idle pose.");
+                    ChatGui.PrintError("[CS+] Usage: /select idle [0-6]");
+                }
+                return;
+            }
+
+            // Handle sit subcommand - /select sit <0-6>
+            if (args.Trim().StartsWith("sit", StringComparison.OrdinalIgnoreCase))
+            {
+                var sitArgs = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (sitArgs.Length >= 2 && byte.TryParse(sitArgs[1], out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.Sit, poseIndex);
+                    ExecuteMacro("/penumbra redraw self");
+                }
+                else
+                {
+                    ChatGui.PrintError("[CS+] Usage: /select sit <0-6>");
+                }
+                return;
+            }
+
+            // Handle groundsit subcommand - /select groundsit <0-6>
+            if (args.Trim().StartsWith("groundsit", StringComparison.OrdinalIgnoreCase))
+            {
+                var groundsitArgs = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (groundsitArgs.Length >= 2 && byte.TryParse(groundsitArgs[1], out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.GroundSit, poseIndex);
+                    ExecuteMacro("/penumbra redraw self");
+                }
+                else
+                {
+                    ChatGui.PrintError("[CS+] Usage: /select groundsit <0-6>");
+                }
+                return;
+            }
+
+            // Handle doze subcommand - /select doze <0-6>
+            if (args.Trim().StartsWith("doze", StringComparison.OrdinalIgnoreCase))
+            {
+                var dozeArgs = args.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (dozeArgs.Length >= 2 && byte.TryParse(dozeArgs[1], out var poseIndex))
+                {
+                    PoseManager.ApplyPose(EmoteController.PoseType.Doze, poseIndex);
+                    ExecuteMacro("/penumbra redraw self");
+                }
+                else
+                {
+                    ChatGui.PrintError("[CS+] Usage: /select doze <0-6>");
                 }
                 return;
             }
@@ -1566,7 +1715,7 @@ namespace CharacterSelectPlugin
 
             if (matches.Length < 1)
             {
-                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Optional Design Name], /select random, /select jobchange on|off, /select mods, /select save [CR], or /select whatsnew");
+                ChatGui.PrintError("[Character Select+] Invalid usage. Use /select <Character Name> [Design], /select random [Name], /select idle|sit|groundsit|doze [0-6], /select mods, /select save [CR], or /select whatsnew");
                 return;
             }
 
@@ -1848,6 +1997,44 @@ namespace CharacterSelectPlugin
             {
                 Log.Warning($"Failed to get Customize+ profile via command: {ex}");
                 return string.Empty;
+            }
+        }
+
+        /// <summary>Gets the name of the currently active Customize+ profile for the local player.</summary>
+        public string? GetCurrentCustomizePlusProfileName()
+        {
+            try
+            {
+                var localPlayer = ClientState?.LocalPlayer;
+                if (localPlayer == null) return null;
+
+                // Get active profile GUID
+                var activeProfileIpc = PluginInterface.GetIpcSubscriber<ushort, (int, Guid?)>("CustomizePlus.Profile.GetActiveProfileIdOnCharacter");
+                var activeResult = activeProfileIpc.InvokeFunc((ushort)localPlayer.ObjectIndex);
+
+                if (activeResult.Item1 != 0 || !activeResult.Item2.HasValue || activeResult.Item2.Value == Guid.Empty)
+                    return null;
+
+                var activeProfileId = activeResult.Item2.Value;
+
+                // Get profile list and find the matching profile
+                var profileListIpc = PluginInterface.GetIpcSubscriber<IList<(Guid, string, string, IList<(string, ushort, byte, ushort)>, int, bool)>>("CustomizePlus.Profile.GetList");
+                var profileList = profileListIpc.InvokeFunc();
+
+                if (profileList == null) return null;
+
+                // Find the profile by GUID and return its name (Item2)
+                var activeProfile = profileList.FirstOrDefault(p => p.Item1 == activeProfileId);
+                if (activeProfile.Item1 != Guid.Empty && !string.IsNullOrWhiteSpace(activeProfile.Item2))
+                {
+                    return activeProfile.Item2;
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -3245,18 +3432,19 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug($"[SetActiveCharacter] Saved: {fullKey} → {pluginCharacterKey}");
                 Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {pluginCharacterKey} for profile {character.Name}");
 
-                // Upload if sharing allows it
-                if (ShouldUploadToServer(character))
-                {
-                    var profileToSend = BuildProfileForUpload(character);
-                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
-                    Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
-                }
-                else
-                {
-                    Plugin.Log.Info($"[SetActiveCharacter] ⚠ Skipped upload for {character.Name} (NeverShare)");
-                }
+                // Always upload to keep server in sync - server uses sharing/exclusion flags to decide visibility
+                var profileToSend = BuildProfileForUpload(character);
+                var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+
+                // If profile is private/unmade or excluded, tell server not to show the name
+                bool shouldHideName = character.ExcludeFromNameSync ||
+                                      character.RPProfile == null ||
+                                      character.RPProfile.Sharing == ProfileSharing.NeverShare;
+
+                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
+                    sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
+                    excludeFromNameSync: character.ExcludeFromNameSync);
+                Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {character.ExcludeFromNameSync})");
             }
         }
         public async Task TryRequestRPProfile(string targetName)
@@ -3705,6 +3893,9 @@ namespace CharacterSelectPlugin
             // Process pending shared name lookups (has internal rate limiting)
             if (Configuration.EnableSharedNameReplacement && SharedNameManager != null)
             {
+                // Queue stale cached entries for refresh (doesn't depend on nameplate updates)
+                SharedNameManager.QueueStaleEntriesForRefresh();
+
                 _ = SharedNameManager.ProcessPendingLookups();
             }
 
@@ -4624,20 +4815,25 @@ namespace CharacterSelectPlugin
             }
             SaveConfiguration();
 
-            // Upload profile if conditions are met
+            // Always upload to keep server in sync - server uses sharing/exclusion flags to decide visibility
             if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
             {
                 string localName = uploadPlayer.Name.TextValue;
                 string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
 
-                if (ShouldUploadToServer(selectedCharacter))
-                {
-                    var profileToSend = BuildProfileForUpload(selectedCharacter);
-                    var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name, sharingOverride: effectiveSharing, excludeFromNameSync: selectedCharacter.ExcludeFromNameSync);
-                    Log.Info($"[RandomSelect] ✓ Uploaded profile for {selectedCharacter.Name} (effective sharing: {effectiveSharing})");
-                }
+                var profileToSend = BuildProfileForUpload(selectedCharacter);
+                var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
+
+                // If profile is private/unmade or excluded, tell server not to show the name
+                bool shouldHideName = selectedCharacter.ExcludeFromNameSync ||
+                                      selectedCharacter.RPProfile == null ||
+                                      selectedCharacter.RPProfile.Sharing == ProfileSharing.NeverShare;
+
+                _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name,
+                    sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
+                    excludeFromNameSync: selectedCharacter.ExcludeFromNameSync);
+                Log.Info($"[RandomSelect] ✓ Uploaded profile for {selectedCharacter.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {selectedCharacter.ExcludeFromNameSync})");
             }
         }
 
@@ -4711,24 +4907,133 @@ namespace CharacterSelectPlugin
                 ChatGui.Print(message);
             }
 
-            // Upload profile if conditions are met (design change may affect visible state)
+            // Always upload to keep server in sync - server uses sharing/exclusion flags to decide visibility
             if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
             {
                 string localName = uploadPlayer.Name.TextValue;
                 string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
 
-                if (ShouldUploadToServer(character))
-                {
-                    var profileToSend = BuildProfileForUpload(character);
-                    var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
-                    Log.Info($"[RandomDesign] ✓ Uploaded profile for {character.Name} (effective sharing: {effectiveSharing})");
-                }
+                var profileToSend = BuildProfileForUpload(character);
+                var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+
+                // If profile is private/unmade or excluded, tell server not to show the name
+                bool shouldHideName = character.ExcludeFromNameSync ||
+                                      character.RPProfile == null ||
+                                      character.RPProfile.Sharing == ProfileSharing.NeverShare;
+
+                _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
+                    sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
+                    excludeFromNameSync: character.ExcludeFromNameSync);
+                Log.Info($"[RandomDesign] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {character.ExcludeFromNameSync})");
             }
         }
 
-        private SeString GetRandomSelectionChatMessage(string characterName)
+        /// <summary>
+        /// Selects a random character from a custom group and applies a random design.
+        /// </summary>
+        public void SelectRandomFromGroup(Configuration.RandomGroup group)
+        {
+            if (group.CharacterNames.Count == 0)
+            {
+                ChatGui.PrintError($"[Character Select+] Group '{group.Name}' has no characters.");
+                return;
+            }
+
+            // Get characters that exist in this group
+            var groupCharacters = Characters
+                .Where(c => group.CharacterNames.Contains(c.Name))
+                .ToList();
+
+            if (groupCharacters.Count == 0)
+            {
+                ChatGui.PrintError($"[Character Select+] No valid characters found in group '{group.Name}'.");
+                return;
+            }
+
+            var random = new Random();
+
+            // Select random character from group
+            var selectedCharacter = groupCharacters[random.Next(groupCharacters.Count)];
+
+            // Set active character for Name Sync
+            activeCharacter = selectedCharacter;
+
+            // Update ActiveProfilesByPlayerName for GetActiveCharacter() (used by name sync)
+            if (ClientState.LocalPlayer != null)
+            {
+                string localName = ClientState.LocalPlayer.Name.TextValue;
+                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+                ActiveProfilesByPlayerName[fullKey] = selectedCharacter.Name;
+                selectedCharacter.LastInGameName = fullKey;
+            }
+
+            // Get available designs - respect favorites setting
+            var availableDesigns = Configuration.RandomSelectionFavoritesOnly
+                ? selectedCharacter.Designs.Where(d => d.IsFavorite).ToList()
+                : selectedCharacter.Designs.ToList();
+
+            // Fallback to all designs if no favourites exist
+            if (availableDesigns.Count == 0 && Configuration.RandomSelectionFavoritesOnly)
+            {
+                availableDesigns = selectedCharacter.Designs.ToList();
+            }
+
+            CharacterDesign? selectedDesign = null;
+            int designIndex = -1;
+            if (availableDesigns.Count > 0)
+            {
+                selectedDesign = availableDesigns[random.Next(availableDesigns.Count)];
+                designIndex = selectedCharacter.Designs.IndexOf(selectedDesign);
+            }
+
+            // Apply the character (and design if available)
+            ApplyProfile(selectedCharacter, designIndex);
+
+            // Execute the design's macro if one was selected
+            if (selectedDesign != null)
+            {
+                ExecuteMacro(selectedDesign.Macro, selectedCharacter, selectedDesign.Name);
+
+                // Update last used design tracking
+                Configuration.LastUsedDesignCharacterKey = selectedCharacter.Name;
+                Configuration.LastUsedDesignByCharacter[selectedCharacter.Name] = selectedDesign.Name;
+                Configuration.Save();
+            }
+
+            // Refresh party list name replacement after character switch
+            playerNameProcessor?.RefreshPartyList();
+
+            // Send themed chat message if enabled
+            if (Configuration.ShowRandomSelectionChatMessages)
+            {
+                SeString message = GetRandomSelectionChatMessage(selectedCharacter.Name, group.Name);
+                ChatGui.Print(message);
+            }
+
+            // Always upload to keep server in sync
+            if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
+            {
+                string localName = uploadPlayer.Name.TextValue;
+                string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{localName}@{worldName}";
+
+                var profileToSend = BuildProfileForUpload(selectedCharacter);
+                var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
+
+                bool shouldHideName = selectedCharacter.ExcludeFromNameSync ||
+                                      selectedCharacter.RPProfile == null ||
+                                      selectedCharacter.RPProfile.Sharing == ProfileSharing.NeverShare;
+
+                _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name,
+                    sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
+                    excludeFromNameSync: selectedCharacter.ExcludeFromNameSync);
+                Log.Info($"[RandomGroup] ✓ Selected {selectedCharacter.Name} from group '{group.Name}'");
+            }
+        }
+
+        private SeString GetRandomSelectionChatMessage(string characterName, string? groupName = null)
         {
             var random = new Random();
             var builder = new SeStringBuilder();
@@ -4848,7 +5153,13 @@ namespace CharacterSelectPlugin
                 var selectedMessage = normalMessages[random.Next(normalMessages.Length)];
                 selectedMessage(builder, characterName);
             }
-            
+
+            // Add group name suffix if provided
+            if (!string.IsNullOrEmpty(groupName))
+            {
+                builder.AddText(" (from ").AddBlue(groupName, false).AddText(")");
+            }
+
             return builder.BuiltString;
         }
 
@@ -5162,7 +5473,7 @@ namespace CharacterSelectPlugin
                     {
                         continue;
                     }
-                    
+
                     // Check if mod is explicitly configured in CR for this design
                     bool hasExplicitCRState = design.SecretModState.ContainsKey(modDir);
                     bool crWantsEnabled = hasExplicitCRState && design.SecretModState[modDir];
@@ -5350,7 +5661,7 @@ namespace CharacterSelectPlugin
                     {
                         continue;
                     }
-                    
+
                     // Check if mod is explicitly configured in CR
                     bool hasExplicitCRState = character.SecretModState.ContainsKey(modDir);
                     bool crWantsEnabled = hasExplicitCRState && character.SecretModState[modDir];
@@ -5373,7 +5684,7 @@ namespace CharacterSelectPlugin
                         modsToDisable.Add(modDir);
                     }
                 }
-                
+
                 // Second pass: Collect mods that need to be enabled
                 foreach (var (modDir, shouldEnable) in character.SecretModState)
                 {
@@ -5403,7 +5714,53 @@ namespace CharacterSelectPlugin
                 Log.Error($"Error applying Secret Mode mod state: {ex}");
             }
         }
-        
+
+        /// <summary>
+        /// Restores Penumbra inheritance for mods that were set to "Inherit" in CR.
+        /// This removes the explicit mod setting from the collection, allowing it to inherit from parent.
+        /// </summary>
+        public async Task RestoreModInheritance(HashSet<string> modsToInherit)
+        {
+            if (modsToInherit == null || modsToInherit.Count == 0)
+                return;
+
+            if (PenumbraIntegration == null || !PenumbraIntegration.IsPenumbraAvailable)
+            {
+                Log.Warning("Penumbra not available, cannot restore mod inheritance");
+                return;
+            }
+
+            try
+            {
+                // Get current collection
+                var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
+                var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2); // ApiCollectionType.Current
+
+                if (currentCollectionResult?.Item1 == null)
+                {
+                    Log.Warning("Could not get current Penumbra collection for inheritance restoration");
+                    return;
+                }
+
+                var collectionId = currentCollectionResult.Value.Item1;
+
+                Log.Info($"Restoring inheritance for {modsToInherit.Count} mods in collection {currentCollectionResult.Value.Item2}");
+
+                // Restore inheritance for each mod
+                var tasks = modsToInherit.Select(modDir =>
+                    Task.Run(() => PenumbraIntegration.TryInheritMod(collectionId, modDir, "", true))
+                ).ToArray();
+
+                await Task.WhenAll(tasks);
+
+                Log.Info($"Inheritance restored for {modsToInherit.Count} mods");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Error restoring mod inheritance: {ex}");
+            }
+        }
+
         /// <summary>
         /// Simplified mod type determination for switching logic
         /// </summary>

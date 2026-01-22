@@ -312,39 +312,17 @@ namespace CharacterSelectPlugin.Windows
 
                 if (ImGui.Button("Choose Image", new Vector2(120 * totalScale, 0)))
                 {
-                    try
-                    {
-                        Thread thread = new Thread(() =>
+                    plugin.OpenFilePicker(
+                        "Select Profile Image",
+                        "Image files (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|PNG files (*.png)|*.png",
+                        (selectedPath) =>
                         {
-                            try
+                            lock (this)
                             {
-                                using (OpenFileDialog openFileDialog = new OpenFileDialog())
-                                {
-                                    openFileDialog.Filter = "PNG files (*.png)|*.png";
-                                    openFileDialog.Title = "Select Profile Image";
-
-                                    if (openFileDialog.ShowDialog() == DialogResult.OK)
-                                    {
-                                        lock (this)
-                                        {
-                                            rp.CustomImagePath = openFileDialog.FileName;
-                                        }
-                                    }
-                                }
+                                rp.CustomImagePath = selectedPath;
                             }
-                            catch (Exception ex)
-                            {
-                                Plugin.Log.Error($"Error opening file picker: {ex.Message}");
-                            }
-                        });
-
-                        thread.SetApartmentState(ApartmentState.STA);
-                        thread.Start();
-                    }
-                    catch (Exception ex)
-                    {
-                        Plugin.Log.Error($"Critical file picker error: {ex.Message}");
-                    }
+                        }
+                    );
                 }
                 ImGui.SameLine();
                 if (!string.IsNullOrEmpty(rp.CustomImagePath) && ImGui.Button("Clear", new Vector2(60 * totalScale, 0)))
@@ -924,9 +902,10 @@ namespace CharacterSelectPlugin.Windows
                                     effectiveSharing = onMainCharacter ? ProfileSharing.ShowcasePublic : ProfileSharing.AlwaysShare;
                                 }
 
-                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName, isCharacterApplication: false, sharingOverride: effectiveSharing);
+                                _ = Plugin.UploadProfileAsync(profile, character.LastInGameName, isCharacterApplication: false,
+                                    sharingOverride: effectiveSharing, excludeFromNameSync: character.ExcludeFromNameSync);
                                 plugin.GalleryWindow.RefreshLikeStatesAfterProfileUpdate(character.Name);
-                                Plugin.Log.Info($"[RPProfile] ✅ Uploaded profile for {character.Name} from RP editor (effective sharing: {effectiveSharing})");
+                                Plugin.Log.Info($"[RPProfile] ✅ Uploaded profile for {character.Name} from RP editor (effective sharing: {effectiveSharing}, excluded: {character.ExcludeFromNameSync})");
                             }
                             else
                             {

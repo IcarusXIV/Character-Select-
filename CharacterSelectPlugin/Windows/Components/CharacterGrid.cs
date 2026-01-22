@@ -2146,12 +2146,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (ShouldUploadToServer(character))
                 {
                     var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
+                    var excludeFromSync = character.ExcludeFromNameSync; // Capture for closure
                     System.Threading.Tasks.Task.Run(() =>
                     {
                         var profileToSend = plugin.BuildProfileForUpload(character);
-                        _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name, sharingOverride: effectiveSharing);
+                        _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
+                            sharingOverride: effectiveSharing, excludeFromNameSync: excludeFromSync);
                     });
-                    Plugin.Log.Info($"[CharacterGrid] ✓ Uploading profile for {character.Name} (effective sharing: {effectiveSharing})");
+                    Plugin.Log.Info($"[CharacterGrid] ✓ Uploading profile for {character.Name} (effective sharing: {effectiveSharing}, excluded: {excludeFromSync})");
                 }
                 else
                 {
@@ -2178,6 +2180,13 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private ProfileSharing GetEffectiveSharingForUpload(Character character, string currentPhysicalCharacter)
         {
+            // ExcludeFromNameSync = upload as NeverShare so server cache excludes this character
+            if (character.ExcludeFromNameSync)
+            {
+                Plugin.Log.Debug($"[CharacterGrid-Sharing] ExcludeFromNameSync - sending as NeverShare");
+                return ProfileSharing.NeverShare;
+            }
+
             var sharing = character.RPProfile?.Sharing ?? ProfileSharing.AlwaysShare;
 
             // NeverShare and AlwaysShare are sent as-is

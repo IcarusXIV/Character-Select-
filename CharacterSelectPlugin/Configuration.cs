@@ -89,7 +89,8 @@ namespace CharacterSelectPlugin
         public bool EnableSafeMode { get; set; } = false;
         public bool QuickSwitchCompact { get; set; } = false;
         public bool EnableCharacterHoverEffects { get; set; } = false;
-        
+        public bool UseImGuiFilePicker { get; set; } = false;
+
         // Theme Settings
         public ThemeSelection SelectedTheme { get; set; } = ThemeSelection.Current;
         public CustomThemeConfig CustomTheme { get; set; } = new();
@@ -117,6 +118,10 @@ namespace CharacterSelectPlugin
         public bool RandomSelectionFavoritesOnly { get; set; } = false;
         [DefaultValue(true)]
         public bool ShowRandomSelectionChatMessages { get; set; } = true;
+
+        // Random Groups - custom groups of characters for /select random <groupname>
+        public List<RandomGroup> RandomGroups { get; set; } = new();
+
         public string? MainCharacterName { get; set; } = null; 
         public bool EnableMainCharacterOnly { get; set; } = false;
         public bool ShowMainCharacterCrown { get; set; } = true;
@@ -308,6 +313,17 @@ namespace CharacterSelectPlugin
             Shift
         }
 
+        /// <summary>
+        /// A custom group of characters for random selection.
+        /// Users can create groups like "DPS", "Tanks", etc. and use /select random groupname
+        /// </summary>
+        [Serializable]
+        public class RandomGroup
+        {
+            public string Name { get; set; } = "";
+            public List<string> CharacterNames { get; set; } = new();
+        }
+
         public string GetGenderNeutralTitle()
         {
             return TheyThemStyle switch
@@ -403,6 +419,9 @@ namespace CharacterSelectPlugin
         /// <summary>Use nameplate colour for card glow instead of custom colour.</summary>
         public bool UseNameplateColorForCardGlow { get; set; } = true;
 
+        /// <summary>Button opacity for Compact Quick Switch (0.0-1.0).</summary>
+        public float CompactQuickSwitchButtonOpacity { get; set; } = 1.0f;
+
         /// <summary>Deep copy for preset saving.</summary>
         public CustomThemeConfig Clone()
         {
@@ -415,7 +434,8 @@ namespace CharacterSelectPlugin
                 BackgroundImageOffsetX = this.BackgroundImageOffsetX,
                 BackgroundImageOffsetY = this.BackgroundImageOffsetY,
                 FavoriteIconId = this.FavoriteIconId,
-                UseNameplateColorForCardGlow = this.UseNameplateColorForCardGlow
+                UseNameplateColorForCardGlow = this.UseNameplateColorForCardGlow,
+                CompactQuickSwitchButtonOpacity = this.CompactQuickSwitchButtonOpacity
             };
         }
 
@@ -430,6 +450,7 @@ namespace CharacterSelectPlugin
             this.BackgroundImageOffsetY = other.BackgroundImageOffsetY;
             this.FavoriteIconId = other.FavoriteIconId;
             this.UseNameplateColorForCardGlow = other.UseNameplateColorForCardGlow;
+            this.CompactQuickSwitchButtonOpacity = other.CompactQuickSwitchButtonOpacity;
         }
     }
 

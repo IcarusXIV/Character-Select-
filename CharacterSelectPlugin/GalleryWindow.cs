@@ -1520,7 +1520,8 @@ namespace CharacterSelectPlugin.Windows
                                 var character = plugin.Characters.FirstOrDefault(c => c.Name == characterName);
                                 if (character?.RPProfile != null)
                                 {
-                                    _ = Plugin.UploadProfileAsync(character.RPProfile, option);
+                                    _ = Plugin.UploadProfileAsync(character.RPProfile, option,
+                                        excludeFromNameSync: character.ExcludeFromNameSync);
                                 }
                             }
                         }
@@ -1622,7 +1623,8 @@ namespace CharacterSelectPlugin.Windows
 
                             if (activeCharacter.RPProfile != null)
                             {
-                                _ = Plugin.UploadProfileAsync(activeCharacter.RPProfile, activeCharacter.LastInGameName ?? activeCharacter.Name);
+                                _ = Plugin.UploadProfileAsync(activeCharacter.RPProfile, activeCharacter.LastInGameName ?? activeCharacter.Name,
+                                    excludeFromNameSync: activeCharacter.ExcludeFromNameSync);
                             }
                         }
 
@@ -4244,7 +4246,8 @@ namespace CharacterSelectPlugin.Windows
 
             character.RPProfile.Sharing = sharing;
             plugin.SaveConfiguration();
-            _ = Plugin.UploadProfileAsync(character.RPProfile, character.LastInGameName ?? character.Name);
+            _ = Plugin.UploadProfileAsync(character.RPProfile, character.LastInGameName ?? character.Name,
+                excludeFromNameSync: character.ExcludeFromNameSync);
         }
 
         private void LoadFavorites()

@@ -25,14 +25,14 @@ namespace CharacterSelectPlugin
         private readonly object pendingLock = new();
 
         private DateTime lastLookupTime = DateTime.MinValue;
-        private static readonly TimeSpan LookupCooldown = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan LookupCooldown = TimeSpan.FromMilliseconds(500); // Reduced for faster initial name display
         private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan NegativeCacheDuration = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan PositiveRefreshInterval = TimeSpan.FromSeconds(10);
-        private static readonly TimeSpan NegativeRefreshInterval = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan NegativeRefreshInterval = TimeSpan.FromSeconds(10); // Match positive for responsive updates when switching from excluded
 
         private const string ApiBaseUrl = "https://character-select-profile-server-production.up.railway.app";
-        private const int MaxBatchSize = 20;
+        private const int MaxBatchSize = 30; // Increased to reduce number of batches needed
 
         public class SharedNameEntry
         {
@@ -48,6 +48,8 @@ namespace CharacterSelectPlugin
             this.log = log;
             this.httpClient = new HttpClient();
             this.httpClient.Timeout = TimeSpan.FromSeconds(10);
+            this.httpClient.DefaultRequestHeaders.Add("X-Plugin-Auth", "cs-plus-gallery-client");
+            this.httpClient.DefaultRequestHeaders.Add("User-Agent", "CharacterSelectPlus/1.2.0");
         }
 
         /// <summary>Queues a character for name lookup. Re-queues after refresh interval.</summary>
@@ -170,7 +172,8 @@ namespace CharacterSelectPlugin
                     if (plugin.Configuration.BlockedCSUsers.Contains(kvp.Key))
                         continue;
 
-                    if (text.Contains(cachedCharName, StringComparison.OrdinalIgnoreCase))
+                    // Use word boundary check to avoid substring matches (e.g., "Alice" matching "Alexis")
+                    if (ContainsFullName(text, cachedCharName))
                     {
                         var entry = kvp.Value;
                         if (entry == null || entry.IsNegativeCache)
@@ -198,6 +201,7 @@ namespace CharacterSelectPlugin
             if (index < 0)
                 return false;
 
+            // Check character before (must not be a letter)
             if (index > 0)
             {
                 var charBefore = text[index - 1];
@@ -205,12 +209,23 @@ namespace CharacterSelectPlugin
                     return false;
             }
 
+            // Check character after
             var endIndex = index + name.Length;
             if (endIndex < text.Length)
             {
                 var charAfter = text[endIndex];
                 if (char.IsLetter(charAfter))
+                {
+                    // Special case: Cross-world names may have world appended directly
+                    // e.g., "Alice SmithBalmung" when the cross-world icon is stripped.
+                    // If the name is a full "FirstName LastName" (contains space) and
+                    // what follows starts with uppercase (world name), allow it.
+                    if (name.Contains(' ') && char.IsUpper(charAfter))
+                    {
+                        return true;
+                    }
                     return false;
+                }
             }
 
             return true;
@@ -293,9 +308,12 @@ namespace CharacterSelectPlugin
                     nameCache[kvp.Key] = entry;
                 }
 
+                // Update cache for names that returned no result
+                // Important: This MUST overwrite existing positive entries when server returns nothing
+                // (e.g., user enabled ExcludeFromNameSync)
                 foreach (var name in characters)
                 {
-                    if (!result.Results.ContainsKey(name) && !nameCache.ContainsKey(name))
+                    if (!result.Results.ContainsKey(name))
                     {
                         nameCache[name] = new SharedNameEntry
                         {
@@ -327,6 +345,48 @@ namespace CharacterSelectPlugin
             lock (pendingLock)
             {
                 pendingLookups.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Queues all cached entries that are past their refresh interval.
+        /// Call this periodically to ensure names refresh even without nameplate updates.
+        /// </summary>
+        public void QueueStaleEntriesForRefresh()
+        {
+            var namesToQueue = new List<string>();
+
+            lock (cacheLock)
+            {
+                foreach (var kvp in nameCache)
+                {
+                    var entry = kvp.Value;
+                    if (entry == null) continue;
+
+                    var age = DateTime.Now - entry.CachedAt;
+                    var refreshInterval = entry.IsNegativeCache ? NegativeRefreshInterval : PositiveRefreshInterval;
+
+                    if (age >= refreshInterval)
+                    {
+                        namesToQueue.Add(kvp.Key);
+                        // Update timestamp NOW to prevent re-queuing until next interval
+                        entry.CachedAt = DateTime.Now;
+                    }
+                }
+            }
+
+            if (namesToQueue.Count > 0)
+            {
+                lock (pendingLock)
+                {
+                    foreach (var name in namesToQueue)
+                    {
+                        if (!pendingLookups.Contains(name))
+                        {
+                            pendingLookups.Add(name);
+                        }
+                    }
+                }
             }
         }
 

@@ -10,6 +10,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.ImGuiSeStringRenderer;
 using CharacterSelectPlugin.Windows.Styles;
+using CharacterSelectPlugin.Windows.Utils;
 using SeString = Dalamud.Game.Text.SeStringHandling.SeString;
 using SeStringBuilder = Lumina.Text.SeStringBuilder;
 using DalamudSeStringBuilder = Dalamud.Game.Text.SeStringHandling.SeStringBuilder;
@@ -276,16 +277,18 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.Separator();
 
-            // Penumbra Collection 
+            // Penumbra Collection
             DrawFormField("Penumbra Collection*", labelWidth, inputWidth, inputOffset, () =>
             {
-                ImGui.InputText("##PenumbraCollection", ref tempPenumbra, 50);
-                plugin.PenumbraFieldPos = ImGui.GetItemRectMin();
-                plugin.PenumbraFieldSize = ImGui.GetItemRectSize();
+                var penumbraOptions = plugin.IntegrationListProvider?.GetPenumbraCollections() ?? Array.Empty<string>();
+                var currentPenumbra = plugin.IntegrationListProvider?.GetCurrentPenumbraCollection();
+                string oldValue = tempPenumbra;
 
-                string oldValue = IsEditWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
-                if (oldValue != tempPenumbra)
+                if (AutocompleteCombo.Draw("##PenumbraCollection", ref tempPenumbra, penumbraOptions, inputWidth, "Select collection...", currentActive: currentPenumbra))
                 {
+                    plugin.PenumbraFieldPos = ImGui.GetItemRectMin();
+                    plugin.PenumbraFieldSize = ImGui.GetItemRectSize();
+
                     if (IsEditWindowOpen)
                     {
                         editedCharacterPenumbra = tempPenumbra;
@@ -312,20 +315,27 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                     }
                 }
-            }, "Enter the name of the Penumbra collection to apply to this character.\nMust be entered EXACTLY as it is named in Penumbra!", scale);
+                else
+                {
+                    // Still track position even when not changed
+                    plugin.PenumbraFieldPos = ImGui.GetItemRectMin();
+                    plugin.PenumbraFieldSize = ImGui.GetItemRectSize();
+                }
+            }, "Select the Penumbra collection for this character. Right-click to clear.", scale);
 
             ImGui.Separator();
 
             // Glamourer Design
             DrawFormField("Glamourer Design*", labelWidth, inputWidth, inputOffset, () =>
             {
-                ImGui.InputText("##GlamourerDesign", ref tempGlamourer, 50);
-                plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
-                plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
+                var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+                string oldValue = tempGlamourer;
 
-                string oldValue = IsEditWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
-                if (oldValue != tempGlamourer)
+                if (AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, inputWidth, "Select design..."))
                 {
+                    plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
+                    plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
+
                     if (IsEditWindowOpen)
                     {
                         editedCharacterGlamourer = tempGlamourer;
@@ -352,7 +362,13 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                     }
                 }
-            }, "Enter the name of the Glamourer design to apply to this character.\nMust be entered EXACTLY as it is named in Glamourer!\nNote: You can add additional designs later.", scale);
+                else
+                {
+                    // Still track position even when not changed
+                    plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
+                    plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
+                }
+            }, "Select the Glamourer design for this character. Right-click to clear.\nYou can add additional designs later.", scale);
 
             ImGui.Separator();
 
@@ -512,7 +528,15 @@ namespace CharacterSelectPlugin.Windows.Components
                                 }
                             },
                             null,  // No design context for character-level operations
-                            characterName  // Pass the character name for context
+                            characterName,  // Pass the character name for context
+                            (inheritMods) =>
+                            {
+                                // Inherit callback - restore Penumbra inheritance for these mods
+                                if (inheritMods != null && inheritMods.Count > 0)
+                                {
+                                    _ = plugin.RestoreModInheritance(inheritMods);
+                                }
+                            }
                         );
                     }
                 }
@@ -540,39 +564,38 @@ namespace CharacterSelectPlugin.Windows.Components
 
             DrawFormField("Glam. Automation", labelWidth, inputWidth, inputOffset, () =>
             {
-                if (ImGui.InputText("##Glam.Automation", ref tempCharacterAutomation, 50))
+                // Automations use the same design list from Glamourer
+                var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+
+                if (AutocompleteCombo.Draw("##Glam.Automation", ref tempCharacterAutomation, glamourerOptions, inputWidth, "Select automation..."))
                 {
-                    string oldValue = IsEditWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
-                    if (oldValue != tempCharacterAutomation)
+                    if (IsEditWindowOpen)
                     {
-                        if (IsEditWindowOpen)
+                        editedCharacterAutomation = tempCharacterAutomation;
+                        if (isAdvancedModeCharacter)
                         {
-                            editedCharacterAutomation = tempCharacterAutomation;
-                            if (isAdvancedModeCharacter)
-                            {
-                                UpdateAdvancedMacroAutomation(tempCharacterAutomation);
-                            }
-                            else
-                            {
-                                editedCharacterMacros = GenerateMacro();
-                            }
+                            UpdateAdvancedMacroAutomation(tempCharacterAutomation);
                         }
                         else
                         {
-                            plugin.NewCharacterAutomation = tempCharacterAutomation;
-                            if (isAdvancedModeCharacter)
-                            {
-                                UpdateAdvancedMacroAutomation(tempCharacterAutomation);
-                                plugin.NewCharacterMacros = advancedCharacterMacroText;
-                            }
-                            else
-                            {
-                                plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                            }
+                            editedCharacterMacros = GenerateMacro();
+                        }
+                    }
+                    else
+                    {
+                        plugin.NewCharacterAutomation = tempCharacterAutomation;
+                        if (isAdvancedModeCharacter)
+                        {
+                            UpdateAdvancedMacroAutomation(tempCharacterAutomation);
+                            plugin.NewCharacterMacros = advancedCharacterMacroText;
+                        }
+                        else
+                        {
+                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                         }
                     }
                 }
-            }, "Enter the name of a Glamourer Automation profile to apply when this character is activated.\nDesign-level automations override this if both are set.\nLeave blank to default to a fallback profile named 'None'.", scale);
+            }, "Select the Glamourer Automation for this character. Right-click to clear.\nDesign-level automations override this if both are set.", scale);
         }
 
         private void DrawCustomizeField(float labelWidth, float inputWidth, float inputOffset, float scale)
@@ -581,39 +604,38 @@ namespace CharacterSelectPlugin.Windows.Components
 
             DrawFormField("Customize+ Profile", labelWidth, inputWidth, inputOffset, () =>
             {
-                if (ImGui.InputText("##CustomizeProfile", ref tempCustomize, 50))
+                var customizeOptions = plugin.IntegrationListProvider?.GetCustomizePlusProfiles() ?? Array.Empty<string>();
+                var currentCustomize = plugin.IntegrationListProvider?.GetCurrentCustomizePlusProfile();
+
+                if (AutocompleteCombo.Draw("##CustomizeProfile", ref tempCustomize, customizeOptions, inputWidth, "Select profile...", currentActive: currentCustomize))
                 {
-                    string oldValue = IsEditWindowOpen ? editedCharacterCustomize : plugin.NewCustomizeProfile;
-                    if (oldValue != tempCustomize)
+                    if (IsEditWindowOpen)
                     {
-                        if (IsEditWindowOpen)
+                        editedCharacterCustomize = tempCustomize;
+                        if (isAdvancedModeCharacter)
                         {
-                            editedCharacterCustomize = tempCustomize;
-                            if (isAdvancedModeCharacter)
-                            {
-                                UpdateAdvancedMacroCustomize(tempCustomize);
-                            }
-                            else
-                            {
-                                editedCharacterMacros = GenerateMacro();
-                            }
+                            UpdateAdvancedMacroCustomize(tempCustomize);
                         }
                         else
                         {
-                            plugin.NewCustomizeProfile = tempCustomize;
-                            if (isAdvancedModeCharacter)
-                            {
-                                UpdateAdvancedMacroCustomize(tempCustomize);
-                                plugin.NewCharacterMacros = advancedCharacterMacroText;
-                            }
-                            else
-                            {
-                                plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                            }
+                            editedCharacterMacros = GenerateMacro();
+                        }
+                    }
+                    else
+                    {
+                        plugin.NewCustomizeProfile = tempCustomize;
+                        if (isAdvancedModeCharacter)
+                        {
+                            UpdateAdvancedMacroCustomize(tempCustomize);
+                            plugin.NewCharacterMacros = advancedCharacterMacroText;
+                        }
+                        else
+                        {
+                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                         }
                     }
                 }
-            }, "Enter the name of the Customize+ profile to apply to this character.\nMust be entered EXACTLY as it is named in Customize+!", scale);
+            }, "Select the Customize+ profile for this character. Right-click to clear.", scale);
         }
 
         private void DrawHonorificSection(float labelWidth, float inputWidth, float inputOffset, float scale)
@@ -846,7 +868,9 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             DrawFormField("Moodle Preset", labelWidth, inputWidth, inputOffset, () =>
             {
-                if (ImGui.InputText("##MoodlePreset", ref tempMoodlePreset, 50))
+                var moodleOptions = plugin.IntegrationListProvider?.GetMoodlesPresets() ?? Array.Empty<string>();
+
+                if (AutocompleteCombo.Draw("##MoodlePreset", ref tempMoodlePreset, moodleOptions, inputWidth, "Select preset..."))
                 {
                     if (IsEditWindowOpen)
                         editedCharacterMoodlePreset = tempMoodlePreset;
@@ -873,7 +897,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                     }
                 }
-            }, "Enter the Moodle preset name exactly as saved in the Moodle plugin.\nExample: 'HappyFawn' will apply the preset named 'HappyFawn'.", scale);
+            }, "Select the Moodle preset for this character. Right-click to clear.", scale);
         }
 
         private void DrawIdlePoseField(float labelWidth, float inputWidth, float inputOffset, float scale)
@@ -1034,39 +1058,17 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             if (ImGui.Button("Choose Image", new Vector2(0, 25 * scale)))
             {
-                try
-                {
-                    Thread thread = new Thread(() =>
+                plugin.OpenFilePicker(
+                    "Select Character Image",
+                    "Image files (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|PNG files (*.png)|*.png",
+                    (selectedPath) =>
                     {
-                        try
+                        lock (this)
                         {
-                            using (OpenFileDialog openFileDialog = new OpenFileDialog())
-                            {
-                                openFileDialog.Filter = "PNG files (*.png)|*.png";
-                                openFileDialog.Title = "Select Character Image";
-
-                                if (openFileDialog.ShowDialog() == DialogResult.OK)
-                                {
-                                    lock (this)
-                                    {
-                                        pendingImagePath = openFileDialog.FileName;
-                                    }
-                                }
-                            }
+                            pendingImagePath = selectedPath;
                         }
-                        catch (Exception ex)
-                        {
-                            Plugin.Log.Error($"Error opening file picker: {ex.Message}");
-                        }
-                    });
-
-                    thread.SetApartmentState(ApartmentState.STA);
-                    thread.Start();
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log.Error($"Critical file picker error: {ex.Message}");
-                }
+                    }
+                );
             }
 
             // Apply pending image

@@ -24,6 +24,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private bool visualSettingsOpen = true;  // Default
         private bool automationSettingsOpen = false;
         private bool behaviorSettingsOpen = false;
+        private bool randomGroupsSettingsOpen = false;
         private bool honorificSettingsOpen = false;
         private bool mainCharacterSettingsOpen = false;
         private bool dialogueSettingsOpen = false;
@@ -46,6 +47,9 @@ namespace CharacterSelectPlugin.Windows.Components
         private string backupNameBuffer = "";
         private List<BackupFileInfo> availableBackups = new();
         private string lastBackupStatusMessage = "";
+
+        // Random Groups
+        private string newRandomGroupName = "";
         private DateTime lastBackupStatusTime = DateTime.MinValue;
         private string? pendingImportPath = null;
         private bool isCapturingRevealKey = false;
@@ -246,7 +250,14 @@ namespace CharacterSelectPlugin.Windows.Components
                     DrawBehaviorSettings();
                 }
 
-                // Honorific Section (Lime/Yellow-Green)
+                // Random Groups Section (Yellow-Green)
+                randomGroupsSettingsOpen = DrawModernCollapsingHeader("Random Groups", new Vector4(0.85f, 0.95f, 0.3f, 1.0f), randomGroupsSettingsOpen);
+                if (randomGroupsSettingsOpen)
+                {
+                    DrawRandomGroupsSettings();
+                }
+
+                // Honorific Section (Lime)
                 honorificSettingsOpen = DrawModernCollapsingHeader("Honorific", new Vector4(0.7f, 1.0f, 0.3f, 1.0f), honorificSettingsOpen, FeatureKeys.Honorific);
                 if (honorificSettingsOpen)
                 {
@@ -754,6 +765,15 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             DrawTooltip("When enabled, displays themed chat messages when using random selection.\nMessages become spooky during Halloween season!");
 
+            // File Browser preference
+            bool useImGuiFilePicker = plugin.Configuration.UseImGuiFilePicker;
+            if (ImGui.Checkbox("Use In-Game File Browser", ref useImGuiFilePicker))
+            {
+                plugin.Configuration.UseImGuiFilePicker = useImGuiFilePicker;
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("Use an in-game file browser instead of the Windows file dialog.\nRecommended for Linux/Wine users or if you prefer not to leave the game window.");
+
             // Community & Moderation section (merged)
             ImGui.Spacing();
             ImGui.Separator();
@@ -853,6 +873,176 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.Spacing();
         }
+
+        private void DrawRandomGroupsSettings()
+        {
+            var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
+
+            ImGui.TextWrapped("Create custom groups of characters for random selection. Use /select random <groupname> to pick randomly from a group.");
+            ImGui.Spacing();
+
+            // Create new group row
+            ImGui.SetNextItemWidth(180 * totalScale);
+            ImGui.InputTextWithHint("##NewGroupName", "Group name...", ref newRandomGroupName, 50);
+            ImGui.SameLine();
+
+            bool canCreate = !string.IsNullOrWhiteSpace(newRandomGroupName) &&
+                !plugin.Configuration.RandomGroups.Any(g => g.Name.Equals(newRandomGroupName.Trim(), StringComparison.OrdinalIgnoreCase));
+
+            if (!canCreate) ImGui.BeginDisabled();
+            if (ImGui.Button("Create Group"))
+            {
+                plugin.Configuration.RandomGroups.Add(new Configuration.RandomGroup
+                {
+                    Name = newRandomGroupName.Trim()
+                });
+                plugin.Configuration.Save();
+                newRandomGroupName = "";
+            }
+            if (!canCreate) ImGui.EndDisabled();
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            if (plugin.Configuration.RandomGroups.Count == 0)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.5f, 1f));
+                ImGui.TextWrapped("No groups yet. Create one above to get started.");
+                ImGui.PopStyleColor();
+            }
+            else
+            {
+                // List existing groups
+                int groupToDelete = -1;
+
+                for (int i = 0; i < plugin.Configuration.RandomGroups.Count; i++)
+                {
+                    var group = plugin.Configuration.RandomGroups[i];
+                    ImGui.PushID($"RandomGroup_{i}");
+
+                    bool isExpanded = expandedRandomGroups.Contains(i);
+                    var characterCount = group.CharacterNames.Count;
+
+                    // Header row with expand icon, name, count, and delete button
+                    var icon = isExpanded ? FontAwesomeIcon.ChevronDown.ToIconString() : FontAwesomeIcon.ChevronRight.ToIconString();
+                    ImGui.PushID($"Expand_{i}");
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    if (ImGui.Button(icon, new Vector2(24 * totalScale, 0)))
+                    {
+                        if (isExpanded)
+                            expandedRandomGroups.Remove(i);
+                        else
+                            expandedRandomGroups.Add(i);
+                    }
+                    ImGui.PopFont();
+                    ImGui.PopID();
+
+                    ImGui.SameLine();
+                    ImGui.Text(group.Name);
+
+                    ImGui.SameLine();
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1f));
+                    ImGui.Text($"({characterCount})");
+                    ImGui.PopStyleColor();
+
+                    // Delete button on right
+                    ImGui.SameLine(ImGui.GetContentRegionAvail().X - 35 * totalScale);
+                    ImGui.PushID($"Delete_{i}");
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.3f, 0.3f, 1f));
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    if (ImGui.Button(FontAwesomeIcon.Times.ToIconString(), new Vector2(24 * totalScale, 0)))
+                    {
+                        groupToDelete = i;
+                    }
+                    ImGui.PopFont();
+                    ImGui.PopStyleColor();
+                    ImGui.PopID();
+                    DrawTooltip("Delete group");
+
+                    // Expanded content
+                    if (isExpanded)
+                    {
+                        ImGui.Indent(24 * totalScale);
+
+                        // Command hint
+                        var cmdName = group.Name.ToLower().Replace(" ", "");
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.65f, 0.4f, 1f));
+                        ImGui.Text($"/select random {cmdName}");
+                        ImGui.PopStyleColor();
+
+                        ImGui.Spacing();
+
+                        // Character checkboxes
+                        var characters = plugin.Configuration.Characters;
+                        if (characters.Count == 0)
+                        {
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.5f, 1f));
+                            ImGui.Text("No characters created yet.");
+                            ImGui.PopStyleColor();
+                        }
+                        else
+                        {
+                            // Calculate column width for 2 columns
+                            var availWidth = ImGui.GetContentRegionAvail().X;
+                            var colWidth = availWidth / 2 - 5;
+
+                            for (int c = 0; c < characters.Count; c++)
+                            {
+                                var character = characters[c];
+                                bool isInGroup = group.CharacterNames.Contains(character.Name);
+
+                                // Start new row for even indices
+                                if (c % 2 == 1)
+                                {
+                                    ImGui.SameLine(24 * totalScale + colWidth + 10);
+                                }
+
+                                ImGui.PushID($"Char_{c}");
+                                ImGui.SetNextItemWidth(colWidth);
+                                if (ImGui.Checkbox(character.Name.Length > 20 ? character.Name.Substring(0, 17) + "..." : character.Name, ref isInGroup))
+                                {
+                                    if (isInGroup && !group.CharacterNames.Contains(character.Name))
+                                        group.CharacterNames.Add(character.Name);
+                                    else if (!isInGroup)
+                                        group.CharacterNames.Remove(character.Name);
+                                    plugin.Configuration.Save();
+                                }
+                                if (character.Name.Length > 20)
+                                    DrawTooltip(character.Name);
+                                ImGui.PopID();
+                            }
+                        }
+
+                        ImGui.Unindent(24 * totalScale);
+                        ImGui.Spacing();
+                    }
+
+                    ImGui.PopID();
+                }
+
+                // Handle deletion outside the loop
+                if (groupToDelete >= 0)
+                {
+                    plugin.Configuration.RandomGroups.RemoveAt(groupToDelete);
+                    plugin.Configuration.Save();
+                    expandedRandomGroups.Remove(groupToDelete);
+                    // Adjust expanded indices for groups after the deleted one
+                    var newExpanded = new HashSet<int>();
+                    foreach (var idx in expandedRandomGroups)
+                    {
+                        if (idx > groupToDelete)
+                            newExpanded.Add(idx - 1);
+                        else
+                            newExpanded.Add(idx);
+                    }
+                    expandedRandomGroups = newExpanded;
+                }
+            }
+        }
+
+        // Tracks which random groups are expanded
+        private HashSet<int> expandedRandomGroups = new();
 
         private void DrawMainCharacterSettings(float labelWidth, float inputWidth)
         {
@@ -1093,12 +1283,12 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Simple glow option - always visible so users can enable it before the main toggle
             bool simpleGlow = plugin.Configuration.UseSimpleNameplateGlow;
-            if (ImGui.Checkbox("Use simple glow (compatibility)", ref simpleGlow))
+            if (ImGui.Checkbox("Use simple glow (enable if crashing)", ref simpleGlow))
             {
                 plugin.Configuration.UseSimpleNameplateGlow = simpleGlow;
                 plugin.Configuration.Save();
             }
-            DrawTooltip("Use a simple solid glow instead of the animated wave effect.\nEnable this FIRST if Name Sync causes crashes.");
+            DrawTooltip("Use a simple solid glow instead of the animated wave effect.\n\nEnable this if you're experiencing crashes, especially when using\nHonorific's animated gradient titles (Wave/Pulse/Static).\n\nThe game has internal limits on nameplate effects - this option\nreduces the effect complexity to stay within those limits.");
 
             ImGui.Spacing();
 
@@ -2303,7 +2493,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     ImGui.BeginTooltip();
                     ImGui.PushTextWrapPos(300f);
-                    ImGui.TextUnformatted("When enabled, mods inherited from parent collections in Penumbra will not be disabled by Conflict Resolution unless explicitly configured. This is useful if you use Penumbra's collection inheritance feature.");
+                    ImGui.TextUnformatted("When enabled, the mod manager shows a dropdown (Enable/Disable/Inherit) instead of a checkbox. The 'Inherit' option appears for mods inherited from parent collections and lets Penumbra manage them. Useful if you use Penumbra's collection inheritance feature.");
                     ImGui.PopTextWrapPos();
                     ImGui.EndTooltip();
                 }
@@ -2833,6 +3023,9 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 DrawCustomColorCategory(category, customTheme, totalScale);
             }
+
+            // Draw Compact Quick Switch settings (as collapsible category)
+            DrawCompactQuickSwitchSettings(customTheme, totalScale);
         }
 
         private void DrawPresetManagement(CustomThemeConfig customTheme, float totalScale)
@@ -3131,32 +3324,17 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void OpenBackgroundImageBrowser()
         {
-            Thread thread = new Thread(() =>
-            {
-                try
+            plugin.OpenFilePicker(
+                "Select Background Image",
+                "Image Files (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All Files (*.*)|*.*",
+                (selectedPath) =>
                 {
-                    using (OpenFileDialog openFileDialog = new OpenFileDialog())
+                    lock (this)
                     {
-                        openFileDialog.Filter = "Image Files (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All Files (*.*)|*.*";
-                        openFileDialog.Title = "Select Background Image";
-
-                        if (openFileDialog.ShowDialog() == DialogResult.OK)
-                        {
-                            lock (this)
-                            {
-                                _pendingBackgroundImagePath = openFileDialog.FileName;
-                            }
-                        }
+                        _pendingBackgroundImagePath = selectedPath;
                     }
                 }
-                catch (Exception ex)
-                {
-                    Plugin.Log.Error($"[CustomTheme] Error in background image browser: {ex.Message}");
-                }
-            });
-
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
+            );
         }
 
         private void DrawFavoriteIconPicker(CustomThemeConfig customTheme, float totalScale)
@@ -3229,6 +3407,70 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 ImGui.PopStyleColor(3);
             }
+        }
+
+        private void DrawCompactQuickSwitchSettings(CustomThemeConfig customTheme, float totalScale)
+        {
+            // Use the same expansion tracking as colour categories
+            var categoryKey = "Compact Quick Switch";
+            if (!_colorCategoryExpanded.ContainsKey(categoryKey))
+            {
+                _colorCategoryExpanded[categoryKey] = false;
+            }
+
+            var isExpanded = _colorCategoryExpanded[categoryKey];
+
+            // Category header - same styling as colour categories
+            ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.2f, 0.2f, 0.25f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.25f, 0.25f, 0.3f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.HeaderActive, new Vector4(0.3f, 0.3f, 0.35f, 1.0f));
+
+            if (ImGui.CollapsingHeader($"{categoryKey}##CompactQSCategory", isExpanded ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
+            {
+                _colorCategoryExpanded[categoryKey] = true;
+
+                ImGui.Indent(10f);
+
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1f));
+                ImGui.TextWrapped("These settings only affect the compact version of the Quick Character Switch bar.");
+                ImGui.PopStyleColor();
+                ImGui.Spacing();
+
+                // Button Opacity slider
+                var buttonOpacity = customTheme.CompactQuickSwitchButtonOpacity;
+                ImGui.Text("Button Opacity");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(150 * totalScale);
+                if (ImGui.SliderFloat("##CompactButtonOpacity", ref buttonOpacity, 0.0f, 1.0f, "%.2f"))
+                {
+                    customTheme.CompactQuickSwitchButtonOpacity = buttonOpacity;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Adjusts the transparency of buttons in the compact Quick Switch bar.\n0 = fully transparent, 1 = fully opaque.");
+
+                // Reset button if not default
+                if (Math.Abs(customTheme.CompactQuickSwitchButtonOpacity - 1.0f) > 0.01f)
+                {
+                    ImGui.SameLine();
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.35f, 0.35f, 0.7f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.6f, 0.4f, 0.4f, 0.8f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.7f, 0.5f, 0.5f, 0.9f));
+                    if (ImGui.SmallButton("Reset##CompactOpacity"))
+                    {
+                        customTheme.CompactQuickSwitchButtonOpacity = 1.0f;
+                        plugin.Configuration.Save();
+                    }
+                    ImGui.PopStyleColor(3);
+                }
+
+                ImGui.Unindent(10f);
+            }
+            else
+            {
+                _colorCategoryExpanded[categoryKey] = false;
+            }
+
+            ImGui.PopStyleColor(3);
         }
 
         private void DrawColorCategory(string category, CustomThemeConfig customTheme, float totalScale)

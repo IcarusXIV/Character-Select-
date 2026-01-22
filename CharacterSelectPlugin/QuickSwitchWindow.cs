@@ -61,13 +61,20 @@ namespace CharacterSelectPlugin.Windows
                     MaximumSize = new System.Numerics.Vector2(360 * scale, 28 * scale),
                 };
 
-                // Push opaque button colours for compact mode (NoBackground means semi-transparent buttons are see-through)
-                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.16f, 0.16f, 0.16f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.22f, 0.22f, 0.22f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.28f, 0.28f, 0.28f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, 1.0f));
-                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, 1.0f));
+                // Get button opacity - use custom value if Custom theme, otherwise 1.0 (opaque)
+                float buttonOpacity = 1.0f;
+                if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
+                {
+                    buttonOpacity = plugin.Configuration.CustomTheme.CompactQuickSwitchButtonOpacity;
+                }
+
+                // Push button colours for compact mode (NoBackground means semi-transparent buttons are see-through)
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.16f, 0.16f, 0.16f, buttonOpacity));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.22f, 0.22f, 0.22f, buttonOpacity));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.28f, 0.28f, 0.28f, buttonOpacity));
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.12f, 0.12f, 0.12f, buttonOpacity));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.18f, 0.18f, 0.18f, buttonOpacity));
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.22f, 0.22f, 0.22f, buttonOpacity));
             }
             else
             {

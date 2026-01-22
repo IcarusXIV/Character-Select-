@@ -47,6 +47,8 @@ namespace CharacterSelectPlugin
             this.log = log;
             this.httpClient = new HttpClient();
             this.httpClient.Timeout = TimeSpan.FromSeconds(10);
+            this.httpClient.DefaultRequestHeaders.Add("X-Plugin-Auth", "cs-plus-gallery-client");
+            this.httpClient.DefaultRequestHeaders.Add("User-Agent", "CharacterSelectPlus/1.2.0");
         }
 
         /// <summary>Queues a character for profile lookup.</summary>

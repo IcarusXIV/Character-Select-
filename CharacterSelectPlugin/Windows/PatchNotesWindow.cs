@@ -581,8 +581,12 @@ namespace CharacterSelectPlugin.Windows
             ImGui.BulletText("Helps prevent broken Conflict Resolution configurations from deleted mods");
             ImGui.Spacing();
 
+
             // Bug Fixes
             DrawFeatureSection("\uf188", "QoL & Bug Fixes", new Vector4(0.9f, 0.4f, 0.4f, 1.0f));
+            ImGui.BulletText("Added option to use In-game file browser (found in Behavior Settings)");
+            ImGui.BulletText("Added Random Group Presets - create groups of Characters for random selection");
+            ImGui.BulletText("Added Quick Switch transparency slider to Custom Theme options");
             ImGui.BulletText("Fixed duplicate chat messages appearing when using certain features");
             ImGui.BulletText("Fixed Advanced Mode macro settings resetting unexpectedly");
             ImGui.BulletText("Added an option to remember open/close state of the Main Window in Settings  → Behavior");

@@ -12,6 +12,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using CharacterSelectPlugin.Windows.Styles;
+using CharacterSelectPlugin.Windows.Utils;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -663,15 +664,15 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 ImGui.BeginTooltip();
                 ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("Enter the name of the Glamourer design to apply to this character.\nMust be entered EXACTLY as it is named in Glamourer!\nNote: You can add additional designs later.");
+                ImGui.TextUnformatted("Select the Glamourer design for this outfit. Right-click to clear.");
                 ImGui.PopTextWrapPos();
                 ImGui.EndTooltip();
             }
 
             ImGui.SetCursorPosX(10 * scale);
-            ImGui.SetNextItemWidth(inputWidth);
-            var oldGlam = editedGlamourerDesign;
-            if (ImGui.InputText("##GlamourerDesign", ref editedGlamourerDesign, 100))
+            var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+
+            if (AutocompleteCombo.Draw("##GlamourerDesign", ref editedGlamourerDesign, glamourerOptions, inputWidth, "Select design..."))
             {
                 plugin.EditedGlamourerDesign = editedGlamourerDesign;
 
@@ -705,14 +706,14 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 ImGui.BeginTooltip();
                 ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("Optional: Enter the name of a Glamourer automation to use with this design.\n⚠️ This must match the name of the automation EXACTLY.");
+                ImGui.TextUnformatted("Optional: Select a Glamourer automation for this design. Right-click to clear.");
                 ImGui.PopTextWrapPos();
                 ImGui.EndTooltip();
             }
 
             ImGui.SetCursorPosX(10 * scale);
-            ImGui.SetNextItemWidth(inputWidth);
-            ImGui.InputText("##GlamourerAutomation", ref editedAutomation, 100);
+            var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+            AutocompleteCombo.Draw("##GlamourerAutomation", ref editedAutomation, glamourerOptions, inputWidth, "Select automation...");
         }
 
         private void DrawCustomizeField(float inputWidth, float scale)
@@ -728,14 +729,16 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 ImGui.BeginTooltip();
                 ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("Optional: Enter the name of a Customize+ profile to apply with this design.\nIf left blank, uses the character's profile or disables all profiles.");
+                ImGui.TextUnformatted("Optional: Select a Customize+ profile for this design. Right-click to clear.\nIf left blank, uses the character's profile or disables all profiles.");
                 ImGui.PopTextWrapPos();
                 ImGui.EndTooltip();
             }
 
             ImGui.SetCursorPosX(10 * scale);
-            ImGui.SetNextItemWidth(inputWidth);
-            if (ImGui.InputText("##CustomizePlus", ref editedCustomizeProfile, 100))
+            var customizeOptions = plugin.IntegrationListProvider?.GetCustomizePlusProfiles() ?? Array.Empty<string>();
+            var currentCustomize = plugin.IntegrationListProvider?.GetCurrentCustomizePlusProfile();
+
+            if (AutocompleteCombo.Draw("##CustomizePlus", ref editedCustomizeProfile, customizeOptions, inputWidth, "Select profile...", currentActive: currentCustomize))
             {
                 // Update macro
                 if (!isAdvancedModeDesign)
@@ -1011,7 +1014,15 @@ namespace CharacterSelectPlugin.Windows.Components
                             plugin.SaveConfiguration();
                         },
                         currentDesignForWindow,  // Pass the design context
-                        character.Name  // Pass the character name for context
+                        character.Name,  // Pass the character name for context
+                        (inheritMods) =>
+                        {
+                            // Inherit callback - restore Penumbra inheritance for these mods
+                            if (inheritMods != null && inheritMods.Count > 0)
+                            {
+                                _ = plugin.RestoreModInheritance(inheritMods);
+                            }
+                        }
                     );
                 }
             }
@@ -2053,39 +2064,17 @@ namespace CharacterSelectPlugin.Windows.Components
         // Utility methods
         private void SelectPreviewImage()
         {
-            try
-            {
-                Thread thread = new Thread(() =>
+            plugin.OpenFilePicker(
+                "Select Design Preview Image",
+                "Image files (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|PNG files (*.png)|*.png",
+                (selectedPath) =>
                 {
-                    try
+                    lock (this)
                     {
-                        using (OpenFileDialog openFileDialog = new OpenFileDialog())
-                        {
-                            openFileDialog.Filter = "PNG files (*.png)|*.png";
-                            openFileDialog.Title = "Select Design Preview Image";
-
-                            if (openFileDialog.ShowDialog() == DialogResult.OK)
-                            {
-                                lock (this)
-                                {
-                                    pendingDesignImagePath = openFileDialog.FileName;
-                                }
-                            }
-                        }
+                        pendingDesignImagePath = selectedPath;
                     }
-                    catch (Exception ex)
-                    {
-                        Plugin.Log.Error($"Error opening file picker: {ex.Message}");
-                    }
-                });
-
-                thread.SetApartmentState(ApartmentState.STA);
-                thread.Start();
-            }
-            catch (Exception ex)
-            {
-                Plugin.Log.Error($"Critical file picker error: {ex.Message}");
-            }
+                }
+            );
         }
 
         private void PasteImageFromClipboard()

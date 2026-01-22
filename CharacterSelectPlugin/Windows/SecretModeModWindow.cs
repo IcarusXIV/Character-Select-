@@ -75,7 +75,8 @@ namespace CharacterSelectPlugin.Windows
         public bool HasOnlyModels { get; set; } = false; // True if mod contains only .mdl files, no textures
         public bool HasOnlyTextures { get; set; } = false; // True if mod contains only textures/materials, no models
         public ModConflictAnalysisResult? Analysis { get; set; } = null; // Contextual dependency and conflict analysis
-        
+        public bool IsInherited { get; set; } = false; // True if inherited from parent collection
+
         // Dependency and conflict fields from analysis
         public bool HasDependency { get; set; } = false;
         public string DependencyType { get; set; } = "";
@@ -88,7 +89,8 @@ namespace CharacterSelectPlugin.Windows
         private Plugin plugin;
         private UIStyles uiStyles;
         private List<ModEntry> availableMods = new();
-        private Dictionary<string, bool> selectedMods = new();
+        private Dictionary<string, bool> selectedMods = new(); // true=Enable, false=Disable
+        private HashSet<string> modsToInherit = new(); // Mods explicitly set to Inherit (restore Penumbra inheritance)
         private string searchFilter = ""; // Category-specific search
         private string globalSearchFilter = ""; // Global search across all categories
         private bool isLoading = true;
@@ -97,6 +99,7 @@ namespace CharacterSelectPlugin.Windows
         private string? editingCharacterName = null;
         private Action<Dictionary<string, bool>>? onSave = null;
         private Action<HashSet<string>>? onSavePins = null;
+        private Action<HashSet<string>>? onSaveInherit = null; // Callback for mods to restore inheritance
         
         // Pagination
         private const int ModsPerPage = 150;
@@ -266,29 +269,31 @@ namespace CharacterSelectPlugin.Windows
             };
         }
 
-        public void Open(int? characterIndex = null, Dictionary<string, bool>? existingSelection = null, HashSet<string>? existingPins = null, Action<Dictionary<string, bool>>? saveCallback = null, Action<HashSet<string>>? savePinsCallback = null, CharacterDesign? design = null, string? characterName = null)
+        public void Open(int? characterIndex = null, Dictionary<string, bool>? existingSelection = null, HashSet<string>? existingPins = null, Action<Dictionary<string, bool>>? saveCallback = null, Action<HashSet<string>>? savePinsCallback = null, CharacterDesign? design = null, string? characterName = null, Action<HashSet<string>>? saveInheritCallback = null)
         {
             Plugin.Log.Information($"[PIN DEBUG] Open method received existingPins parameter: {existingPins?.Count ?? -1} pins - {string.Join(", ", existingPins ?? new HashSet<string>())} (null: {existingPins == null})");
             // Cancel any existing loading operation
             loadingCancellation?.Cancel();
             loadingCancellation?.Dispose();
-            
+
             IsOpen = true;
             editingCharacterIndex = characterIndex;
             editingDesign = design;
             editingCharacterName = characterName;
             onSave = saveCallback;
             onSavePins = savePinsCallback;
+            onSaveInherit = saveInheritCallback;
             userHasSelectedCollection = false; // Reset on each open to allow fresh auto-detection
-            
+
             // Initialize with existing selection if provided
             selectedMods.Clear();
+            modsToInherit.Clear();
             if (existingSelection != null)
             {
                 foreach (var kvp in existingSelection)
                     selectedMods[kvp.Key] = kvp.Value;
             }
-            
+
             // Initialize with existing pins if provided
             pinnedMods.Clear();
             if (existingPins != null)
@@ -729,37 +734,38 @@ namespace CharacterSelectPlugin.Windows
                         Priority = settings.Item2,
                         IsCurrentlyAffecting = isCurrentlyAffecting,
                         ModType = modType,
+                        IsInherited = settings.Item4,
                         HasDependency = conflictAnalysis?.HasDependency ?? false,
                         DependencyType = conflictAnalysis?.DependencyType ?? "",
                         HasConflicts = conflictAnalysis?.HasConflicts ?? false,
                         ConflictingMods = conflictAnalysis?.ConflictingMods ?? new List<string>()
                     };
-                    
+
                     availableMods.Add(entry);
-                    
+
                     // No pre-selection - all mods start unchecked unless already configured
                     if (!selectedMods.ContainsKey(modDir))
                     {
                         selectedMods[modDir] = false;
                     }
-                    
+
                     processedCount++;
                 }
-                
+
                 // Update progress with multi-stage calculation
                 modsLoaded = processedCount;
                 currentLoadingStage = LoadingStage.LoadingMods;
                 stageProgress = (float)processedCount / totalModsToLoad;
                 UpdateOverallProgress();
                 loadingStatus = $"Processing mods... ({processedCount}/{totalModsToLoad})";
-                
+
                 // Yield to allow UI updates - reduced delay for batch processing
                 await Task.Delay(10, loadingCancellation.Token);
             }
-            
+
             // Created mod entries (log removed to prevent spam)
         }
-        
+
         private async Task CreateModEntries(Dictionary<string, string> modList, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)> modSettings, HashSet<string> modsToInclude, bool markAsAffecting)
         {
             // Creating mod entries
@@ -816,34 +822,35 @@ namespace CharacterSelectPlugin.Windows
                         Priority = settings.Item2,
                         IsCurrentlyAffecting = markAsAffecting,
                         ModType = modType,
+                        IsInherited = settings.Item4,
                         HasDependency = conflictAnalysis?.HasDependency ?? false,
                         DependencyType = conflictAnalysis?.DependencyType ?? "",
                         HasConflicts = conflictAnalysis?.HasConflicts ?? false,
                         ConflictingMods = conflictAnalysis?.ConflictingMods ?? new List<string>()
                     };
-                    
+
                     availableMods.Add(entry);
-                    
+
                     // No pre-selection - all mods start unchecked unless already configured
                     if (!selectedMods.ContainsKey(modDir))
                     {
                         selectedMods[modDir] = false;
                     }
-                    
+
                     processedCount++;
                 }
-                
+
                 // Update progress with multi-stage calculation
                 modsLoaded = processedCount;
                 currentLoadingStage = LoadingStage.LoadingMods;
                 stageProgress = (float)processedCount / totalModsToLoad;
                 UpdateOverallProgress();
                 loadingStatus = $"Processing mods... ({processedCount}/{totalModsToLoad})";
-                
+
                 // Yield to allow UI updates - reduced delay for batch processing
                 await Task.Delay(10, loadingCancellation.Token);
             }
-            
+
             // Created mod entries (log removed to prevent spam)
         }
 
@@ -1413,11 +1420,12 @@ namespace CharacterSelectPlugin.Windows
         
         private void SaveSelection()
         {
-            // Filter to only selected mods
+            // Build selection: include both Enable (true) AND Disable (false)
+            // Exclude mods set to Inherit (they should not be in SecretModState)
             var selection = selectedMods
-                .Where(kvp => kvp.Value)
+                .Where(kvp => !modsToInherit.Contains(kvp.Key))
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            
+
             // If we're converting a character/design to Conflict Resolution, remove bulktag commands from their macros
             if (editingCharacterIndex.HasValue && editingCharacterIndex.Value >= 0 && editingCharacterIndex.Value < plugin.Characters.Count)
             {
@@ -1428,7 +1436,7 @@ namespace CharacterSelectPlugin.Windows
                     character.Macros = Plugin.ConvertMacroToConflictResolution(character.Macros);
                 }
             }
-            
+
             if (editingDesign != null && (editingDesign.SecretModState == null || !editingDesign.SecretModState.Any()))
             {
                 // First time setting up Conflict Resolution for this design - convert macro
@@ -1438,16 +1446,22 @@ namespace CharacterSelectPlugin.Windows
                     editingDesign.AdvancedMacro = Plugin.ConvertMacroToConflictResolution(editingDesign.AdvancedMacro);
                 }
             }
-            
+
             // Save selection to editingDesign if we have one (for design-level editing)
             if (editingDesign != null)
             {
                 editingDesign.SecretModState = selection.Any() ? selection : null;
             }
-            
+
             onSave?.Invoke(selection);
             Plugin.Log.Information($"[PIN DEBUG] Saving pins via callback: {string.Join(", ", pinnedMods)}");
             onSavePins?.Invoke(pinnedMods);
+
+            // Invoke inherit callback for mods that need Penumbra inheritance restored
+            if (modsToInherit.Count > 0)
+            {
+                onSaveInherit?.Invoke(modsToInherit);
+            }
         }
         
         // Helper methods for new UI
@@ -1531,74 +1545,96 @@ namespace CharacterSelectPlugin.Windows
         {
             // Store the cursor position at the start of the row for context menu
             var rowStartPos = ImGui.GetCursorScreenPos();
-            
-            // Get selection state from selectedMods dictionary
-            var isSelected = selectedMods.ContainsKey(mod.Directory) ? selectedMods[mod.Directory] : false;
-                             
+
             var isPinned = pinnedMods.Contains(mod.Directory);
-            
-            // Checkbox for selection
-            bool checkboxClicked = ImGui.Checkbox($"##sel{mod.Directory}", ref isSelected);
-            
-            // Check for Ctrl+click requirement for "other" mods in Currently Affecting You tab
-            if (checkboxClicked)
+
+            // Determine current state: Enable (0), Disable (1), Inherit (2)
+            int currentState;
+            if (modsToInherit.Contains(mod.Directory))
+                currentState = 2; // Inherit
+            else if (selectedMods.ContainsKey(mod.Directory))
+                currentState = selectedMods[mod.Directory] ? 0 : 1; // Enable or Disable
+            else
+                currentState = 2; // Not in selectedMods = Inherit by default
+
+            // Track if mod is selected (enabled) for warnings display
+            bool isSelected = currentState == 0;
+
+            // Show dropdown when RespectPenumbraInheritance is ON, otherwise use checkbox
+            if (plugin.Configuration.RespectPenumbraInheritance)
             {
-                bool allowAction = true;
-                
-                if (requiresCtrlClick && !ImGui.GetIO().KeyCtrl)
+                // Three-state dropdown: Enable, Disable, Inherit
+                string[] options = mod.IsInherited
+                    ? new[] { "Enable", "Disable", "Inherit" }
+                    : new[] { "Enable", "Disable" };
+
+                ImGui.SetNextItemWidth(85);
+                if (ImGui.Combo($"##state{mod.Directory}", ref currentState, options, options.Length))
                 {
-                    // Prevent the action and reset checkbox state
-                    isSelected = !isSelected; // Revert the change
-                    allowAction = false;
-                }
-                
-                if (allowAction)
-                {
-                    selectedMods[mod.Directory] = isSelected;
-                
-                // If mod is being selected, analyze for dependencies and conflicts
-                if (isSelected)
-                {
-                    // Run contextual analysis
-                    mod.Analysis = plugin.PenumbraIntegration?.AnalyzeModForDependenciesAndConflicts(
-                        mod.Directory, mod.Name, mod.ModType, selectedMods);
-                    
-                    // Update mod entry with analysis results
-                    if (mod.Analysis != null)
+                    bool allowAction = !requiresCtrlClick || ImGui.GetIO().KeyCtrl;
+
+                    if (allowAction)
                     {
-                        mod.HasDependency = mod.Analysis.HasDependency;
-                        mod.DependencyType = mod.Analysis.DependencyType;
-                        mod.HasConflicts = mod.Analysis.HasConflicts;
-                        mod.ConflictingMods = mod.Analysis.ConflictingMods;
-                    }
-                    
-                    // Clear dismissed warning for this mod when newly selected
-                    dismissedWarnings.Remove(mod.Directory);
-                    
-                    // If enabling a mod with old-style dependencies, prompt to enable them too
-                    if (mod.Dependencies.Any())
-                    {
-                        HandleDependencySelection(mod);
+                        // Update state tracking
+                        modsToInherit.Remove(mod.Directory);
+
+                        if (currentState == 0) // Enable
+                        {
+                            selectedMods[mod.Directory] = true;
+                            RunModAnalysis(mod);
+                        }
+                        else if (currentState == 1) // Disable
+                        {
+                            selectedMods[mod.Directory] = false;
+                            ClearModAnalysis(mod);
+                        }
+                        else // Inherit
+                        {
+                            selectedMods.Remove(mod.Directory);
+                            modsToInherit.Add(mod.Directory);
+                            ClearModAnalysis(mod);
+                        }
                     }
                 }
-                else
+
+                // Tooltip for inherited mods
+                if (ImGui.IsItemHovered() && mod.IsInherited)
                 {
-                    // Clear analysis when deselected
-                    mod.Analysis = null;
-                    mod.HasDependency = false;
-                    mod.DependencyType = "";
-                    mod.HasConflicts = false;
-                    mod.ConflictingMods = new List<string>();
-                }
+                    ImGui.SetTooltip("This mod is inherited from a parent collection.\nSelect 'Inherit' to let Penumbra manage it.");
                 }
             }
-            
-            // Add tooltip for Ctrl+click requirement on "other" mods
-            if (requiresCtrlClick && ImGui.IsItemHovered())
+            else
             {
-                ImGui.SetTooltip("Hold Ctrl while clicking to select this mod");
+                // Original checkbox behaviour
+                isSelected = selectedMods.ContainsKey(mod.Directory) ? selectedMods[mod.Directory] : false;
+
+                bool checkboxClicked = ImGui.Checkbox($"##sel{mod.Directory}", ref isSelected);
+
+                if (checkboxClicked)
+                {
+                    bool allowAction = !requiresCtrlClick || ImGui.GetIO().KeyCtrl;
+
+                    if (!allowAction)
+                    {
+                        isSelected = !isSelected; // Revert
+                    }
+                    else
+                    {
+                        selectedMods[mod.Directory] = isSelected;
+
+                        if (isSelected)
+                            RunModAnalysis(mod);
+                        else
+                            ClearModAnalysis(mod);
+                    }
+                }
+
+                if (requiresCtrlClick && ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Hold Ctrl while clicking to select this mod");
+                }
             }
-            
+
             ImGui.SameLine();
             
             // Pin button
@@ -1776,6 +1812,36 @@ namespace CharacterSelectPlugin.Windows
             ImGui.InvisibleButton($"##ModRow_{mod.Directory}", rowSize);
             
             DrawModCategoryContextMenu(mod);
+        }
+
+        private void RunModAnalysis(ModEntry mod)
+        {
+            mod.Analysis = plugin.PenumbraIntegration?.AnalyzeModForDependenciesAndConflicts(
+                mod.Directory, mod.Name, mod.ModType, selectedMods);
+
+            if (mod.Analysis != null)
+            {
+                mod.HasDependency = mod.Analysis.HasDependency;
+                mod.DependencyType = mod.Analysis.DependencyType;
+                mod.HasConflicts = mod.Analysis.HasConflicts;
+                mod.ConflictingMods = mod.Analysis.ConflictingMods;
+            }
+
+            dismissedWarnings.Remove(mod.Directory);
+
+            if (mod.Dependencies.Any())
+            {
+                HandleDependencySelection(mod);
+            }
+        }
+
+        private void ClearModAnalysis(ModEntry mod)
+        {
+            mod.Analysis = null;
+            mod.HasDependency = false;
+            mod.DependencyType = "";
+            mod.HasConflicts = false;
+            mod.ConflictingMods = new List<string>();
         }
 
         private void DrawModCategoryContextMenu(ModEntry mod)

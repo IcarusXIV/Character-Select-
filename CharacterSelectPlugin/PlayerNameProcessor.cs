@@ -11,6 +11,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -33,11 +34,14 @@ namespace CharacterSelectPlugin
         private const int GradientSteps = 64;
         private const int AnimationSpeed = 15;
 
-        // Local player's party list slot
-        private int lastKnownLocalPlayerSlot = -1;
-
-        // Cached level prefix (e.g. "Lv100 ")
+        // Cached level prefix for local player (e.g. "Lv100 ")
         private byte[]? cachedLevelPrefixBytes = null;
+
+        // Track party slot -> physical name for other players (to update when they switch CS+ characters)
+        private readonly Dictionary<int, string> partySlotToPhysicalName = new();
+
+        // Track party slot -> level prefix bytes for other players (each player has their own level)
+        private readonly Dictionary<int, byte[]> partySlotPrefixBytes = new();
 
         // Target bar addons
         private static readonly string[] TargetAddonNames = { "_TargetInfo", "_TargetInfoMainTarget", "_TargetInfoCastBar" };
@@ -167,10 +171,32 @@ namespace CharacterSelectPlugin
             return true;
         }
 
+        // Max text elements for wave animation (prevents SeString payload overflow)
+        // Each text element gets a color push/pop, so limit to prevent overflow
+        private const int MaxWaveTextElements = 25;
+
+        /// <summary>Get text elements (grapheme clusters) from a string. Handles emojis correctly.</summary>
+        private static List<string> GetTextElements(string name)
+        {
+            var elements = new List<string>();
+            if (string.IsNullOrEmpty(name))
+                return elements;
+
+            var enumerator = StringInfo.GetTextElementEnumerator(name);
+            while (enumerator.MoveNext())
+            {
+                elements.Add(enumerator.GetTextElement());
+            }
+            return elements;
+        }
+
         /// <summary>Create coloured name with wave glow effect and italics.</summary>
         private SeString CreateColoredName(string name, Vector3 glowColor)
         {
-            // Use simple glow if configured (for compatibility with some systems)
+            // Get text elements (grapheme clusters) - handles emojis as single units
+            var textElements = GetTextElements(name);
+
+            // Use simple glow only if explicitly configured
             if (plugin.Configuration.UseSimpleNameplateGlow)
             {
                 return CreateSimpleColoredName(name, glowColor);
@@ -185,13 +211,48 @@ namespace CharacterSelectPlugin
             var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
 
-            // Per-char wave glow
-            for (int i = 0; i < name.Length; i++)
+            // For long names (>25 chars), group by pairs to reduce payloads (like Honorific does)
+            if (textElements.Count > MaxWaveTextElements)
             {
-                var waveColor = GetWaveColor(glowColor, i);
-                builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
-                builder.AppendChar(name[i]);
-                builder.PopEdgeColor();
+                for (int i = 0; i < textElements.Count; i += 2)
+                {
+                    var waveColor = GetWaveColor(glowColor, i);
+                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
+
+                    // Append current element
+                    if (textElements[i].Length == 1)
+                        builder.AppendChar(textElements[i][0]);
+                    else
+                        builder.Append(textElements[i]);
+
+                    // Append next element if exists (pair grouping)
+                    if (i + 1 < textElements.Count)
+                    {
+                        if (textElements[i + 1].Length == 1)
+                            builder.AppendChar(textElements[i + 1][0]);
+                        else
+                            builder.Append(textElements[i + 1]);
+                    }
+
+                    builder.PopEdgeColor();
+                }
+            }
+            else
+            {
+                // Per-element wave glow for short names
+                for (int i = 0; i < textElements.Count; i++)
+                {
+                    var waveColor = GetWaveColor(glowColor, i);
+                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
+
+                    // Use AppendChar for single chars (preserves original behavior), Append for multi-char (emojis)
+                    if (textElements[i].Length == 1)
+                        builder.AppendChar(textElements[i][0]);
+                    else
+                        builder.Append(textElements[i]);
+
+                    builder.PopEdgeColor();
+                }
             }
 
             builder.PopColor();
@@ -208,14 +269,16 @@ namespace CharacterSelectPlugin
         /// <summary>Create coloured name with simple solid glow (no wave animation).</summary>
         private SeString CreateSimpleColoredName(string name, Vector3 glowColor)
         {
-            // Simple glow with italics - testing if italics work without wave effect
+            // Simple glow with italics
             var payloads = new List<Payload>();
             payloads.Add(EmphasisItalicPayload.ItalicsOn);
 
             var builder = new LuminaSeStringBuilder();
+            builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f)); // White text color
             builder.PushEdgeColorRgba(new Vector4(glowColor, 1f));
             builder.Append(name);
             builder.PopEdgeColor();
+            builder.PopColor();
 
             var coloredPart = SeString.Parse(builder.GetViewAsSpan());
             payloads.AddRange(coloredPart.Payloads);
@@ -225,7 +288,8 @@ namespace CharacterSelectPlugin
         }
 
         /// <summary>Replace name in text, preserving context (level, FC tag, etc.) with italics.</summary>
-        private SeString? CreateColoredNameWithContext(string fullText, string nameToReplace, string newName, Vector3 glowColor)
+        /// <param name="useWave">If false, always use simple glow (for target bar which doesn't animate).</param>
+        private SeString? CreateColoredNameWithContext(string fullText, string nameToReplace, string newName, Vector3 glowColor, bool useWave = true)
         {
             var nameIndex = fullText.IndexOf(nameToReplace, StringComparison.OrdinalIgnoreCase);
             if (nameIndex < 0)
@@ -233,6 +297,13 @@ namespace CharacterSelectPlugin
 
             var beforeName = fullText.Substring(0, nameIndex);
             var afterName = fullText.Substring(nameIndex + nameToReplace.Length);
+
+            // If beforeName is only whitespace, discard it (but keep icons/other chars)
+            if (string.IsNullOrWhiteSpace(beforeName))
+                beforeName = "";
+
+            // Get text elements for the new name
+            var textElements = GetTextElements(newName);
 
             var payloads = new List<Payload>();
 
@@ -245,15 +316,58 @@ namespace CharacterSelectPlugin
             // Italics on for the name
             payloads.Add(EmphasisItalicPayload.ItalicsOn);
 
-            // Name with wave glow
             var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
-            for (int i = 0; i < newName.Length; i++)
+
+            // Use simple glow when wave is disabled (target bar) or explicitly configured
+            if (!useWave || plugin.Configuration.UseSimpleNameplateGlow)
             {
-                var waveColor = GetWaveColor(glowColor, i);
-                builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
-                builder.AppendChar(newName[i]);
+                builder.PushEdgeColorRgba(new Vector4(glowColor, 1f));
+                builder.Append(newName);
                 builder.PopEdgeColor();
+            }
+            // For long names (>25 chars), group by pairs to reduce payloads (like Honorific does)
+            else if (textElements.Count > MaxWaveTextElements)
+            {
+                for (int i = 0; i < textElements.Count; i += 2)
+                {
+                    var waveColor = GetWaveColor(glowColor, i);
+                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
+
+                    // Append current element
+                    if (textElements[i].Length == 1)
+                        builder.AppendChar(textElements[i][0]);
+                    else
+                        builder.Append(textElements[i]);
+
+                    // Append next element if exists (pair grouping)
+                    if (i + 1 < textElements.Count)
+                    {
+                        if (textElements[i + 1].Length == 1)
+                            builder.AppendChar(textElements[i + 1][0]);
+                        else
+                            builder.Append(textElements[i + 1]);
+                    }
+
+                    builder.PopEdgeColor();
+                }
+            }
+            else
+            {
+                // Per-element wave glow for short names
+                for (int i = 0; i < textElements.Count; i++)
+                {
+                    var waveColor = GetWaveColor(glowColor, i);
+                    builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
+
+                    // Use AppendChar for single chars (preserves original behavior), Append for multi-char (emojis)
+                    if (textElements[i].Length == 1)
+                        builder.AppendChar(textElements[i][0]);
+                    else
+                        builder.Append(textElements[i]);
+
+                    builder.PopEdgeColor();
+                }
             }
             builder.PopColor();
 
@@ -275,6 +389,7 @@ namespace CharacterSelectPlugin
         /// <summary>Create chat name with italics and solid glow.</summary>
         private SeString CreateChatName(string name, Vector3 glowColor)
         {
+            // Chat always uses simple glow, no per-char wave - just pass name through
             var payloads = new List<Payload>();
 
             // Italics on
@@ -335,23 +450,22 @@ namespace CharacterSelectPlugin
                 // Local player
                 if (gameObject.GameObjectId == localPlayer.GameObjectId)
                 {
-                    if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
+                    if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name) && !revealActualNames)
                     {
-                        if (revealActualNames)
-                        {
-                            // Explicitly set back to original name (nameplate might have cached our modification)
-                            handler.NameParts.Text = new SeString(new TextPayload(localPlayer.Name.TextValue));
-                        }
-                        else
-                        {
-                            handler.NameParts.Text = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+                        // Apply CS+ name
+                        handler.NameParts.Text = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
 
-                            // Hide FC tag
-                            if (plugin.Configuration.HideFCTagInNameplate)
-                            {
-                                handler.RemoveFreeCompanyTag();
-                            }
+                        // Hide FC tag
+                        if (plugin.Configuration.HideFCTagInNameplate)
+                        {
+                            handler.RemoveFreeCompanyTag();
                         }
+                    }
+                    else if (selfReplacementEnabled)
+                    {
+                        // Reset to original name when: reveal keybind held, excluded from sync, or no active character
+                        // This ensures nameplate reverts when switching to excluded character
+                        handler.NameParts.Text = new SeString(new TextPayload(localPlayer.Name.TextValue));
                     }
                 }
                 // Other players - process for shared name replacement or RP profile lookup
@@ -569,36 +683,7 @@ namespace CharacterSelectPlugin
 
                 var addon = (AddonPartyList*)args.Addon.Address;
 
-                // Try to capture level prefix from original data before any replacement
-                // This runs even with feature disabled to ensure we capture the prefix
-                if (cachedLevelPrefixBytes == null && addon->MemberCount > 0)
-                {
-                    var localPlayer = clientState.LocalPlayer;
-                    var localName = localPlayer?.Name.TextValue;
-
-                    if (!string.IsNullOrEmpty(localName))
-                    {
-                        for (int slotIdx = 0; slotIdx < addon->MemberCount && slotIdx < 8; slotIdx++)
-                        {
-                            var memberDebug = addon->PartyMembers[slotIdx];
-                            if (memberDebug.Name != null)
-                            {
-                                try
-                                {
-                                    var rawBytes = memberDebug.Name->NodeText.AsSpan().ToArray();
-                                    var realNameBytes = System.Text.Encoding.UTF8.GetBytes(localName);
-                                    int realNameIdx = FindByteSequence(rawBytes, realNameBytes);
-                                    if (realNameIdx > 0)
-                                    {
-                                        cachedLevelPrefixBytes = rawBytes.Take(realNameIdx).ToArray();
-                                        break; // Found it, stop searching
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-                    }
-                }
+                // Early capture removed - we capture prefix inline when we find the name
 
                 var selfReplacementEnabled = plugin.Configuration.EnableNameReplacement &&
                                              plugin.Configuration.NameReplacementPartyList;
@@ -673,18 +758,7 @@ namespace CharacterSelectPlugin
             var activeChar = selfReplacementEnabled ? plugin.GetActiveCharacter() : null;
             if (activeChar?.ExcludeFromNameSync == true) activeChar = null; // Per-character opt-out
 
-            // Build set of all OUR CS+ character names (for identifying our slot)
-            var ourCSNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var character in plugin.Configuration.Characters)
-            {
-                if (!string.IsNullOrEmpty(character.Name))
-                    ourCSNames.Add(character.Name);
-            }
-
-            // Track if we found our slot
-            bool foundOurSlot = false;
-
-            // Scan addon slots
+            // Process all slots - local player is ALWAYS slot 0
             for (int i = 0; i < addon->MemberCount && i < 8; i++)
             {
                 var member = addon->PartyMembers[i];
@@ -711,95 +785,216 @@ namespace CharacterSelectPlugin
                 if (string.IsNullOrEmpty(plainText))
                     continue;
 
-                // Check if this slot is OURS: contains our real name OR one of our CS+ character names
-                // Use ContainsFullName to avoid substring matches (e.g., "Kit" matching "Kitten")
-                bool isOurSlot = false;
-                string? foundName = null;
-
-                if (ContainsFullName(plainText, localName))
-                {
-                    isOurSlot = true;
-                    foundName = localName;
-                }
-                else
-                {
-                    // Check if any of our CS+ names are in the text (full match only)
-                    foreach (var csName in ourCSNames)
-                    {
-                        if (ContainsFullName(plainText, csName))
-                        {
-                            isOurSlot = true;
-                            foundName = csName;
-                            break;
-                        }
-                    }
-                }
+                // Slot 0 is always the local player
+                bool isOurSlot = (i == 0);
 
                 if (isOurSlot && selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
                 {
-                    lastKnownLocalPlayerSlot = i;
-                    foundOurSlot = true;
-
                     if (rawBytes != null && rawBytes.Length > 0)
                     {
-                        // ALWAYS try to find the REAL player name first to capture/update the level prefix
+                        // Find where the name starts - could be original name OR our CS+ name if already replaced
+                        int nameStartIndex = -1;
+
+                        // First try: find the original in-game name
                         var realNameBytes = System.Text.Encoding.UTF8.GetBytes(localName);
-                        int realNameIndex = FindByteSequence(rawBytes, realNameBytes);
+                        nameStartIndex = FindByteSequence(rawBytes, realNameBytes);
 
-                        if (realNameIndex > 0)
+                        // Second try: if not found, search for the CS+ name (we may have already replaced it)
+                        if (nameStartIndex < 0)
                         {
-                            // Found real name - capture the level prefix for future use
-                            cachedLevelPrefixBytes = rawBytes.Take(realNameIndex).ToArray();
+                            // The CS+ name might be in the SeString - search for it in plain text form
+                            var csNameBytes = System.Text.Encoding.UTF8.GetBytes(activeChar.Name);
+                            nameStartIndex = FindByteSequence(rawBytes, csNameBytes);
                         }
 
-                        // Now apply the replacement
-                        byte[]? prefixToUse = null;
-
-                        if (realNameIndex > 0)
+                        // Third try: use pattern detection to find where level icons end
+                        if (nameStartIndex < 0)
                         {
-                            // Use freshly captured prefix
-                            prefixToUse = cachedLevelPrefixBytes;
-                        }
-                        else if (cachedLevelPrefixBytes != null)
-                        {
-                            // Use cached prefix from before
-                            prefixToUse = cachedLevelPrefixBytes;
+                            var patternPrefix = FindLevelPrefixByPattern(rawBytes);
+                            if (patternPrefix != null)
+                            {
+                                nameStartIndex = patternPrefix.Length;
+                            }
                         }
 
-                        if (prefixToUse != null)
+                        if (nameStartIndex > 0)
                         {
-                            // Build new SeString: prefix + colored name
+                            // Found where name starts - everything before it is the level prefix
+                            var prefixBytes = rawBytes.Take(nameStartIndex).ToArray();
+                            cachedLevelPrefixBytes = prefixBytes; // Cache for future use
+
+                            // Build: [level prefix] + [colored CS+ name]
                             var coloredName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
                             var coloredBytes = coloredName.Encode();
 
-                            // Combine prefix + colored name
-                            var finalBytes = new byte[prefixToUse.Length + coloredBytes.Length];
-                            Array.Copy(prefixToUse, 0, finalBytes, 0, prefixToUse.Length);
-                            Array.Copy(coloredBytes, 0, finalBytes, prefixToUse.Length, coloredBytes.Length);
+                            var finalBytes = new byte[prefixBytes.Length + coloredBytes.Length];
+                            Array.Copy(prefixBytes, 0, finalBytes, 0, prefixBytes.Length);
+                            Array.Copy(coloredBytes, 0, finalBytes, prefixBytes.Length, coloredBytes.Length);
 
                             nameNode->SetText(finalBytes);
-                            continue; // Process next slot
+                            continue;
+                        }
+
+                        // Last resort: construct prefix from player's level
+                        if (localPlayer != null && localPlayer.Level > 0)
+                        {
+                            var prefixBytes = ConstructLevelPrefix(localPlayer.Level);
+                            cachedLevelPrefixBytes = prefixBytes;
+
+                            var coloredName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+                            var coloredBytes = coloredName.Encode();
+
+                            var finalBytes = new byte[prefixBytes.Length + coloredBytes.Length];
+                            Array.Copy(prefixBytes, 0, finalBytes, 0, prefixBytes.Length);
+                            Array.Copy(coloredBytes, 0, finalBytes, prefixBytes.Length, coloredBytes.Length);
+
+                            nameNode->SetText(finalBytes);
+                            continue;
                         }
                     }
 
-                    // Fallback: simple replacement if no prefix available
+                    // Fallback: no prefix available at all
                     var fallbackName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
                     nameNode->SetText(fallbackName.Encode());
                 }
-                // Check for shared name replacement (other players)
+                // Check for shared name replacement (other players - slots 1+)
                 else if (!isOurSlot && sharedReplacementEnabled && plugin.SharedNameManager != null)
                 {
                     // Party list shows just "FirstName LastName" without world
-                    // Try to find a matching cached shared name (exclude local player's name)
+                    // Try to find a matching cached shared name by physical name in text
                     var match = plugin.SharedNameManager.FindCachedNameInText(plainText, localName);
+
                     if (match.HasValue)
                     {
                         var (sharedEntry, originalName) = match.Value;
-                        // Replace with their CS+ name (preserving any level prefix)
-                        var replacedSeString = CreateColoredNameWithContext(plainText, originalName, sharedEntry.CSName, sharedEntry.NameplateColor);
-                        if (replacedSeString != null)
+                        // Store this slot's physical name for future lookups (when they switch CS+ characters)
+                        partySlotToPhysicalName[i] = originalName;
+
+                        // Capture this slot's level prefix from raw bytes (each player has their own level)
+                        byte[]? slotPrefix = null;
+                        if (rawBytes != null && rawBytes.Length > 0)
                         {
-                            nameNode->SetText(replacedSeString.Encode());
+                            // First try: find the original in-game name
+                            var nameBytes = System.Text.Encoding.UTF8.GetBytes(originalName);
+                            int nameIndex = FindByteSequence(rawBytes, nameBytes);
+
+                            // Second try: find the CS+ name (we may have already replaced it)
+                            if (nameIndex < 0)
+                            {
+                                var csNameBytes = System.Text.Encoding.UTF8.GetBytes(sharedEntry.CSName);
+                                nameIndex = FindByteSequence(rawBytes, csNameBytes);
+                            }
+
+                            // Third try: pattern detection
+                            if (nameIndex < 0)
+                            {
+                                var patternPrefix = FindLevelPrefixByPattern(rawBytes);
+                                if (patternPrefix != null)
+                                {
+                                    nameIndex = patternPrefix.Length;
+                                }
+                            }
+
+                            if (nameIndex > 0)
+                            {
+                                slotPrefix = rawBytes.Take(nameIndex).ToArray();
+                                partySlotPrefixBytes[i] = slotPrefix;
+                            }
+                        }
+
+                        // Replace with their CS+ name using the captured prefix
+                        var coloredName = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
+                        if (slotPrefix != null)
+                        {
+                            var coloredBytes = coloredName.Encode();
+                            var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length];
+                            Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
+                            Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
+                            nameNode->SetText(finalBytes);
+                        }
+                        else
+                        {
+                            // Fallback if no prefix captured
+                            nameNode->SetText(coloredName.Encode());
+                        }
+                    }
+                    // If no match by physical name in text, check if we have a stored physical name for this slot
+                    else if (partySlotToPhysicalName.TryGetValue(i, out var storedPhysicalName))
+                    {
+                        // First check: if the text already contains their in-game name, they switched to no-profile
+                        if (plainText.Contains(storedPhysicalName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Their in-game name is showing - clear tracking
+                            partySlotToPhysicalName.Remove(i);
+                            partySlotPrefixBytes.Remove(i);
+                        }
+                        else
+                        {
+                            // Their in-game name is NOT in the text (we previously replaced it)
+                            var entry = plugin.SharedNameManager.GetCachedNameByCharacterName(storedPhysicalName);
+                            if (entry != null && !string.IsNullOrEmpty(entry.CSName))
+                            {
+                                // Try to capture/update prefix from current raw bytes
+                                byte[]? slotPrefix = null;
+                                if (rawBytes != null && rawBytes.Length > 0)
+                                {
+                                    // Try to find the CS+ name in raw bytes
+                                    var csNameBytes = System.Text.Encoding.UTF8.GetBytes(entry.CSName);
+                                    int nameIndex = FindByteSequence(rawBytes, csNameBytes);
+
+                                    // Try pattern detection
+                                    if (nameIndex < 0)
+                                    {
+                                        var patternPrefix = FindLevelPrefixByPattern(rawBytes);
+                                        if (patternPrefix != null)
+                                        {
+                                            nameIndex = patternPrefix.Length;
+                                        }
+                                    }
+
+                                    if (nameIndex > 0)
+                                    {
+                                        slotPrefix = rawBytes.Take(nameIndex).ToArray();
+                                        partySlotPrefixBytes[i] = slotPrefix;
+                                    }
+                                    else if (partySlotPrefixBytes.TryGetValue(i, out var storedPrefix))
+                                    {
+                                        slotPrefix = storedPrefix;
+                                    }
+                                }
+
+                                var coloredName = CreateColoredName(entry.CSName, entry.NameplateColor);
+                                if (slotPrefix != null)
+                                {
+                                    var coloredBytes = coloredName.Encode();
+                                    var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length];
+                                    Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
+                                    Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
+                                    nameNode->SetText(finalBytes);
+                                }
+                                else
+                                {
+                                    nameNode->SetText(coloredName.Encode());
+                                }
+                            }
+                            else
+                            {
+                                // No CS+ name found - revert to in-game name
+                                if (partySlotPrefixBytes.TryGetValue(i, out var slotPrefix) && slotPrefix != null)
+                                {
+                                    var inGameNameBytes = System.Text.Encoding.UTF8.GetBytes(storedPhysicalName);
+                                    var finalBytes = new byte[slotPrefix.Length + inGameNameBytes.Length];
+                                    Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
+                                    Array.Copy(inGameNameBytes, 0, finalBytes, slotPrefix.Length, inGameNameBytes.Length);
+                                    nameNode->SetText(finalBytes);
+                                }
+                                else
+                                {
+                                    nameNode->SetText(storedPhysicalName);
+                                }
+                                partySlotToPhysicalName.Remove(i);
+                                partySlotPrefixBytes.Remove(i);
+                            }
                         }
                     }
                 }
@@ -829,6 +1024,74 @@ namespace CharacterSelectPlugin
                     return i;
             }
             return -1;
+        }
+
+        /// <summary>
+        /// Constructs level prefix bytes for a given level.
+        /// FFXIV uses Private Use Area characters (EE 81 XX) for level display.
+        /// Format: [Lv icon] [digit icons...] [space]
+        /// </summary>
+        private byte[] ConstructLevelPrefix(int level)
+        {
+            // Based on observed pattern: EE-81-AA is "Lv" icon, EE-81-A0 is "0", EE-81-A1 is "1", etc.
+            var bytes = new List<byte>();
+
+            // Add "Lv" indicator icon
+            bytes.AddRange(new byte[] { 0xEE, 0x81, 0xAA });
+
+            // Add each digit
+            var levelStr = level.ToString();
+            foreach (char c in levelStr)
+            {
+                int digit = c - '0';
+                bytes.AddRange(new byte[] { 0xEE, 0x81, (byte)(0xA0 + digit) });
+            }
+
+            // Add space
+            bytes.Add(0x20);
+
+            return bytes.ToArray();
+        }
+
+        /// <summary>
+        /// Finds the level prefix in party list bytes by detecting FFXIV level icon patterns.
+        /// Level icons are encoded as EE-81-XX (Private Use Area characters).
+        /// Format: [level icons] [space] [name]
+        /// Returns the prefix bytes including the space, or null if not found.
+        /// </summary>
+        private byte[]? FindLevelPrefixByPattern(byte[] rawBytes)
+        {
+            if (rawBytes == null || rawBytes.Length < 4)
+                return null;
+
+            // Look for FFXIV Private Use Area characters (EE 81 XX) which are level icons
+            // These appear before the player name in the party list
+            int lastLevelIconEnd = -1;
+
+            for (int i = 0; i <= rawBytes.Length - 3; i++)
+            {
+                // Check for EE 81 XX pattern (level icon character)
+                if (rawBytes[i] == 0xEE && rawBytes[i + 1] == 0x81)
+                {
+                    // Found a level icon character, mark end position (after the 3-byte sequence)
+                    lastLevelIconEnd = i + 3;
+                }
+            }
+
+            if (lastLevelIconEnd > 0)
+            {
+                // Check if there's a space (0x20) after the last level icon
+                if (lastLevelIconEnd < rawBytes.Length && rawBytes[lastLevelIconEnd] == 0x20)
+                {
+                    // Include the space in the prefix
+                    lastLevelIconEnd++;
+                }
+
+                // Return everything from start to end of level icons (including space)
+                return rawBytes.Take(lastLevelIconEnd).ToArray();
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -865,7 +1128,8 @@ namespace CharacterSelectPlugin
 
                 if (!string.IsNullOrEmpty(plainText) && plainText.Contains(originalName, StringComparison.OrdinalIgnoreCase))
                 {
-                    var replacedSeString = CreateColoredNameWithContext(plainText, originalName, newName, glowColor);
+                    // Target bar doesn't animate, so use simple glow (useWave: false)
+                    var replacedSeString = CreateColoredNameWithContext(plainText, originalName, newName, glowColor, useWave: false);
                     if (replacedSeString != null)
                     {
                         textNode->SetText(replacedSeString.Encode());
@@ -918,7 +1182,8 @@ namespace CharacterSelectPlugin
                 if (match.HasValue)
                 {
                     var (sharedEntry, originalName) = match.Value;
-                    var replacedSeString = CreateColoredNameWithContext(plainText, originalName, sharedEntry.CSName, sharedEntry.NameplateColor);
+                    // Target bar doesn't animate, so use simple glow (useWave: false)
+                    var replacedSeString = CreateColoredNameWithContext(plainText, originalName, sharedEntry.CSName, sharedEntry.NameplateColor, useWave: false);
                     if (replacedSeString != null)
                     {
                         textNode->SetText(replacedSeString.Encode());

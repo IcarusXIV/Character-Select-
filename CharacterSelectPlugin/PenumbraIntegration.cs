@@ -539,7 +539,6 @@ namespace CharacterSelectPlugin
                 
                 if (objectValid)
                 {
-                    log.Information($"Player collection: {name} (ID: {id}, Individual: {individualSet})");
                     return (true, id, name);
                 }
                 
@@ -2256,12 +2255,12 @@ namespace CharacterSelectPlugin
         {
             if (!IsPenumbraAvailable)
                 return false;
-            
+
             try
             {
                 var ipc = pluginInterface.GetIpcSubscriber<Guid, string, string, string, IReadOnlyList<string>, int>("Penumbra.TrySetModSettings.V5");
                 var result = ipc.InvokeFunc(collectionId, modDirectory, modName, optionGroupName, optionNames);
-                
+
                 if (result == 0) // 0 = Success
                 {
                     return true;
@@ -2271,13 +2270,47 @@ namespace CharacterSelectPlugin
                     log.Debug($"TrySetModSettings - no change needed for {modName}.{optionGroupName} (already in correct state)");
                     return true; // Treat as success since options are already correct
                 }
-                
+
                 log.Warning($"TrySetModSettings failed with error code: {result}");
                 return false;
             }
             catch (Exception ex)
             {
                 log.Error($"Error setting mod options for {modName}.{optionGroupName}: {ex}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Set mod inheritance state. When inherit=true, removes explicit settings and uses parent collection's.
+        /// </summary>
+        public bool TryInheritMod(Guid collectionId, string modDirectory, string modName, bool inherit)
+        {
+            if (!IsPenumbraAvailable)
+                return false;
+
+            try
+            {
+                var ipc = pluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TryInheritMod");
+                var result = ipc.InvokeFunc(collectionId, modDirectory, modName, inherit);
+
+                if (result == 0) // Success
+                {
+                    log.Debug($"TryInheritMod - set inherit={inherit} for {modName}");
+                    return true;
+                }
+                else if (result == 1) // NothingChanged
+                {
+                    log.Debug($"TryInheritMod - no change needed for {modName} (already in correct state)");
+                    return true;
+                }
+
+                log.Warning($"TryInheritMod failed with error code: {result}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                log.Error($"Error setting mod inheritance for {modName}: {ex}");
                 return false;
             }
         }
