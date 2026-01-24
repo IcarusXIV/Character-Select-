@@ -6,6 +6,7 @@ using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Plugin.Services;
+using Dalamud.Game.ClientState.Party;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
@@ -28,6 +29,7 @@ namespace CharacterSelectPlugin
         private readonly IClientState clientState;
         private readonly IAddonLifecycle addonLifecycle;
         private readonly IPluginLog log;
+        private readonly IPartyList partyList;
 
         // Wave animation
         private static readonly Stopwatch AnimationTimer = Stopwatch.StartNew();
@@ -55,7 +57,8 @@ namespace CharacterSelectPlugin
             IChatGui chatGui,
             IClientState clientState,
             IAddonLifecycle addonLifecycle,
-            IPluginLog log)
+            IPluginLog log,
+            IPartyList partyList)
         {
             this.plugin = plugin;
             this.namePlateGui = namePlateGui;
@@ -63,6 +66,7 @@ namespace CharacterSelectPlugin
             this.clientState = clientState;
             this.addonLifecycle = addonLifecycle;
             this.log = log;
+            this.partyList = partyList;
 
             namePlateGui.OnNamePlateUpdate += OnNamePlateUpdate;
             chatGui.ChatMessage += OnChatMessage;
@@ -713,6 +717,43 @@ namespace CharacterSelectPlugin
             // Process all slots - local player is ALWAYS slot 0
             for (int i = 0; i < addon->MemberCount && i < 8; i++)
             {
+                // Validate tracking against real party data to detect when someone leaves/joins
+                // Skip slot 0 (local player) - we always know who we are
+                if (i > 0 && partySlotToPhysicalName.TryGetValue(i, out var trackedPhysicalName))
+                {
+                    // Get real party member from game data (IPartyList includes local player at index 0)
+                    string? realNameForSlot = null;
+                    if (i < partyList.Length)
+                    {
+                        var partyMember = partyList[i];
+                        if (partyMember != null)
+                        {
+                            realNameForSlot = partyMember.Name.TextValue;
+                        }
+                    }
+
+                    // If we have a real name and it doesn't match our tracking, clear stale data
+                    if (!string.IsNullOrEmpty(realNameForSlot))
+                    {
+                        // Extract just the character name from tracked (format might be "Name Surname" or "Name Surname@World")
+                        var trackedName = trackedPhysicalName;
+                        var atIndex = trackedPhysicalName.IndexOf('@');
+                        if (atIndex > 0)
+                        {
+                            trackedName = trackedPhysicalName.Substring(0, atIndex);
+                        }
+
+                        // Compare real name against tracked name
+                        if (!realNameForSlot.Equals(trackedName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Different person in this slot - clear stale tracking
+                            log.Debug($"[PartyList] Slot {i}: Real name '{realNameForSlot}' doesn't match tracked '{trackedName}' - clearing stale tracking");
+                            partySlotToPhysicalName.Remove(i);
+                            partySlotPrefixBytes.Remove(i);
+                        }
+                    }
+                }
+
                 var member = addon->PartyMembers[i];
                 var nameNode = member.Name;
 

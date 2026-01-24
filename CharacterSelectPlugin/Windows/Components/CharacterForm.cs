@@ -564,10 +564,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
             DrawFormField("Glam. Automation", labelWidth, inputWidth, inputOffset, () =>
             {
-                // Automations use the same design list from Glamourer
-                var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
-
-                if (AutocompleteCombo.Draw("##Glam.Automation", ref tempCharacterAutomation, glamourerOptions, inputWidth, "Select automation..."))
+                // Glamourer doesn't expose an IPC to get automation names, so use plain text input
+                ImGui.SetNextItemWidth(inputWidth);
+                if (ImGui.InputText("##Glam.Automation", ref tempCharacterAutomation, 100))
                 {
                     if (IsEditWindowOpen)
                     {
@@ -595,7 +594,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                     }
                 }
-            }, "Select the Glamourer Automation for this character. Right-click to clear.\nDesign-level automations override this if both are set.", scale);
+            }, "Enter the name of a Glamourer Automation for this character.\nMust match the automation name EXACTLY as shown in Glamourer.\nDesign-level automations override this if both are set.", scale);
         }
 
         private void DrawCustomizeField(float labelWidth, float inputWidth, float inputOffset, float scale)

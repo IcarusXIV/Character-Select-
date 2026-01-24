@@ -706,14 +706,15 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 ImGui.BeginTooltip();
                 ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("Optional: Select a Glamourer automation for this design. Right-click to clear.");
+                ImGui.TextUnformatted("Optional: Enter the name of a Glamourer automation for this design.\n⚠️ Must match the automation name EXACTLY as shown in Glamourer.");
                 ImGui.PopTextWrapPos();
                 ImGui.EndTooltip();
             }
 
             ImGui.SetCursorPosX(10 * scale);
-            var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
-            AutocompleteCombo.Draw("##GlamourerAutomation", ref editedAutomation, glamourerOptions, inputWidth, "Select automation...");
+            // Glamourer doesn't expose an IPC to get automation names, so use plain text input
+            ImGui.SetNextItemWidth(inputWidth);
+            ImGui.InputText("##GlamourerAutomation", ref editedAutomation, 100);
         }
 
         private void DrawCustomizeField(float inputWidth, float scale)

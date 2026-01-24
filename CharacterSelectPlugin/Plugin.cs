@@ -33,6 +33,7 @@ using CharacterSelectPlugin.Windows.Components;
 using Dalamud.Interface.ManagedFontAtlas;
 using Dalamud.Interface;
 using Dalamud.Game.Gui.NamePlate;
+using Dalamud.Game.ClientState.Party;
 
 namespace CharacterSelectPlugin
 {
@@ -56,6 +57,7 @@ namespace CharacterSelectPlugin
         [PluginService] internal static ICondition Condition { get; private set; } = null!;
         [PluginService] internal static INamePlateGui NamePlateGui { get; private set; } = null!;
         [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
+        [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
 
         private static readonly string Version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "(Unknown Version)";
         public static readonly string CurrentPluginVersion = Version; // Match repo.json and .csproj version
@@ -690,7 +692,8 @@ namespace CharacterSelectPlugin
                         ChatGui,
                         ClientState,
                         AddonLifecycle,
-                        Log
+                        Log,
+                        PartyList
                     );
                 }
                 catch (Exception ex)
@@ -744,7 +747,8 @@ namespace CharacterSelectPlugin
                     ChatGui,
                     ClientState,
                     AddonLifecycle,
-                    Log
+                    Log,
+                    PartyList
                 );
                 Log.Info("[NameSync] Player name processor initialized on-demand.");
             }
