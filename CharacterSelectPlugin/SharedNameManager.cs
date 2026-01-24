@@ -259,12 +259,9 @@ namespace CharacterSelectPlugin
             }
             catch (Exception ex)
             {
-                log.Warning($"Shared name lookup failed: {ex.Message}");
-                lock (pendingLock)
-                {
-                    foreach (var name in batch)
-                        pendingLookups.Add(name);
-                }
+                // Don't re-queue on failure - prevents retry storm
+                // Stale refresh will naturally retry later
+                log.Debug($"Shared name lookup failed: {ex.Message}");
             }
         }
 
