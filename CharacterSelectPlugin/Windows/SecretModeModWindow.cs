@@ -668,11 +668,11 @@ namespace CharacterSelectPlugin.Windows
                 };
                 
                 availableMods.Add(entry);
-                
-                // Pre-select nothing since we don't know what's enabled
-                selectedMods[modDir] = false;
+
+                // Don't add to selectedMods - mods not in selectedMods = "Don't Change"
+                // Only mods explicitly toggled by the user should be in selectedMods
             }
-            
+
             await Task.CompletedTask;
         }
         
@@ -743,11 +743,8 @@ namespace CharacterSelectPlugin.Windows
 
                     availableMods.Add(entry);
 
-                    // No pre-selection - all mods start unchecked unless already configured
-                    if (!selectedMods.ContainsKey(modDir))
-                    {
-                        selectedMods[modDir] = false;
-                    }
+                    // Don't add to selectedMods - mods not in selectedMods = "Don't Change"
+                    // Only mods explicitly toggled by the user should be in selectedMods
 
                     processedCount++;
                 }
@@ -831,11 +828,8 @@ namespace CharacterSelectPlugin.Windows
 
                     availableMods.Add(entry);
 
-                    // No pre-selection - all mods start unchecked unless already configured
-                    if (!selectedMods.ContainsKey(modDir))
-                    {
-                        selectedMods[modDir] = false;
-                    }
+                    // Don't add to selectedMods - mods not in selectedMods = "Don't Change"
+                    // Only mods explicitly toggled by the user should be in selectedMods
 
                     processedCount++;
                 }

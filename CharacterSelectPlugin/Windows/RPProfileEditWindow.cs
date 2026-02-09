@@ -220,8 +220,8 @@ namespace CharacterSelectPlugin.Windows
                 rightContentBoxes = new List<ContentBox>
                 {
                     new ContentBox { Title = "Quick Info", Subtitle = "Basic character information", Content = "", Type = ContentBoxType.AdditionalDetails },
-                    new ContentBox { Title = "Additional Details", Subtitle = "Extra information about this character", Content = "", Type = ContentBoxType.AdditionalDetails },
-                    new ContentBox { Title = "Key Traits", Subtitle = "Notable characteristics and qualities", Content = "", Type = ContentBoxType.KeyTraits },
+                    new ContentBox { Title = "Additional Details", Subtitle = "Key: Value pairs (e.g., Occupation: Adventurer)", Content = "", Type = ContentBoxType.AdditionalDetails, LayoutType = ContentBoxLayoutType.KeyValue },
+                    new ContentBox { Title = "Key Traits", Subtitle = "Comma-separated traits (e.g., Brave, Loyal, Curious)", Content = "", Type = ContentBoxType.KeyTraits },
                     new ContentBox { Title = "Likes & Dislikes", Subtitle = "Preferences that define this character", Content = "", Likes = "", Dislikes = "", Type = ContentBoxType.LikesAndDislikes, LayoutType = ContentBoxLayoutType.LikesDislikes },
                     new ContentBox { Title = "External Links", Subtitle = "Social media, websites, and related content", Content = "", Type = ContentBoxType.ExternalLinks }
                 };
@@ -397,36 +397,67 @@ namespace CharacterSelectPlugin.Windows
             }).ToList();
         }
 
+        /// <summary>
+        /// Migrates legacy field data into content boxes.
+        /// Only overwrites boxes that have empty content to preserve user edits.
+        /// </summary>
         private void LoadContentIntoBoxes(RPProfile rp)
         {
+            // Only migrate legacy data to boxes that are empty (migration scenario)
+            // This prevents overwriting content that was saved in the content boxes themselves
+
             var coreIdentityBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Core Identity");
-            if (coreIdentityBox != null)
+            if (coreIdentityBox != null && string.IsNullOrWhiteSpace(coreIdentityBox.Content))
             {
                 coreIdentityBox.Content = rp.Bio ?? "";
             }
 
             var combatBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Combat Prowess");
-            if (combatBox != null)
+            if (combatBox != null && string.IsNullOrWhiteSpace(combatBox.Content))
             {
                 combatBox.Content = rp.Abilities ?? "";
             }
 
             var backgroundBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Background & Lore");
-            if (backgroundBox != null)
+            if (backgroundBox != null && string.IsNullOrWhiteSpace(backgroundBox.Content))
             {
                 backgroundBox.Content = rp.GalleryStatus ?? "";
             }
 
             var rpHooksBox = leftContentBoxes.FirstOrDefault(b => b.Title == "RP Hooks");
-            if (rpHooksBox != null)
+            if (rpHooksBox != null && string.IsNullOrWhiteSpace(rpHooksBox.Content))
             {
-                rpHooksBox.Content = rp.Tags ?? "";
+                rpHooksBox.Content = rp.RPHooks ?? "";
             }
 
             var linksBox = rightContentBoxes.FirstOrDefault(b => b.Title == "External Links");
-            if (linksBox != null)
+            if (linksBox != null && string.IsNullOrWhiteSpace(linksBox.Content))
             {
                 linksBox.Content = rp.Links ?? "";
+            }
+
+            // Key Traits - populate from rp.Tags (comma-separated tags)
+            var keyTraitsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Key Traits");
+            if (keyTraitsBox != null && string.IsNullOrWhiteSpace(keyTraitsBox.Content))
+            {
+                keyTraitsBox.Content = rp.Tags ?? "";
+            }
+
+            // Additional Details - populate with Relationship, Occupation, and any custom entries
+            var additionalDetailsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Additional Details");
+            if (additionalDetailsBox != null && string.IsNullOrWhiteSpace(additionalDetailsBox.Content))
+            {
+                // Build initial content from RP Profile fields + custom data
+                var lines = new List<string>();
+                if (!string.IsNullOrWhiteSpace(rp.Relationship))
+                    lines.Add($"Relationship: {rp.Relationship}");
+                if (!string.IsNullOrWhiteSpace(rp.Occupation))
+                    lines.Add($"Occupation: {rp.Occupation}");
+                if (!string.IsNullOrWhiteSpace(rp.AdditionalDetailsCustom))
+                    lines.Add(rp.AdditionalDetailsCustom);
+                additionalDetailsBox.Content = string.Join("\n", lines);
+                // Use KeyValue layout for structured display
+                additionalDetailsBox.LayoutType = ContentBoxLayoutType.KeyValue;
             }
         }
 
@@ -1377,13 +1408,53 @@ namespace CharacterSelectPlugin.Windows
             var rpHooksBox = leftContentBoxes.FirstOrDefault(b => b.Title == "RP Hooks");
             if (rpHooksBox != null)
             {
-                rp.Tags = rpHooksBox.Content; // Use Tags for RP hooks
+                rp.RPHooks = rpHooksBox.Content;
             }
 
             var linksBox = rightContentBoxes.FirstOrDefault(b => b.Title == "External Links");
             if (linksBox != null)
             {
                 rp.Links = linksBox.Content;
+            }
+
+            // Key Traits - save back to rp.Tags
+            var keyTraitsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Key Traits");
+            if (keyTraitsBox != null)
+            {
+                rp.Tags = keyTraitsBox.Content;
+            }
+
+            // Additional Details - parse and save structured data
+            var additionalDetailsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Additional Details");
+            if (additionalDetailsBox != null && !string.IsNullOrWhiteSpace(additionalDetailsBox.Content))
+            {
+                // Parse key-value pairs from content
+                var customLines = new List<string>();
+                foreach (var line in additionalDetailsBox.Content.Split('\n'))
+                {
+                    var trimmed = line.Trim();
+                    if (string.IsNullOrWhiteSpace(trimmed)) continue;
+
+                    var colonIndex = trimmed.IndexOf(':');
+                    if (colonIndex > 0)
+                    {
+                        var key = trimmed.Substring(0, colonIndex).Trim();
+                        var value = trimmed.Substring(colonIndex + 1).Trim();
+
+                        // Check if this is a known field
+                        if (key.Equals("Relationship", StringComparison.OrdinalIgnoreCase))
+                            rp.Relationship = value;
+                        else if (key.Equals("Occupation", StringComparison.OrdinalIgnoreCase))
+                            rp.Occupation = value;
+                        else
+                            customLines.Add(trimmed); // Keep custom entries
+                    }
+                    else
+                    {
+                        customLines.Add(trimmed); // Keep lines without colon as custom
+                    }
+                }
+                rp.AdditionalDetailsCustom = customLines.Count > 0 ? string.Join("\n", customLines) : null;
             }
 
             rp.LeftContentBoxes = new List<ContentBox>(leftContentBoxes);
@@ -2252,8 +2323,8 @@ namespace CharacterSelectPlugin.Windows
                 "Background & Lore" => "Where this character came from and what shaped them",
                 "RP Hooks" => "Ways to start a story with this character",
                 "Quick Info" => "Basic character information",
-                "Additional Details" => "Extra information about this character",
-                "Key Traits" => "Notable characteristics and qualities",
+                "Additional Details" => "Key: Value pairs (e.g., Occupation: Adventurer)",
+                "Key Traits" => "Comma-separated traits (e.g., Brave, Loyal, Curious)",
                 "External Links" => "Social media, websites, and related content",
                 "Connections" => "Character relationships and connections",
                 _ => GetDefaultSubtitleForLayout(layout)
@@ -2304,8 +2375,8 @@ namespace CharacterSelectPlugin.Windows
                 
                 // Sidebar content types
                 "Quick Info" => "At-a-glance character facts and statistics",
-                "Additional Details" => "Extra information that doesn't fit elsewhere",
-                "Key Traits" => "Defining personality traits and characteristics",
+                "Additional Details" => "Key-value pairs like Relationship, Occupation, and custom entries",
+                "Key Traits" => "Comma-separated personality traits and characteristics",
                 "Likes & Dislikes" => "Things your character enjoys or avoids",
                 "External Links" => "Links to wikis, playlists, or other character resources",
                 "Quick List" => "Bullet points for skills, abilities, or quick facts",

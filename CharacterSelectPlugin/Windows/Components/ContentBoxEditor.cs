@@ -1182,7 +1182,9 @@ namespace CharacterSelectPlugin.Windows.Components
         private static bool IsSpecialSidebarBox(string? title)
         {
             if (string.IsNullOrEmpty(title)) return false;
-            return title == "Quick Info" || title == "Additional Details" || title == "Key Traits";
+            // Only Quick Info is truly read-only (displays Age, Race, Gender, Orientation from Basic Info)
+            // Key Traits and Additional Details are now directly editable
+            return title == "Quick Info";
         }
 
         /// <summary>

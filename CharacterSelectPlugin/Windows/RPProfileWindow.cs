@@ -708,7 +708,9 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SameLine();
                 ImGui.BeginChild("##RightColumn", new Vector2(rightColumnWidth, contentHeight), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
-                ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), $"{character.Name} – Profile Info");
+                // Use Alias if set, otherwise fall back to Name
+                var displayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), $"{displayName} – Profile Info");
                 ImGui.Separator();
 
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
@@ -879,7 +881,8 @@ namespace CharacterSelectPlugin.Windows
                         : character.ImagePath;
                     profile.CustomImagePath = imagePathToUse;
 
-                    profile.CharacterName = character.Name;
+                    // Use Alias if set, otherwise fall back to Name
+                    profile.CharacterName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
                     profile.NameplateColor = character.NameplateColor;
 
                     plugin.SaveConfiguration();

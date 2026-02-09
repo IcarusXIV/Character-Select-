@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 
 namespace CharacterSelectPlugin.Effects
 {
@@ -679,6 +680,238 @@ namespace CharacterSelectPlugin.Effects
             // Keep snowflakes more visible for longer - only fade in the last 20% of their life
             float alpha = lifeFraction < 0.2f ? (lifeFraction / 0.2f) * 0.9f : 0.9f;
             Color = new Vector4(Color.X, Color.Y, Color.Z, alpha);
+        }
+    }
+
+    public class FloatingHeart
+    {
+        public Vector2 Position { get; set; }
+        public Vector2 Velocity { get; set; }
+        public Vector4 Color { get; set; }
+        public float Life { get; set; }
+        public float MaxLife { get; set; }
+        public float Size { get; set; }
+        public float NoiseOffset { get; set; }
+        public float SwayAmount { get; set; }
+        public float PulseOffset { get; set; }
+
+        public bool IsAlive => Life > 0;
+
+        public void Update(float deltaTime)
+        {
+            Life -= deltaTime;
+
+            // Gentle falling motion with smooth sway - like snowflakes
+            float swayX = MathF.Sin(Life * 1.2f + NoiseOffset) * SwayAmount * deltaTime;
+            Vector2 sway = new Vector2(swayX, 0);
+
+            Position += (Velocity * deltaTime) + sway;
+
+            // Keep mostly visible, gentle fade at end of life
+            float lifeFraction = Life / MaxLife;
+            float alpha = lifeFraction < 0.15f ? (lifeFraction / 0.15f) * 0.85f : 0.85f;
+            Color = new Vector4(Color.X, Color.Y, Color.Z, alpha);
+        }
+    }
+
+    public class ValentinesHeartsEffect
+    {
+        private List<FloatingHeart> hearts = new();
+        private Random random = new();
+        private float spawnTimer = 0;
+        private float spawnInterval = 0.12f; // Similar to snow
+        private Vector2 effectArea = Vector2.Zero;
+        private Vector2 absoluteOffset = Vector2.Zero;
+        private bool isActive = false;
+        private bool useAbsoluteCoordinates = false;
+
+        // Vibrant, saturated heart colours
+        private static readonly Vector4[] HeartColors = new[]
+        {
+            new Vector4(1.0f, 0.0f, 0.5f, 1.0f),   // Vivid magenta-pink
+            new Vector4(1.0f, 0.1f, 0.3f, 1.0f),   // Vivid red-pink
+            new Vector4(0.95f, 0.0f, 0.35f, 1.0f), // Pure rose
+            new Vector4(1.0f, 0.2f, 0.6f, 1.0f),   // Bright pink
+            new Vector4(0.9f, 0.0f, 0.15f, 1.0f),  // Deep red
+        };
+
+        public void SetEffectArea(Vector2 area)
+        {
+            effectArea = area;
+            isActive = area.X > 0 && area.Y > 0;
+            useAbsoluteCoordinates = false;
+        }
+
+        public void SetEffectAreaAbsolute(Vector2 windowPos, Vector2 windowSize)
+        {
+            effectArea = windowSize;
+            absoluteOffset = windowPos;
+            isActive = windowSize.X > 0 && windowSize.Y > 0;
+            useAbsoluteCoordinates = true;
+        }
+
+        public void Update(float deltaTime)
+        {
+            if (!isActive) return;
+
+            spawnTimer += deltaTime;
+
+            if (spawnTimer >= spawnInterval)
+            {
+                SpawnHearts();
+                spawnTimer = 0;
+            }
+
+            // Update existing hearts
+            for (int i = hearts.Count - 1; i >= 0; i--)
+            {
+                hearts[i].Update(deltaTime);
+
+                // Remove hearts that have fallen off screen or died
+                if (useAbsoluteCoordinates)
+                {
+                    float bottomBound = absoluteOffset.Y + effectArea.Y + 100;
+                    if (!hearts[i].IsAlive || hearts[i].Position.Y > bottomBound)
+                    {
+                        hearts.RemoveAt(i);
+                    }
+                }
+                else
+                {
+                    if (!hearts[i].IsAlive || hearts[i].Position.Y > effectArea.Y + 50)
+                    {
+                        hearts.RemoveAt(i);
+                    }
+                }
+            }
+
+            // Particle limit like snow
+            if (hearts.Count > 80)
+            {
+                hearts.RemoveRange(0, hearts.Count - 80);
+            }
+        }
+
+        private void SpawnHearts()
+        {
+            int count = random.Next(1, 4); // Similar to snow spawn rate
+
+            for (int i = 0; i < count; i++)
+            {
+                // Hearts start from TOP and fall DOWN like snow
+                Vector2 startPos = new Vector2(
+                    random.NextSingle() * effectArea.X,
+                    -20  // Start above the window
+                );
+
+                if (useAbsoluteCoordinates)
+                {
+                    startPos += absoluteOffset;
+                }
+
+                // Fall downward with gentle sideways drift - like snow
+                Vector2 velocity = new Vector2(
+                    (random.NextSingle() - 0.5f) * 15f,  // Gentle sideways drift
+                    18f + random.NextSingle() * 12f      // Downward fall (positive Y)
+                );
+
+                float baseLife = useAbsoluteCoordinates ? 30.0f : 12.0f;
+
+                // Pick a vibrant colour
+                var heartColor = HeartColors[random.Next(HeartColors.Length)];
+
+                var heart = new FloatingHeart
+                {
+                    Position = startPos,
+                    Velocity = velocity,
+                    Color = heartColor,
+                    Life = baseLife + random.NextSingle() * 8.0f,
+                    MaxLife = baseLife + 8.0f,
+                    Size = 5f + random.NextSingle() * 5f,  // Moderate size
+                    NoiseOffset = random.NextSingle() * MathF.PI * 2,
+                    SwayAmount = 12f + random.NextSingle() * 8f,  // Gentle sway
+                    PulseOffset = random.NextSingle() * MathF.PI * 2
+                };
+
+                hearts.Add(heart);
+            }
+        }
+
+        public void Draw()
+        {
+            Draw(false);
+        }
+
+        public void DrawAbsolute()
+        {
+            Draw(true);
+        }
+
+        private void Draw(bool useAbsolutePositions)
+        {
+            if (!isActive) return;
+
+            var drawList = ImGui.GetWindowDrawList();
+            var windowPos = ImGui.GetWindowPos();
+
+            foreach (var heart in hearts)
+            {
+                if (heart.IsAlive && heart.Color.W > 0.01f)
+                {
+                    Vector2 pos = useAbsolutePositions
+                        ? heart.Position
+                        : heart.Position + windowPos;
+
+                    float size = heart.Size;
+
+                    // Draw glow layer first (larger, more transparent)
+                    var glowColor = new Vector4(heart.Color.X, heart.Color.Y, heart.Color.Z, heart.Color.W * 0.3f);
+                    DrawSmoothHeart(drawList, pos, size * 1.4f, ImGui.GetColorU32(glowColor));
+
+                    // Draw main heart
+                    DrawSmoothHeart(drawList, pos, size, ImGui.GetColorU32(heart.Color));
+                }
+            }
+        }
+
+        private void DrawSmoothHeart(ImDrawListPtr drawList, Vector2 center, float size, uint color)
+        {
+            // Draw a smoother heart using more circle segments and better proportions
+            float scale = size / 10f;
+
+            // Heart shape made of overlapping circles and a quad for smoother look
+            float topRadius = 2.8f * scale;
+            float topOffset = 2.0f * scale;
+            float topY = -1.0f * scale;
+
+            // Left lobe
+            drawList.AddCircleFilled(
+                new Vector2(center.X - topOffset, center.Y + topY),
+                topRadius, color, 8);
+
+            // Right lobe
+            drawList.AddCircleFilled(
+                new Vector2(center.X + topOffset, center.Y + topY),
+                topRadius, color, 8);
+
+            // Bottom point using a smooth triangle
+            Vector2 bottomPoint = new Vector2(center.X, center.Y + 5.5f * scale);
+            Vector2 leftPoint = new Vector2(center.X - 4.2f * scale, center.Y + 0.8f * scale);
+            Vector2 rightPoint = new Vector2(center.X + 4.2f * scale, center.Y + 0.8f * scale);
+
+            drawList.AddTriangleFilled(leftPoint, rightPoint, bottomPoint, color);
+
+            // Fill the center gap with a rectangle
+            drawList.AddRectFilled(
+                new Vector2(center.X - topOffset, center.Y + topY - topRadius * 0.3f),
+                new Vector2(center.X + topOffset, center.Y + 1.5f * scale),
+                color);
+        }
+
+        public void Reset()
+        {
+            hearts.Clear();
+            spawnTimer = 0;
         }
     }
 

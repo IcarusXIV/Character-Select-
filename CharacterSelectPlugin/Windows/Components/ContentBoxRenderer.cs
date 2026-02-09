@@ -334,9 +334,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 drawList.AddText(textPos, ImGui.ColorConvertFloat4ToU32(new Vector4(0.9f, 0.9f, 0.9f, 1.0f)), items[i].Text);
             }
             
-            // Update cursor position
+            // Register grid area with ImGui (drawList items don't extend group rect)
             int totalRows = (items.Count + columns - 1) / columns;
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + totalRows * (cellHeight + 10 * scale));
+            ImGui.Dummy(new Vector2(width, totalRows * (cellHeight + 10 * scale)));
         }
         
         private static void RenderQuoteLayout(ContentBox box, float width, float scale)
@@ -452,112 +452,87 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var categories = ParseTagCategories(box.TaggedData);
             if (categories.Count == 0) return;
-            
-            var drawList = ImGui.GetWindowDrawList();
-            
+
+            float pillHeight = 26 * scale;
+            float pillPadX = 12 * scale;
+            float pillSpacing = 8 * scale;
+            float pillRounding = pillHeight / 2;
+
             foreach (var category in categories)
             {
-                var categoryStartPos = ImGui.GetCursorScreenPos();
-                
-                // Reserve space for background - we'll draw it after measuring content
                 ImGui.BeginGroup();
-                
+
                 // Category name
                 ImGui.Dummy(new Vector2(10 * scale, 0));
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(0.5f, 0.7f, 1.0f, 1.0f), category.Name.ToUpper());
                 ImGui.Dummy(new Vector2(0, 5 * scale));
-                
-                // Render tags as pills
+
+                // Render tags as styled buttons (proper ImGui widgets for scroll support)
                 var startX = ImGui.GetCursorPosX();
-                var maxX = startX + width;
-                var lineY = ImGui.GetCursorPosY();
-                
-                foreach (var tag in category.Tags)
+
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, pillRounding);
+                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(pillPadX, (pillHeight - ImGui.GetTextLineHeight()) / 2));
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.3f, 0.3f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.4f, 0.5f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.4f, 0.4f, 0.5f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
+
+                for (int t = 0; t < category.Tags.Count; t++)
                 {
+                    var tag = category.Tags[t];
                     var tagSize = ImGui.CalcTextSize(tag);
-                    var pillWidth = tagSize.X + 24 * scale;
-                    var pillHeight = 26 * scale;
-                    
-                    // Check if we need to wrap to next line
-                    if (ImGui.GetCursorPosX() + pillWidth > maxX && ImGui.GetCursorPosX() > startX)
+                    var pillWidth = tagSize.X + pillPadX * 2;
+
+                    // Wrap to next line if this pill doesn't fit
+                    if (ImGui.GetCursorPosX() + pillWidth > startX + width && ImGui.GetCursorPosX() > startX + 1)
                     {
+                        ImGui.NewLine();
                         ImGui.SetCursorPosX(startX);
-                        ImGui.SetCursorPosY(lineY + pillHeight + 8 * scale);
-                        lineY = ImGui.GetCursorPosY();
                     }
-                    
-                    var pillPos = ImGui.GetCursorScreenPos();
-                    bool isHovered = ImGui.IsMouseHoveringRect(
-                        pillPos,
-                        pillPos + new Vector2(pillWidth, pillHeight)
-                    );
-                    
-                    // Shadow
-                    if (isHovered)
+
+                    ImGui.PushID(t);
+                    ImGui.Button(tag, new Vector2(pillWidth, pillHeight));
+
+                    // Hover border
+                    if (ImGui.IsItemHovered())
                     {
-                        drawList.AddRectFilled(
-                            pillPos + new Vector2(1 * scale, 1 * scale),
-                            pillPos + new Vector2(pillWidth, pillHeight) + new Vector2(1 * scale, 1 * scale),
-                            ImGui.ColorConvertFloat4ToU32(new Vector4(0, 0, 0, 0.4f)),
-                            pillHeight / 2
-                        );
-                    }
-                    
-                    // Pill background
-                    drawList.AddRectFilled(
-                        pillPos,
-                        pillPos + new Vector2(pillWidth, pillHeight),
-                        ImGui.ColorConvertFloat4ToU32(
-                            isHovered 
-                                ? new Vector4(0.4f, 0.4f, 0.5f, 1.0f)
-                                : new Vector4(0.3f, 0.3f, 0.3f, 1.0f)
-                        ),
-                        pillHeight / 2
-                    );
-                    
-                    // Border on hover
-                    if (isHovered)
-                    {
-                        drawList.AddRect(
-                            pillPos,
-                            pillPos + new Vector2(pillWidth, pillHeight),
+                        var drawList = ImGui.GetWindowDrawList();
+                        var min = ImGui.GetItemRectMin();
+                        var max = ImGui.GetItemRectMax();
+                        drawList.AddRect(min, max,
                             ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.8f, 0.4f, 1.0f)),
-                            pillHeight / 2,
-                            ImDrawFlags.None,
-                            1 * scale
-                        );
+                            pillRounding, ImDrawFlags.None, 1 * scale);
                     }
-                    
-                    // Tag text
-                    drawList.AddText(
-                        pillPos + new Vector2(12 * scale, (pillHeight - tagSize.Y) / 2),
-                        ImGui.ColorConvertFloat4ToU32(new Vector4(0.9f, 0.9f, 0.9f, 1.0f)),
-                        tag
-                    );
-                    
-                    // Move cursor for next tag
-                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + pillWidth + 8 * scale);
+
+                    ImGui.PopID();
+                    ImGui.SameLine(0, pillSpacing);
                 }
-                
+
+                ImGui.PopStyleColor(4);
+                ImGui.PopStyleVar(2);
+                ImGui.NewLine();
+
                 ImGui.EndGroup();
-                
-                // Now draw the background that wraps both category and tags
-                var categoryEndPos = ImGui.GetItemRectMax();
-                drawList.AddRectFilled(
-                    categoryStartPos - new Vector2(5 * scale, 5 * scale),
-                    categoryEndPos + new Vector2(5 * scale, 10 * scale),
+
+                // Category background behind the group
+                var drawListBg = ImGui.GetWindowDrawList();
+                var groupMin = ImGui.GetItemRectMin();
+                var groupMax = ImGui.GetItemRectMax();
+                drawListBg.AddRectFilled(
+                    groupMin - new Vector2(5 * scale, 5 * scale),
+                    groupMax + new Vector2(5 * scale, 10 * scale),
                     ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.15f, 0.3f)),
                     6 * scale
                 );
-                drawList.AddRect(
-                    categoryStartPos - new Vector2(5 * scale, 5 * scale),
-                    categoryEndPos + new Vector2(5 * scale, 10 * scale),
+                drawListBg.AddRect(
+                    groupMin - new Vector2(5 * scale, 5 * scale),
+                    groupMax + new Vector2(5 * scale, 10 * scale),
                     ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.15f, 0.8f)),
                     6 * scale
                 );
-                
-                ImGui.SetCursorPosY(categoryEndPos.Y - ImGui.GetWindowPos().Y + 20 * scale);
+
+                ImGui.Dummy(new Vector2(0, 10 * scale));
             }
         }
         

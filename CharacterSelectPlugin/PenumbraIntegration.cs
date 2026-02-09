@@ -39,27 +39,29 @@ namespace CharacterSelectPlugin
     {
         private readonly IPluginLog log;
         private readonly IDalamudPluginInterface pluginInterface;
-        
-        // Availability check  
+        private readonly IClientState clientState;
+
+        // Availability check
         private ICallGateSubscriber<int>? penumbraApiVersion;
-        
+
         // Event subscribers for mod cache updates - using EventSubscriber pattern
         private IDisposable? modAddedSubscriber;
-        private IDisposable? modDeletedSubscriber; 
+        private IDisposable? modDeletedSubscriber;
         private IDisposable? modMovedSubscriber;
-        
+
         // Static debounce mechanism for mod deletion warnings (shared across instances)
         private static readonly Dictionary<string, DateTime> recentModDeletionWarnings = new();
         private static readonly object debounceLock = new object();
         private readonly TimeSpan debounceTime = TimeSpan.FromSeconds(5); // Increased from 2 to 5 seconds
-        
+
         public bool IsPenumbraAvailable { get; private set; }
-        
-        public PenumbraIntegration(IDalamudPluginInterface pluginInterface, IPluginLog log)
+
+        public PenumbraIntegration(IDalamudPluginInterface pluginInterface, IPluginLog log, IClientState clientState)
         {
             this.pluginInterface = pluginInterface;
             this.log = log;
-            
+            this.clientState = clientState;
+
             InitializePenumbraAPI();
         }
         
@@ -502,7 +504,87 @@ namespace CharacterSelectPlugin
                 return false;
             }
         }
-        
+
+        /// <summary>
+        /// Reset the player's collection to the one assigned to "Your Character" in Penumbra's Collection Assignments.
+        /// </summary>
+        public bool ResetCollectionToDefault()
+        {
+            if (!IsPenumbraAvailable)
+            {
+                log.Warning("Penumbra API not available for collection reset");
+                return false;
+            }
+
+            try
+            {
+                // Get local player's object index
+                var localPlayer = clientState.LocalPlayer;
+                if (localPlayer == null)
+                {
+                    log.Warning("No local player for collection reset");
+                    return false;
+                }
+
+                int objectIndex = (int)localPlayer.ObjectIndex;
+
+                // Step 1: Get the collection assigned to "Your Character" type
+                var getCollectionIpc = pluginInterface.GetIpcSubscriber<byte, (Guid Id, string Name)?>("Penumbra.GetCollection");
+                var yourCharacterCollection = getCollectionIpc.InvokeFunc((byte)ApiCollectionType.Yourself);
+
+                if (yourCharacterCollection == null)
+                {
+                    log.Warning("No collection assigned to 'Your Character' in Penumbra");
+                    return false;
+                }
+
+                log.Debug($"Found 'Your Character' collection: {yourCharacterCollection.Value.Name} ({yourCharacterCollection.Value.Id})");
+
+                // Step 2: Apply that collection to the player object
+                var setCollectionForObjectIpc = pluginInterface.GetIpcSubscriber<int, Guid?, bool, bool, (int, (Guid Id, string Name)?)>("Penumbra.SetCollectionForObject.V5");
+
+                var (resultInt, oldCollection) = setCollectionForObjectIpc.InvokeFunc(
+                    objectIndex,                        // The player's object index
+                    yourCharacterCollection.Value.Id,   // The GUID of "Your Character" collection
+                    false,                              // Don't allow creation
+                    false                               // Don't allow deletion
+                );
+
+                var result = (PenumbraApiEc)resultInt;
+
+                log.Debug($"ResetCollectionToDefault result: {result}, old collection: {oldCollection?.Name ?? "none"}");
+
+                if (result == PenumbraApiEc.Success || result == PenumbraApiEc.NothingChanged)
+                {
+                    log.Information($"Successfully switched to 'Your Character' collection: {yourCharacterCollection.Value.Name}");
+
+                    // Also update the Penumbra UI to display this collection
+                    var setCollectionIpc = pluginInterface.GetIpcSubscriber<byte, Guid?, bool, bool, (int, (Guid Id, string Name)?)>("Penumbra.SetCollection");
+                    var (uiResultInt, _) = setCollectionIpc.InvokeFunc(
+                        (byte)ApiCollectionType.Current,      // Set as current collection (UI display)
+                        yourCharacterCollection.Value.Id,     // Collection GUID
+                        false,                                // Don't allow creation
+                        false                                 // Don't allow deletion
+                    );
+
+                    var uiResult = (PenumbraApiEc)uiResultInt;
+                    log.Debug($"SetCollection(Current) UI update result: {uiResult}");
+
+                    return true;
+                }
+                else
+                {
+                    log.Warning($"Failed to reset Penumbra collection: {result}");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Error($"Error resetting Penumbra collection: {ex.Message}");
+                return false;
+            }
+        }
+
         /// <summary>
         /// Get list of all available Penumbra collections
         /// </summary>

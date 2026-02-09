@@ -24,6 +24,13 @@ namespace CharacterSelectPlugin
         public string? Abilities { get; set; }
         public string? Bio { get; set; }
         public string? Tags { get; set; }
+        public string? RPHooks { get; set; }
+
+        /// <summary>
+        /// Custom key-value pairs for Additional Details section (beyond Relationship/Occupation).
+        /// Format: "Label1:Value1\nLabel2:Value2"
+        /// </summary>
+        public string? AdditionalDetailsCustom { get; set; }
 
         // Title and Status for display under name/pronouns
         public string? Title { get; set; }           // Tagline like "The Wandering Minstrel"
@@ -121,17 +128,44 @@ namespace CharacterSelectPlugin
 
         public bool IsEmpty()
         {
-            return string.IsNullOrWhiteSpace(Pronouns)
-                && string.IsNullOrWhiteSpace(Gender)
-                && string.IsNullOrWhiteSpace(Age)
-                && string.IsNullOrWhiteSpace(Race)
-                && string.IsNullOrWhiteSpace(Orientation)
-                && string.IsNullOrWhiteSpace(Relationship)
-                && string.IsNullOrWhiteSpace(Occupation)
-                && string.IsNullOrWhiteSpace(Abilities)
-                && string.IsNullOrWhiteSpace(Bio)
-                && string.IsNullOrWhiteSpace(Tags)
-                && string.IsNullOrWhiteSpace(GalleryStatus);
+            // If profile has a CharacterName, it exists on the server - not empty
+            if (!string.IsNullOrWhiteSpace(CharacterName))
+                return false;
+
+            // Check basic text fields
+            bool hasBasicText = !string.IsNullOrWhiteSpace(Pronouns)
+                || !string.IsNullOrWhiteSpace(Gender)
+                || !string.IsNullOrWhiteSpace(Age)
+                || !string.IsNullOrWhiteSpace(Race)
+                || !string.IsNullOrWhiteSpace(Orientation)
+                || !string.IsNullOrWhiteSpace(Relationship)
+                || !string.IsNullOrWhiteSpace(Occupation)
+                || !string.IsNullOrWhiteSpace(Abilities)
+                || !string.IsNullOrWhiteSpace(Bio)
+                || !string.IsNullOrWhiteSpace(Tags)
+                || !string.IsNullOrWhiteSpace(GalleryStatus);
+
+            // Check title/status
+            bool hasTitleOrStatus = !string.IsNullOrWhiteSpace(Title)
+                || !string.IsNullOrWhiteSpace(Status);
+
+            // Check backgrounds/images
+            bool hasVisuals = !string.IsNullOrWhiteSpace(BackgroundImage)
+                || !string.IsNullOrWhiteSpace(CustomImagePath)
+                || !string.IsNullOrWhiteSpace(BannerImagePath)
+                || !string.IsNullOrWhiteSpace(BackgroundImageUrl)
+                || !string.IsNullOrWhiteSpace(RPBackgroundImageUrl);
+
+            // Check effects
+            bool hasEffects = Effects != null && (
+                Effects.CircuitBoard || Effects.Fireflies || Effects.FallingLeaves
+                || Effects.Butterflies || Effects.Bats || Effects.Fire || Effects.Smoke);
+
+            // Check content boxes
+            bool hasContentBoxes = (LeftContentBoxes?.Count > 0) || (RightContentBoxes?.Count > 0);
+
+            // Profile is NOT empty if it has any of these
+            return !hasBasicText && !hasTitleOrStatus && !hasVisuals && !hasEffects && !hasContentBoxes;
         }
 
         public void MigrateFromLegacyTheme()

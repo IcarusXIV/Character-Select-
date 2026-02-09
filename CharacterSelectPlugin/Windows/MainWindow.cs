@@ -25,6 +25,7 @@ namespace CharacterSelectPlugin.Windows
         private FavoriteSparkEffect diceEffect = new();
         private WinterBackgroundSnow winterBackgroundSnow = new();
         private WinterBackgroundSnow winterBackgroundSnowUI = new(); // Second snow effect for character grid area
+        private ValentinesHeartsEffect valentinesHeartsEffect = new(); // Floating hearts for Valentine's Day
         private float giftBoxShakeTimer = 0f;
         private const float GIFT_BOX_SHAKE_DURATION = 0.3f;
 
@@ -97,6 +98,13 @@ namespace CharacterSelectPlugin.Windows
                 winterBackgroundSnow.Update(deltaTime);
                 winterBackgroundSnow.Draw();
             }
+            else if (effectiveTheme == SeasonalTheme.Valentines)
+            {
+                var windowSize = ImGui.GetWindowSize();
+                valentinesHeartsEffect.SetEffectArea(windowSize);
+                valentinesHeartsEffect.Update(deltaTime);
+                valentinesHeartsEffect.Draw();
+            }
         }
 
         /// <summary>Draws custom background image in current child window.</summary>
@@ -167,6 +175,55 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.ColorConvertFloat4ToU32(tintColor)
             );
 
+            drawList.PopClipRect();
+        }
+
+        /// <summary>Draws hearts.jpg background in current child window for Valentine's theme.</summary>
+        private void DrawValentinesBackgroundInChild()
+        {
+            var heartsPath = Path.Combine(plugin.PluginDirectory, "Assets", "hearts.jpg");
+            if (!File.Exists(heartsPath))
+                return;
+
+            var texture = Plugin.TextureProvider
+                .GetFromFile(heartsPath)
+                .GetWrapOrDefault();
+
+            if (texture == null)
+                return;
+
+            var childPos = ImGui.GetWindowPos();
+            var childSize = ImGui.GetWindowSize();
+            var drawList = ImGui.GetWindowDrawList();
+
+            // Cover the child window, maintaining aspect ratio
+            var imageAspect = (float)texture.Width / texture.Height;
+            var windowAspect = childSize.X / childSize.Y;
+
+            Vector2 imageSize;
+            if (imageAspect > windowAspect)
+            {
+                imageSize.Y = childSize.Y;
+                imageSize.X = childSize.Y * imageAspect;
+            }
+            else
+            {
+                imageSize.X = childSize.X;
+                imageSize.Y = childSize.X / imageAspect;
+            }
+
+            var offset = (childSize - imageSize) / 2;
+            var tintColor = new Vector4(1, 1, 1, 0.5f);
+
+            drawList.PushClipRect(childPos, childPos + childSize, true);
+            drawList.AddImage(
+                texture.Handle,
+                childPos + offset,
+                childPos + offset + imageSize,
+                Vector2.Zero,
+                Vector2.One,
+                ImGui.ColorConvertFloat4ToU32(tintColor)
+            );
             drawList.PopClipRect();
         }
 
@@ -244,10 +301,21 @@ namespace CharacterSelectPlugin.Windows
             var totalScale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
             float buttonWidth = 70 * totalScale;
-            float buttonHeight = ImGui.GetTextLineHeight() + ImGui.GetStyle().FramePadding.Y * 2;
+            float iconButtonSize = ImGui.GetTextLineHeight() + ImGui.GetStyle().FramePadding.Y * 2;
+            float buttonHeight = iconButtonSize;
             float availableWidth = ImGui.GetContentRegionAvail().X;
+            float spacing = ImGui.GetStyle().ItemSpacing.X;
 
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + availableWidth - buttonWidth);
+            // Position for Revert button + Discord button
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + availableWidth - buttonWidth - iconButtonSize - spacing);
+
+            // Revert button
+            if (uiStyles.IconButton("\uf0e2", "Revert All CS+ Changes\n\nReverts:\n• Glamourer → Game state\n• Honorific → Cleared\n• Moodles → All removed\n• Customize+ → Disabled\n• Penumbra → Your Character collection\n• CS+ → No active character", new Vector2(iconButtonSize, iconButtonSize)))
+            {
+                plugin.RevertAllChanges();
+            }
+
+            ImGui.SameLine();
 
             // Discord button
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.35f, 0.39f, 0.96f, 0.8f));
@@ -298,6 +366,13 @@ namespace CharacterSelectPlugin.Windows
             if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
             {
                 DrawCustomBackgroundInChild();
+            }
+
+            // Valentine's background image behind character grid
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Valentines)
+            {
+                DrawValentinesBackgroundInChild();
             }
 
             // Snow behind character grid
@@ -445,6 +520,55 @@ namespace CharacterSelectPlugin.Windows
                 plugin.TutorialManager.StartTutorial();
             ImGui.SameLine();
 
+            // Features button with notification badge
+            bool hasUnseenFeaturesGuide = !plugin.Configuration.SeenFeatures.Contains(FeatureKeys.FeaturesGuide);
+            if (hasUnseenFeaturesGuide)
+            {
+                var btnPos = ImGui.GetCursorScreenPos();
+                var drawList = ImGui.GetWindowDrawList();
+
+                if (ImGui.Button("Features"))
+                {
+                    if (plugin.FeaturesWindow != null)
+                    {
+                        plugin.FeaturesWindow.IsOpen = !plugin.FeaturesWindow.IsOpen;
+                        plugin.Configuration.SeenFeatures.Add(FeatureKeys.FeaturesGuide);
+                        plugin.Configuration.Save();
+                    }
+                }
+
+                // Draw notification glow
+                var btnSize = ImGui.GetItemRectSize();
+                float pulse = (float)(Math.Sin(ImGui.GetTime() * 3.0) * 0.5 + 0.5);
+                var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.4f);
+                for (int i = 3; i >= 1; i--)
+                {
+                    var expand = i * 2f;
+                    drawList.AddRect(
+                        btnPos - new Vector2(expand, expand),
+                        btnPos + btnSize + new Vector2(expand, expand),
+                        ImGui.ColorConvertFloat4ToU32(glowColor * (1f - i * 0.2f)),
+                        4f, ImDrawFlags.None, 2f);
+                }
+            }
+            else
+            {
+                if (ImGui.Button("Features"))
+                {
+                    if (plugin.FeaturesWindow != null)
+                        plugin.FeaturesWindow.IsOpen = !plugin.FeaturesWindow.IsOpen;
+                }
+            }
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Discover all the features CS+ has to offer!");
+                ImGui.Text("Tips, tricks, and hidden gems.");
+                ImGui.EndTooltip();
+            }
+            ImGui.SameLine();
+
             if (ImGui.Button("Patch Notes"))
             {
                 plugin.PatchNotesWindow.OpenMainMenuOnClose = false;
@@ -462,28 +586,34 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SameLine();
 
             // Random button with seasonal icons
-            bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
-                              SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Halloween;
-            bool isWinterChristmas = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
-                                    (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
-                                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas);
+            var effectiveTheme = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration)
+                ? SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration)
+                : SeasonalTheme.Default;
+            bool isHalloween = effectiveTheme == SeasonalTheme.Halloween;
+            bool isWinterChristmas = effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas;
+            bool isValentines = effectiveTheme == SeasonalTheme.Valentines;
 
             string randomIcon;
             Vector4? iconColor = null;
 
             if (isHalloween)
             {
-                randomIcon = "\uf492";
+                randomIcon = "\uf492"; // Skull
                 iconColor = new Vector4(0.2f, 0.8f, 0.3f, 1.0f);
             }
             else if (isWinterChristmas)
             {
-                randomIcon = "\uf06b";
+                randomIcon = "\uf06b"; // Gift
                 iconColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+            }
+            else if (isValentines)
+            {
+                randomIcon = "\uf564"; // Cookie-bite
+                iconColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f); // White
             }
             else
             {
-                randomIcon = "\uf522";
+                randomIcon = "\uf522"; // Dice
             }
 
             string randomTooltip = plugin.Configuration.RandomSelectionFavoritesOnly
@@ -557,7 +687,13 @@ namespace CharacterSelectPlugin.Windows
             float buttonHeight2 = rectMax.Y - rectMin.Y;
             float yOffset = (buttonHeight2 - textHeight) * 0.5f - 1f; // -1 to nudge up slightly
             Vector2 textPos = rectMin + new Vector2(6 * totalScale, yOffset);
-            uint heartColor = ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.45f, 0.52f, 1.0f)); // Match border
+
+            // Heart colour - white for Valentine's theme (to stand out), otherwise match border
+            bool isValentinesTheme = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Valentines;
+            uint heartColor = isValentinesTheme
+                ? ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 1.0f, 1.0f, 1.0f)) // White for Valentine's
+                : ImGui.ColorConvertFloat4ToU32(new Vector4(1.0f, 0.45f, 0.52f, 1.0f)); // Match border
             drawList.AddText(UiBuilder.IconFont, ImGui.GetFontSize(), textPos, heartColor, "\uf004");
             drawList.AddText(textPos + new Vector2(22 * totalScale, 0), ImGui.GetColorU32(ImGuiCol.Text), "Support Dev");
 

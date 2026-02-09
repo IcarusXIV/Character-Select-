@@ -1809,7 +1809,6 @@ namespace CharacterSelectPlugin
                     if (pronounSet.Subject.Equals("she", StringComparison.OrdinalIgnoreCase))
                     {
                         newGender = 1;
-                        log.Info($"[Lua] Forcing female variant for she/her pronouns");
                     }
                     else if (pronounSet.Subject.Equals("he", StringComparison.OrdinalIgnoreCase))
                     {

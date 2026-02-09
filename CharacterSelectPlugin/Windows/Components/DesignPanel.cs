@@ -318,8 +318,23 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void ApplyScaledStyles(float scale)
         {
-            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.08f, 0.08f, 0.1f, 0.98f));
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.1f, 0.12f, 0.95f));
+            // Check for custom Design Panel background colour
+            var designPanelBg = new Vector4(0.08f, 0.08f, 0.1f, 0.98f);
+            var designPanelChildBg = new Vector4(0.1f, 0.1f, 0.12f, 0.95f);
+
+            if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
+            {
+                var customTheme = plugin.Configuration.CustomTheme;
+                if (customTheme.ColorOverrides.TryGetValue("custom.designPanelBg", out var packed) && packed.HasValue)
+                {
+                    var customColor = CustomThemeDefinitions.UnpackColor(packed.Value);
+                    designPanelBg = customColor;
+                    designPanelChildBg = customColor;
+                }
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, designPanelBg);
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, designPanelChildBg);
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.95f, 0.95f, 0.95f, 1.0f));
             ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.16f, 0.16f, 0.2f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.22f, 0.22f, 0.28f, 1.0f));
@@ -467,9 +482,10 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Create Design from Current Look\n" +
-                                "• Click: Smart snapshot\n" +
-                                "• Ctrl+Shift+Click: Smart snapshot with CR");
+                string tooltip = "Create Design from Current Look\n• Click: Smart snapshot";
+                if (plugin.Configuration.EnableConflictResolution)
+                    tooltip += "\n• Ctrl+Shift+Click: Smart snapshot with Conflict Resolution";
+                ImGui.SetTooltip(tooltip);
             }
 
             // Close button
@@ -1572,23 +1588,27 @@ namespace CharacterSelectPlugin.Windows.Components
             // Favourite star/ghost
             ImGui.SetCursorScreenPos(new Vector2(x, rowMin.Y + (rowH - btnSize) / 2));
             
-            // Check for Halloween theme
-            bool isHalloween = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                              SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Halloween;
-            
+            // Check for seasonal themes
+            var effectiveTheme = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration)
+                ? SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration)
+                : SeasonalTheme.Default;
+
             string star;
             bool usesFontAwesome = false;
-            
-            if (isHalloween)
+
+            if (effectiveTheme == SeasonalTheme.Halloween)
             {
                 star = "\uf6e2"; // Ghost icon for Halloween
                 usesFontAwesome = true;
             }
-            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
-                    (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
-                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
+            else if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
             {
                 star = "\uf2dc"; // Snowflake icon for Winter/Christmas
+                usesFontAwesome = true;
+            }
+            else if (effectiveTheme == SeasonalTheme.Valentines)
+            {
+                star = "\uf004"; // Heart icon for Valentine's
                 usesFontAwesome = true;
             }
             else
@@ -1598,20 +1618,24 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             Vector4 starColor;
-            if (isHalloween)
+            if (effectiveTheme == SeasonalTheme.Halloween)
             {
                 var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
                 starColor = design.IsFavorite
                     ? new Vector4(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z, hovered ? 1f : 0.7f) // Orange
                     : new Vector4(1.0f, 1.0f, 1.0f, hovered ? 0.8f : 0.6f); // White
             }
-            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
-                    (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
-                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
+            else if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
             {
                 starColor = design.IsFavorite
                     ? new Vector4(1.0f, 1.0f, 1.0f, hovered ? 1f : 0.8f) // Pure white for favourited snowflake
                     : new Vector4(0.7f, 0.7f, 0.8f, hovered ? 0.8f : 0.5f); // Light grey for unfavourited
+            }
+            else if (effectiveTheme == SeasonalTheme.Valentines)
+            {
+                starColor = design.IsFavorite
+                    ? new Vector4(1.0f, 1.0f, 1.0f, hovered ? 1f : 0.9f) // Solid white for favourited heart
+                    : new Vector4(0.7f, 0.5f, 0.55f, hovered ? 0.7f : 0.4f); // Muted for unfavourited
             }
             else
             {
@@ -1621,22 +1645,31 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Ensure proper icon centering with explicit alignment
+            bool scaleDownIcon = effectiveTheme == SeasonalTheme.Valentines; // Heart needs to be smaller
+            if (scaleDownIcon)
+            {
+                ImGui.SetWindowFontScale(0.85f);
+            }
             if (usesFontAwesome)
             {
                 ImGui.PushFont(UiBuilder.IconFont);
             }
-            
+
             ImGui.PushStyleColor(ImGuiCol.Text, starColor);
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f)); // CENTER ICON
-            
+
             bool buttonClicked = ImGui.Button($"{star}##{design.Name}", new Vector2(btnSize, btnSize));
-            
+
             ImGui.PopStyleVar();
             ImGui.PopStyleColor();
-            
+
             if (usesFontAwesome)
             {
                 ImGui.PopFont();
+            }
+            if (scaleDownIcon)
+            {
+                ImGui.SetWindowFontScale(1.0f);
             }
             
             if (buttonClicked)
@@ -2337,12 +2370,19 @@ namespace CharacterSelectPlugin.Windows.Components
                 bool wasPreviouslyAdvanced = existingDesign.IsAdvancedMode;
                 bool keepAdvanced = wasPreviouslyAdvanced && !isAdvancedModeDesign;
 
+                // For advanced mode with empty macro, generate from form fields
+                string advancedMacroToUse = advancedDesignMacroText;
+                if ((isAdvancedModeDesign || keepAdvanced) && string.IsNullOrWhiteSpace(advancedMacroToUse))
+                {
+                    advancedMacroToUse = GenerateDesignMacro(character);
+                }
+
                 existingDesign.Macro = keepAdvanced
-                    ? existingDesign.AdvancedMacro
-                    : (isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro(character));
+                    ? advancedMacroToUse
+                    : (isAdvancedModeDesign ? advancedMacroToUse : GenerateDesignMacro(character));
 
                 existingDesign.AdvancedMacro = isAdvancedModeDesign || keepAdvanced
-                    ? advancedDesignMacroText
+                    ? advancedMacroToUse
                     : "";
 
                 existingDesign.IsAdvancedMode = isAdvancedModeDesign || keepAdvanced;
@@ -2364,12 +2404,16 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             else
             {
-                // Add new design
+                // Add new design - generate macro from fields if advanced mode has empty macro
+                string macroForNewDesign = isAdvancedModeDesign
+                    ? (string.IsNullOrWhiteSpace(advancedDesignMacroText) ? GenerateDesignMacro(character) : advancedDesignMacroText)
+                    : GenerateDesignMacro(character);
+
                 var newDesign = new CharacterDesign(
                     editedDesignName,
-                    isAdvancedModeDesign ? advancedDesignMacroText : GenerateDesignMacro(character),
+                    macroForNewDesign,
                     isAdvancedModeDesign,
-                    isAdvancedModeDesign ? advancedDesignMacroText : "",
+                    isAdvancedModeDesign ? macroForNewDesign : "",
                     editedGlamourerDesign,
                     editedAutomation,
                     editedCustomizeProfile,

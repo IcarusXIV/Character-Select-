@@ -4491,37 +4491,53 @@ namespace CharacterSelectPlugin.Windows
 
         private void BlockProfile(GalleryProfile profile)
         {
-            var profileKey = GetProfileKey(profile);
-            string mainCharacterName = profile.CharacterName ?? SanitizeForLogging(profileKey);
+            // Extract physical name from CharacterId (format: "CSName_FirstName LastName@World")
+            string physicalName = ExtractPhysicalName(profile.CharacterId);
 
-            if (!blockedProfiles.Contains(mainCharacterName))
+            if (!string.IsNullOrEmpty(physicalName) && !blockedProfiles.Contains(physicalName))
             {
-                blockedProfiles.Add(mainCharacterName);
-                plugin.Configuration.BlockedGalleryProfiles.Add(mainCharacterName);
+                blockedProfiles.Add(physicalName);
+                plugin.Configuration.BlockedGalleryProfiles.Add(physicalName);
                 plugin.Configuration.Save();
 
-                Plugin.Log.Info($"[Gallery] Blocked all profiles from: {mainCharacterName}");
+                Plugin.Log.Info($"[Gallery] Blocked user: {physicalName} (CS+ name: {profile.CharacterName})");
                 FilterProfiles();
             }
         }
 
-        private void UnblockProfile(string blockedCharacterName)
+        private void UnblockProfile(string blockedPhysicalName)
         {
-            if (blockedProfiles.Contains(blockedCharacterName))
+            if (blockedProfiles.Contains(blockedPhysicalName))
             {
-                blockedProfiles.Remove(blockedCharacterName);
-                plugin.Configuration.BlockedGalleryProfiles.Remove(blockedCharacterName);
+                blockedProfiles.Remove(blockedPhysicalName);
+                plugin.Configuration.BlockedGalleryProfiles.Remove(blockedPhysicalName);
                 plugin.Configuration.Save();
 
-                Plugin.Log.Info($"[Gallery] Unblocked profiles from: {blockedCharacterName}");
+                Plugin.Log.Info($"[Gallery] Unblocked user: {blockedPhysicalName}");
                 _ = LoadGalleryData();
             }
         }
 
         private bool IsProfileBlocked(GalleryProfile profile)
         {
-            string mainCharacterName = profile.CharacterName ?? GetProfileKey(profile);
-            return blockedProfiles.Contains(mainCharacterName);
+            string physicalName = ExtractPhysicalName(profile.CharacterId);
+            return !string.IsNullOrEmpty(physicalName) && blockedProfiles.Contains(physicalName);
+        }
+
+        /// <summary>
+        /// Extract physical name from CharacterId (format: "CSName_FirstName LastName@World")
+        /// </summary>
+        private string ExtractPhysicalName(string characterId)
+        {
+            if (string.IsNullOrEmpty(characterId))
+                return "";
+
+            int underscoreIndex = characterId.IndexOf('_');
+            if (underscoreIndex > 0 && underscoreIndex < characterId.Length - 1)
+            {
+                return characterId.Substring(underscoreIndex + 1);
+            }
+            return "";
         }
 
         private bool CanMakeRequest(string endpoint)

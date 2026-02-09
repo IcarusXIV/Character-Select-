@@ -8,7 +8,8 @@ namespace CharacterSelectPlugin
         Default,
         Halloween,
         Christmas,
-        Winter
+        Winter,
+        Valentines
     }
 
     public enum ThemeSelection
@@ -18,6 +19,7 @@ namespace CharacterSelectPlugin
         Halloween,    // Always use Halloween theme
         Christmas,    // Always use Christmas theme
         Winter,       // Always use Winter theme
+        Valentines,   // Always use Valentine's Day theme
         Custom        // User-customized theme
     }
 
@@ -42,14 +44,18 @@ namespace CharacterSelectPlugin
             // Halloween: October
             if (month == 10)
                 return SeasonalTheme.Halloween;
-            
+
             // Christmas: December 24th and 25th only
             if (month == 12 && (day == 24 || day == 25))
                 return SeasonalTheme.Christmas;
-            
-            // Winter: November through March (excluding Christmas days)
-            if (month == 11 || 
-                (month == 12 && day != 24 && day != 25) || 
+
+            // Valentine's Day: February 14th only
+            if (month == 2 && day == 14)
+                return SeasonalTheme.Valentines;
+
+            // Winter: November through March (excluding Christmas days and Valentine's)
+            if (month == 11 ||
+                (month == 12 && day != 24 && day != 25) ||
                 month == 1 || month == 2 || month == 3)
                 return SeasonalTheme.Winter;
 
@@ -87,6 +93,15 @@ namespace CharacterSelectPlugin
                     ParticleColor = new Vector4(1.0f, 1.0f, 1.0f, 1.0f),        // Snow white
                     BackgroundTint = new Vector4(0.05f, 0.08f, 0.15f, 0.3f)     // Cool blue-gray tint
                 },
+                SeasonalTheme.Valentines => new SeasonalThemeColors
+                {
+                    PrimaryAccent = new Vector4(1.0f, 0.0f, 0.5f, 1.0f),        // Vivid magenta-pink
+                    SecondaryAccent = new Vector4(1.0f, 0.1f, 0.3f, 1.0f),      // Vivid red-pink
+                    IconTint = new Vector4(1.0f, 0.2f, 0.6f, 1.0f),             // Bright pink
+                    GlowColor = new Vector4(1.0f, 0.0f, 0.5f, 0.7f),            // Vivid pink glow
+                    ParticleColor = new Vector4(1.0f, 0.0f, 0.4f, 1.0f),        // Saturated rose
+                    BackgroundTint = new Vector4(0.2f, 0.02f, 0.1f, 0.35f)      // Deeper pink tint
+                },
                 _ => new SeasonalThemeColors
                 {
                     PrimaryAccent = new Vector4(0.3f, 0.6f, 1.0f, 1.0f),        // Default Blue
@@ -121,6 +136,7 @@ namespace CharacterSelectPlugin
                 ThemeSelection.Halloween => SeasonalTheme.Halloween,
                 ThemeSelection.Christmas => SeasonalTheme.Christmas,
                 ThemeSelection.Winter => SeasonalTheme.Winter,
+                ThemeSelection.Valentines => SeasonalTheme.Valentines,
                 ThemeSelection.Custom => SeasonalTheme.Default, // Custom uses its own styling
                 _ => SeasonalTheme.Default
             };
@@ -139,6 +155,7 @@ namespace CharacterSelectPlugin
                 SeasonalTheme.Halloween => "Halloween",
                 SeasonalTheme.Christmas => "Christmas",
                 SeasonalTheme.Winter => "Winter",
+                SeasonalTheme.Valentines => "Valentine's Day",
                 _ => "Default"
             };
         }
@@ -150,6 +167,7 @@ namespace CharacterSelectPlugin
                 SeasonalTheme.Halloween => "Halloween",
                 SeasonalTheme.Christmas => "Christmas",
                 SeasonalTheme.Winter => "Winter",
+                SeasonalTheme.Valentines => "Valentine's Day",
                 _ => "Default"
             };
         }
@@ -163,6 +181,7 @@ namespace CharacterSelectPlugin
                 ThemeSelection.Halloween => "Halloween",
                 ThemeSelection.Christmas => "Christmas",
                 ThemeSelection.Winter => "Winter",
+                ThemeSelection.Valentines => "Valentine's Day",
                 ThemeSelection.Custom => "Custom",
                 _ => "Default"
             };
@@ -178,6 +197,7 @@ namespace CharacterSelectPlugin
                 ThemeSelection.Halloween => "Orange and purple Halloween theme",
                 ThemeSelection.Christmas => "Red, green, and gold Christmas theme",
                 ThemeSelection.Winter => "Icy blue and white winter theme",
+                ThemeSelection.Valentines => "Pink and red Valentine's Day theme",
                 ThemeSelection.Custom => "Your custom colors and settings",
                 _ => "Standard theme"
             };

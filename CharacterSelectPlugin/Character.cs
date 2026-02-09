@@ -11,6 +11,9 @@ namespace CharacterSelectPlugin
     {
         public string Name { get; set; }
 
+        /// <summary>Optional alias used for Name Sync. If empty, uses Name.</summary>
+        public string? Alias { get; set; } = null;
+
         /// <summary>When true, this character's name won't be shared via Name Sync regardless of global setting.</summary>
         public bool ExcludeFromNameSync { get; set; } = false;
 
@@ -29,7 +32,8 @@ namespace CharacterSelectPlugin
         public string HonorificSuffix { get; set; } = "";
         public Vector3 HonorificColor { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
         public Vector3 HonorificGlow { get; set; } = new Vector3(1.0f, 1.0f, 1.0f);
-        public int? HonorificGradientSet { get; set; } = null;
+        public Vector3? HonorificColor3 { get; set; } = null;  // Second colour for two-colour gradient
+        public int? HonorificGradientSet { get; set; } = null;  // -1 = Two Colour Gradient
         public string? HonorificAnimationStyle { get; set; } = null;
         public string MoodlePreset { get; set; } = "";
         public byte IdlePoseIndex { get; set; } = 7;

@@ -22,6 +22,7 @@ namespace CharacterSelectPlugin.Windows
         public bool Confirmed { get; private set; }
         public Action<string>? OnFileSelected { get; set; }
 
+        private Configuration? configuration;
         private string currentDirectory;
         private string[] currentFiles = Array.Empty<string>();
         private string[] currentDirectories = Array.Empty<string>();
@@ -57,6 +58,28 @@ namespace CharacterSelectPlugin.Windows
 
             BuildQuickAccessPaths();
             RefreshDirectory();
+        }
+
+        public void SetConfiguration(Configuration config)
+        {
+            configuration = config;
+        }
+
+        private bool IsPinned(string path)
+        {
+            return configuration?.PinnedFileBrowserPaths.Contains(path) == true;
+        }
+
+        private void TogglePin(string path)
+        {
+            if (configuration == null) return;
+
+            if (configuration.PinnedFileBrowserPaths.Contains(path))
+                configuration.PinnedFileBrowserPaths.Remove(path);
+            else
+                configuration.PinnedFileBrowserPaths.Add(path);
+
+            configuration.Save();
         }
 
         private void BuildQuickAccessPaths()
@@ -97,11 +120,10 @@ namespace CharacterSelectPlugin.Windows
             {
                 pathInput = currentDirectory;
 
-                // Directories always sorted by name
-                currentDirectories = Directory.GetDirectories(currentDirectory)
-                    .Where(d => !new DirectoryInfo(d).Attributes.HasFlag(FileAttributes.Hidden))
-                    .OrderBy(d => Path.GetFileName(d))
-                    .ToArray();
+                // Sort directories using same sort option as files
+                var dirs = Directory.GetDirectories(currentDirectory)
+                    .Where(d => !new DirectoryInfo(d).Attributes.HasFlag(FileAttributes.Hidden));
+                currentDirectories = ApplyDirectorySorting(dirs).ToArray();
 
                 // Files sorted by current sort option
                 var files = Directory.GetFiles(currentDirectory)
@@ -123,6 +145,21 @@ namespace CharacterSelectPlugin.Windows
                 currentFiles = Array.Empty<string>();
                 currentDirectories = Array.Empty<string>();
             }
+        }
+
+        private IEnumerable<string> ApplyDirectorySorting(IEnumerable<string> dirs)
+        {
+            IOrderedEnumerable<string> sorted = currentSort switch
+            {
+                SortOption.DateModified => sortDescending
+                    ? dirs.OrderByDescending(d => new DirectoryInfo(d).LastWriteTime)
+                    : dirs.OrderBy(d => new DirectoryInfo(d).LastWriteTime),
+                // Name, Size, and Type all sort folders alphabetically
+                _ => sortDescending
+                    ? dirs.OrderByDescending(d => Path.GetFileName(d))
+                    : dirs.OrderBy(d => Path.GetFileName(d))
+            };
+            return sorted;
         }
 
         private IEnumerable<string> ApplySorting(IEnumerable<string> files)
@@ -312,6 +349,58 @@ namespace CharacterSelectPlugin.Windows
                     NavigateTo(path);
             }
 
+            // Pinned folders
+            var pinnedPaths = configuration?.PinnedFileBrowserPaths;
+            if (pinnedPaths != null && pinnedPaths.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.Spacing();
+
+                ImGui.PushFont(UiBuilder.IconFont);
+                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.3f, 1f), FontAwesomeIcon.Thumbtack.ToIconString());
+                ImGui.PopFont();
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.3f, 1f), "Pinned");
+
+                ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.9f, 0.7f, 0.3f, 0.3f));
+                ImGui.Separator();
+                ImGui.PopStyleColor();
+
+                string? pathToRemove = null;
+                for (int i = 0; i < pinnedPaths.Count; i++)
+                {
+                    var pinPath = pinnedPaths[i];
+                    if (!Directory.Exists(pinPath)) continue;
+
+                    var pinName = Path.GetFileName(pinPath);
+                    if (string.IsNullOrEmpty(pinName)) pinName = pinPath;
+                    var isSelected2 = currentDirectory == pinPath;
+
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.TextColored(isSelected2 ? ColorSchemes.Dark.AccentBlue : new Vector4(0.9f, 0.7f, 0.3f, 0.8f),
+                        FontAwesomeIcon.Folder.ToIconString());
+                    ImGui.PopFont();
+                    ImGui.SameLine();
+
+                    if (ImGui.Selectable($"{pinName}##pin{i}", isSelected2))
+                        NavigateTo(pinPath);
+
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip(pinPath);
+
+                    // Right-click to unpin
+                    if (ImGui.BeginPopupContextItem($"##pinctx{i}"))
+                    {
+                        if (ImGui.MenuItem("Unpin from Quick Access"))
+                            pathToRemove = pinPath;
+                        ImGui.EndPopup();
+                    }
+                }
+
+                if (pathToRemove != null)
+                    TogglePin(pathToRemove);
+            }
+
             // Recent section
             if (recentDirectories.Count > 0)
             {
@@ -445,22 +534,45 @@ namespace CharacterSelectPlugin.Windows
         private void DrawFileListContent()
         {
             // Directories
-            foreach (var dir in currentDirectories)
+            for (int di = 0; di < currentDirectories.Length; di++)
             {
+                var dir = currentDirectories[di];
                 var name = Path.GetFileName(dir);
                 if (!string.IsNullOrEmpty(searchFilter) &&
                     !name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                var pinned = IsPinned(dir);
+
                 ImGui.PushFont(UiBuilder.IconFont);
-                ImGui.TextColored(new Vector4(1f, 0.85f, 0.4f, 1f), FontAwesomeIcon.Folder.ToIconString());
+                ImGui.TextColored(pinned ? new Vector4(0.9f, 0.7f, 0.3f, 1f) : new Vector4(1f, 0.85f, 0.4f, 1f),
+                    FontAwesomeIcon.Folder.ToIconString());
                 ImGui.PopFont();
                 ImGui.SameLine();
 
-                if (ImGui.Selectable(name, false, ImGuiSelectableFlags.AllowDoubleClick))
+                if (ImGui.Selectable($"{name}##dir{di}", false, ImGuiSelectableFlags.AllowDoubleClick))
                 {
                     if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                         NavigateTo(dir);
+                }
+
+                // Right-click context menu
+                if (ImGui.BeginPopupContextItem($"##dirctx{di}"))
+                {
+                    if (ImGui.MenuItem("Open"))
+                        NavigateTo(dir);
+
+                    if (pinned)
+                    {
+                        if (ImGui.MenuItem("Unpin from Quick Access"))
+                            TogglePin(dir);
+                    }
+                    else
+                    {
+                        if (ImGui.MenuItem("Pin to Quick Access"))
+                            TogglePin(dir);
+                    }
+                    ImGui.EndPopup();
                 }
             }
 

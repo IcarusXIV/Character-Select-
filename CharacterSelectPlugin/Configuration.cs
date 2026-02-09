@@ -88,8 +88,10 @@ namespace CharacterSelectPlugin
         public bool EnablePoseAutoSave { get; set; } = true;
         public bool EnableSafeMode { get; set; } = false;
         public bool QuickSwitchCompact { get; set; } = false;
+        public bool QuickSwitchIgnoreEscape { get; set; } = true;
         public bool EnableCharacterHoverEffects { get; set; } = false;
         public bool UseImGuiFilePicker { get; set; } = false;
+        public List<string> PinnedFileBrowserPaths { get; set; } = new();
 
         // Theme Settings
         public ThemeSelection SelectedTheme { get; set; } = ThemeSelection.Current;
@@ -106,6 +108,7 @@ namespace CharacterSelectPlugin
         public List<FavoriteSnapshot> FavoriteSnapshots { get; set; } = new();
         public bool ShowRecentlyActiveStatus { get; set; } = true;
         public bool HasSeenTutorial { get; set; } = false;
+        public bool HasSeenPage2Surprise { get; set; } = false;
         public bool TutorialActive { get; set; } = false;
         public int CurrentTutorialStep { get; set; } = 0;
         public bool ShowTutorialOnStartup { get; set; } = true;
@@ -185,6 +188,10 @@ namespace CharacterSelectPlugin
         /// <summary>Use simple solid glow instead of wave effect on nameplates (for compatibility).</summary>
         [JsonPropertyName("useSimpleNameplateGlow")]
         public bool UseSimpleNameplateGlow { get; set; } = false;
+
+        /// <summary>Use simple solid glow for other players' nameplates (disables periodic redraw).</summary>
+        [JsonPropertyName("useSimpleGlowForOthers")]
+        public bool UseSimpleGlowForOthers { get; set; } = false;
 
         // Shared Name Replacement
         [JsonPropertyName("enableSharedNameReplacement")]
@@ -470,5 +477,6 @@ namespace CharacterSelectPlugin
         public const string ExpandedRPProfile = "ExpandedRPProfile_v2.1";
         public const string JobAssignments = "JobAssignments_v2.1";
         public const string Honorific = "Honorific_v2.1";
+        public const string FeaturesGuide = "FeaturesGuide_v2.1";
     }
 }

@@ -140,11 +140,39 @@ namespace CharacterSelectPlugin.Windows.Styles
                 ImGui.PushStyleColor(ImGuiCol.SeparatorActive, new Vector4(0.95f, 0.35f, 0.25f, 1.0f)); // Active separator
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.98f, 0.95f, 1.0f)); // Bright warm white text
                 ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.80f, 0.70f, 0.60f, 0.8f)); // Warm light gray disabled
-                
+
                 // Christmas button styling
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.60f, 0.18f, 0.12f, 0.9f)); // Saturated red buttons
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.25f, 0.18f, 0.9f)); // Hover saturated red
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.90f, 0.32f, 0.22f, 0.9f)); // Active very saturated red
+            }
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                     SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Valentines)
+            {
+                // Valentine's Day themed styling with vibrant pink/red theme
+                ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.38f, 0.10f, 0.25f, 0.98f)); // More pink
+                ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.42f, 0.12f, 0.28f, 0.95f)); // Deeper pink
+                ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.38f, 0.10f, 0.25f, 0.98f)); // More pink
+                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.38f, 0.06f, 0.18f, 0.9f)); // Vibrant pink frames
+                ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.52f, 0.08f, 0.26f, 0.9f)); // Brighter pink hover
+                ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.65f, 0.10f, 0.32f, 0.9f)); // Active vivid pink
+                ImGui.PushStyleColor(ImGuiCol.TitleBg, new Vector4(0.18f, 0.02f, 0.09f, 1.0f)); // Deep rose
+                ImGui.PushStyleColor(ImGuiCol.TitleBgActive, new Vector4(0.28f, 0.03f, 0.14f, 1.0f)); // Rich rose active
+                ImGui.PushStyleColor(ImGuiCol.MenuBarBg, new Vector4(0.22f, 0.03f, 0.12f, 0.98f)); // Rich rose menu
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0.18f, 0.02f, 0.09f, 0.8f)); // Deep scrollbar
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, new Vector4(0.70f, 0.10f, 0.35f, 0.85f)); // Vivid pink scrollbar
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, new Vector4(0.85f, 0.15f, 0.42f, 0.95f)); // Brighter pink hover
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, new Vector4(1.0f, 0.20f, 0.50f, 1.0f)); // Hot pink active
+                ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.80f, 0.12f, 0.40f, 0.7f)); // Vivid pink separator
+                ImGui.PushStyleColor(ImGuiCol.SeparatorHovered, new Vector4(0.95f, 0.18f, 0.48f, 0.85f)); // Brighter separator
+                ImGui.PushStyleColor(ImGuiCol.SeparatorActive, new Vector4(1.0f, 0.25f, 0.55f, 1.0f)); // Hot pink separator
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.95f, 0.97f, 1.0f)); // Soft white-pink text
+                ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.75f, 0.50f, 0.58f, 0.8f)); // Muted pink disabled
+
+                // Valentine's button styling - more vibrant
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.60f, 0.08f, 0.30f, 0.9f)); // Vivid pink buttons
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.78f, 0.12f, 0.40f, 0.95f)); // Bright pink hover
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.18f, 0.48f, 1.0f)); // Hot pink active
             }
             else
             {
@@ -339,34 +367,58 @@ namespace CharacterSelectPlugin.Windows.Styles
 
         public bool IconButtonWithColor(string icon, string tooltip, Vector2? size = null, float scale = 1.0f, Vector4? iconColor = null)
         {
-            ImGui.PushFont(UiBuilder.IconFont);
             float finalScale = ImGuiHelpers.GlobalScale * scale;
 
-            // Scale the button size if provided
-            Vector2 buttonSize = size ?? Vector2.Zero;
+            // Calculate icon size
+            ImGui.PushFont(UiBuilder.IconFont);
+            var iconSize = ImGui.CalcTextSize(icon);
+            ImGui.PopFont();
+
+            // Determine button size
+            Vector2 buttonSize;
             if (size.HasValue)
             {
                 buttonSize = new Vector2(size.Value.X * finalScale, size.Value.Y * finalScale);
             }
-
-            // Apply icon color if specified
-            bool colorPushed = false;
-            if (iconColor.HasValue)
+            else
             {
-                ImGui.PushStyleColor(ImGuiCol.Text, iconColor.Value);
-                colorPushed = true;
+                // Default: icon size + padding
+                var padding = ImGui.GetStyle().FramePadding;
+                buttonSize = new Vector2(iconSize.X + padding.X * 2, iconSize.Y + padding.Y * 2);
             }
 
-            bool result = ImGui.Button(icon, buttonSize);
-            
-            if (colorPushed)
-            {
-                ImGui.PopStyleColor();
-            }
-            
+            // Get button position before creating it
+            var buttonPos = ImGui.GetCursorScreenPos();
+
+            // Create invisible button for interaction
+            var buttonId = $"##iconbtn_{icon}_{buttonPos.X}_{buttonPos.Y}";
+            bool result = ImGui.InvisibleButton(buttonId, buttonSize);
+            bool isHovered = ImGui.IsItemHovered();
+            bool isActive = ImGui.IsItemActive();
+
+            // Draw button background
+            var drawList = ImGui.GetWindowDrawList();
+            var buttonEnd = buttonPos + buttonSize;
+
+            Vector4 bgColor;
+            if (isActive)
+                bgColor = ImGui.GetStyle().Colors[(int)ImGuiCol.ButtonActive];
+            else if (isHovered)
+                bgColor = ImGui.GetStyle().Colors[(int)ImGuiCol.ButtonHovered];
+            else
+                bgColor = ImGui.GetStyle().Colors[(int)ImGuiCol.Button];
+
+            drawList.AddRectFilled(buttonPos, buttonEnd, ImGui.ColorConvertFloat4ToU32(bgColor), ImGui.GetStyle().FrameRounding);
+
+            // Draw centered icon
+            var iconPos = buttonPos + (buttonSize - iconSize) * 0.5f;
+            var textColor = iconColor ?? ImGui.GetStyle().Colors[(int)ImGuiCol.Text];
+
+            ImGui.PushFont(UiBuilder.IconFont);
+            drawList.AddText(iconPos, ImGui.ColorConvertFloat4ToU32(textColor), icon);
             ImGui.PopFont();
 
-            if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(tooltip))
+            if (isHovered && !string.IsNullOrEmpty(tooltip))
             {
                 ImGui.SetTooltip(tooltip);
             }
@@ -526,6 +578,11 @@ namespace CharacterSelectPlugin.Windows.Styles
                      SeasonalThemeManager.GetEffectiveTheme(config) == SeasonalTheme.Christmas)
             {
                 return PushChristmasColors();
+            }
+            else if (SeasonalThemeManager.IsSeasonalThemeEnabled(config) &&
+                     SeasonalThemeManager.GetEffectiveTheme(config) == SeasonalTheme.Valentines)
+            {
+                return PushValentinesColors();
             }
             else
             {
@@ -699,6 +756,34 @@ namespace CharacterSelectPlugin.Windows.Styles
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.60f, 0.18f, 0.12f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.25f, 0.18f, 0.9f));
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.90f, 0.32f, 0.22f, 0.9f));
+
+            return 21;
+        }
+
+        private static int PushValentinesColors()
+        {
+            // Valentine's Day themed styling with vibrant pink/red theme
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.38f, 0.10f, 0.25f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.42f, 0.12f, 0.28f, 0.95f));
+            ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.38f, 0.10f, 0.25f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.38f, 0.06f, 0.18f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.52f, 0.08f, 0.26f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0.65f, 0.10f, 0.32f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.TitleBg, new Vector4(0.18f, 0.02f, 0.09f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, new Vector4(0.28f, 0.03f, 0.14f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.MenuBarBg, new Vector4(0.22f, 0.03f, 0.12f, 0.98f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0.18f, 0.02f, 0.09f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, new Vector4(0.70f, 0.10f, 0.35f, 0.85f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, new Vector4(0.85f, 0.15f, 0.42f, 0.95f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, new Vector4(1.0f, 0.20f, 0.50f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.80f, 0.12f, 0.40f, 0.7f));
+            ImGui.PushStyleColor(ImGuiCol.SeparatorHovered, new Vector4(0.95f, 0.18f, 0.48f, 0.85f));
+            ImGui.PushStyleColor(ImGuiCol.SeparatorActive, new Vector4(1.0f, 0.25f, 0.55f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.95f, 0.97f, 1.0f));
+            ImGui.PushStyleColor(ImGuiCol.TextDisabled, new Vector4(0.75f, 0.50f, 0.58f, 0.8f));
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.60f, 0.08f, 0.30f, 0.9f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.78f, 0.12f, 0.40f, 0.95f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.18f, 0.48f, 1.0f));
 
             return 21;
         }

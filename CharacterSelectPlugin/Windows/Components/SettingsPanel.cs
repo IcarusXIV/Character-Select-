@@ -711,6 +711,14 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             DrawTooltip("When enabled, the Quick Switch window will hide its title bar and frame, showing only the dropdowns and apply button.");
 
+            bool quickSwitchIgnoreEscape = plugin.Configuration.QuickSwitchIgnoreEscape;
+            if (ImGui.Checkbox("Quick Switch ignores Escape key", ref quickSwitchIgnoreEscape))
+            {
+                plugin.Configuration.QuickSwitchIgnoreEscape = quickSwitchIgnoreEscape;
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("When enabled, pressing Escape won't close the Quick Switch window.\nThis also prevents Quick Switch from stealing focus when opened.");
+
             bool enableAutoload = plugin.Configuration.EnableLastUsedCharacterAutoload;
             if (ImGui.Checkbox("Auto-Apply Last Used Character on Login", ref enableAutoload))
             {
@@ -1249,7 +1257,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             plugin.Configuration.CustomGenderNeutralTitle = customTitle;
                             plugin.Configuration.Save();
                         }
-                        DrawTooltip("Enter your preferred gender-neutral title (e.g., \"Warrior\", \"Dhampion\", \"Canadian\")");
+                        DrawTooltip("Enter your preferred gender-neutral title (e.g., \"Warrior\", \"Champion\", \"Canadian\")");
                     });
                 }
 
@@ -1409,6 +1417,20 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.Configuration.Save();
             }
             DrawTooltip("See other CS+ users' character names instead of their in-game names.\nOnly shows for users who have opted in to share their name.\nThis is independent of self name replacement - you can use one without the other.");
+
+            // Simple glow for others option (only show when shared name replacement is enabled)
+            if (plugin.Configuration.EnableSharedNameReplacement)
+            {
+                ImGui.Indent(20f);
+                bool simpleGlowOthers = plugin.Configuration.UseSimpleGlowForOthers;
+                if (ImGui.Checkbox("Use simple glow for others", ref simpleGlowOthers))
+                {
+                    plugin.Configuration.UseSimpleGlowForOthers = simpleGlowOthers;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Use a simple solid glow instead of animated wave effect for other players' nameplates.\n\nThis disables the periodic nameplate refresh that enables smooth animation.\nEnable this if you notice performance issues or crashes with many CS+ users nearby.");
+                ImGui.Unindent(20f);
+            }
 
             // Quick Reveal section
             ImGui.Spacing();
@@ -1621,50 +1643,87 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 var toRemove = new List<string>();
 
+                // Calculate button widths for layout
+                float editButtonWidth = ImGui.CalcTextSize("Edit").X + ImGui.GetStyle().FramePadding.X * 2 + 4;
+                float removeButtonWidth = ImGui.CalcTextSize("Remove").X + ImGui.GetStyle().FramePadding.X * 2 + 4;
+                float buttonSpacing = ImGui.GetStyle().ItemSpacing.X;
+                float totalButtonWidth = editButtonWidth + removeButtonWidth + buttonSpacing * 2;
+                float availableWidth = ImGui.GetContentRegionAvail().X;
+                float maxTextWidth = availableWidth - totalButtonWidth - 10; // 10px padding
+
                 foreach (var assignment in plugin.Configuration.CharacterAssignments.ToList())
                 {
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1f));
-                    ImGui.Text($"{assignment.Key}");
-                    ImGui.PopStyleColor();
+                    // Build the full display text
+                    string displayText;
+                    string fullTooltip;
 
-                    ImGui.SameLine();
-                    ImGui.Text("→");
-                    ImGui.SameLine();
-
-                    // Parse and display the assignment value
                     if (assignment.Value == "None")
                     {
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.6f, 0.6f, 1f)); // Reddish for None
-                        ImGui.Text("None (No Auto-Apply)");
-                        ImGui.PopStyleColor();
+                        displayText = $"{assignment.Key} → None (No Auto-Apply)";
+                        fullTooltip = displayText;
                     }
                     else
                     {
                         var (charName, designName) = ParseCharacterAssignmentValue(assignment.Value);
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
                         if (!string.IsNullOrEmpty(designName))
                         {
-                            ImGui.Text($"{charName}");
-                            ImGui.PopStyleColor();
-                            ImGui.SameLine();
-                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.7f, 0.9f, 1f));
-                            ImGui.Text($"({designName})");
+                            displayText = $"{assignment.Key} → {charName} ({designName})";
                         }
                         else
                         {
-                            ImGui.Text(charName);
+                            displayText = $"{assignment.Key} → {charName}";
                         }
-                        ImGui.PopStyleColor();
+                        fullTooltip = displayText;
                     }
 
-                    // Add edit and remove buttons
-                    ImGui.SameLine();
-                    
+                    // Truncate if too long
+                    string truncatedText = displayText;
+                    bool wasTruncated = false;
+                    if (ImGui.CalcTextSize(displayText).X > maxTextWidth)
+                    {
+                        wasTruncated = true;
+                        while (truncatedText.Length > 3 && ImGui.CalcTextSize(truncatedText + "...").X > maxTextWidth)
+                        {
+                            truncatedText = truncatedText.Substring(0, truncatedText.Length - 1);
+                        }
+                        truncatedText += "...";
+                    }
+
+                    // Draw coloured text segments
+                    var arrowIndex = truncatedText.IndexOf(" → ");
+                    if (arrowIndex > 0)
+                    {
+                        var inGamePart = truncatedText.Substring(0, arrowIndex);
+                        var restPart = truncatedText.Substring(arrowIndex);
+
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1f));
+                        ImGui.Text(inGamePart);
+                        ImGui.PopStyleColor();
+
+                        ImGui.SameLine(0, 0);
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1f));
+                        ImGui.Text(restPart);
+                        ImGui.PopStyleColor();
+                    }
+                    else
+                    {
+                        ImGui.Text(truncatedText);
+                    }
+
+                    // Show full text in tooltip if truncated
+                    if (wasTruncated && ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip(fullTooltip);
+                    }
+
+                    // Position buttons on the right
+                    ImGui.SameLine(availableWidth - totalButtonWidth + buttonSpacing);
+
                     // Edit button
                     ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.6f, 0.8f, 0.6f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.7f, 0.9f, 0.8f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.8f, 1.0f, 1.0f));
-                    
+
                     if (ImGui.SmallButton($"Edit##{assignment.Key}"))
                     {
                         editingAssignmentKey = assignment.Key;
@@ -1674,25 +1733,25 @@ namespace CharacterSelectPlugin.Windows.Components
                         editingAssignmentDesignBuffer = designName ?? "";
                     }
                     ImGui.PopStyleColor(3);
-                    
+
                     if (ImGui.IsItemHovered())
                     {
                         ImGui.SetTooltip($"Edit assignment for {assignment.Key}");
                     }
-                    
+
                     ImGui.SameLine();
-                    
+
                     // Remove button
                     ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.3f, 0.3f, 0.6f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.9f, 0.4f, 0.4f, 0.8f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(1.0f, 0.5f, 0.5f, 1.0f));
-                    
+
                     if (ImGui.SmallButton($"Remove##{assignment.Key}"))
                     {
                         toRemove.Add(assignment.Key);
                     }
                     ImGui.PopStyleColor(3);
-                    
+
                     if (ImGui.IsItemHovered())
                     {
                         ImGui.SetTooltip($"Remove assignment for {assignment.Key}");
@@ -2015,7 +2074,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Ranged Physical DPS
             (23u, "Bard", "Ranged"), (31u, "Machinist", "Ranged"), (38u, "Dancer", "Ranged"),
             // Caster DPS
-            (25u, "Black Mage", "Caster"), (27u, "Summoner", "Caster"), (35u, "Red Mage", "Caster"), (42u, "Pictomancer", "Caster"),
+            (25u, "Black Mage", "Caster"), (27u, "Summoner", "Caster"), (35u, "Red Mage", "Caster"), (36u, "Blue Mage", "Caster"), (42u, "Pictomancer", "Caster"),
             // Crafters
             (8u, "Carpenter", "Crafter"), (9u, "Blacksmith", "Crafter"), (10u, "Armorer", "Crafter"), (11u, "Goldsmith", "Crafter"),
             (12u, "Leatherworker", "Crafter"), (13u, "Weaver", "Crafter"), (14u, "Alchemist", "Crafter"), (15u, "Culinarian", "Crafter"),
@@ -2090,6 +2149,12 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.Text("Current Assignments:");
                 ImGui.Spacing();
 
+                // Calculate button width for layout
+                float removeButtonWidth = ImGui.CalcTextSize("Remove").X + ImGui.GetStyle().FramePadding.X * 2 + 4;
+                float buttonSpacing = ImGui.GetStyle().ItemSpacing.X;
+                float jobAvailableWidth = ImGui.GetContentRegionAvail().X;
+                float jobMaxTextWidth = jobAvailableWidth - removeButtonWidth - buttonSpacing - 10;
+
                 string? keyToRemove = null;
 
                 foreach (var kvp in plugin.Configuration.JobAssignments)
@@ -2124,18 +2189,52 @@ namespace CharacterSelectPlugin.Windows.Components
                         ? $"{charName} : {designName}"
                         : charName ?? "(Invalid)";
 
-                    // Display row
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.7f, 1.0f));
-                    ImGui.Text(displayKey);
-                    ImGui.PopStyleColor();
-                    ImGui.SameLine();
-                    ImGui.Text("→");
-                    ImGui.SameLine();
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1.0f));
-                    ImGui.Text(displayValue);
-                    ImGui.PopStyleColor();
+                    // Build full display text
+                    string fullText = $"{displayKey} → {displayValue}";
+                    string fullTooltip = fullText;
 
-                    ImGui.SameLine();
+                    // Truncate if too long
+                    string truncatedText = fullText;
+                    bool wasTruncated = false;
+                    if (ImGui.CalcTextSize(fullText).X > jobMaxTextWidth)
+                    {
+                        wasTruncated = true;
+                        while (truncatedText.Length > 3 && ImGui.CalcTextSize(truncatedText + "...").X > jobMaxTextWidth)
+                        {
+                            truncatedText = truncatedText.Substring(0, truncatedText.Length - 1);
+                        }
+                        truncatedText += "...";
+                    }
+
+                    // Draw coloured text segments
+                    var arrowIndex = truncatedText.IndexOf(" → ");
+                    if (arrowIndex > 0)
+                    {
+                        var keyPart = truncatedText.Substring(0, arrowIndex);
+                        var restPart = truncatedText.Substring(arrowIndex);
+
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.7f, 1.0f));
+                        ImGui.Text(keyPart);
+                        ImGui.PopStyleColor();
+
+                        ImGui.SameLine(0, 0);
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.9f, 0.7f, 1.0f));
+                        ImGui.Text(restPart);
+                        ImGui.PopStyleColor();
+                    }
+                    else
+                    {
+                        ImGui.Text(truncatedText);
+                    }
+
+                    // Show full text in tooltip if truncated
+                    if (wasTruncated && ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip(fullTooltip);
+                    }
+
+                    // Position button on the right
+                    ImGui.SameLine(jobAvailableWidth - removeButtonWidth);
                     ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.3f, 0.3f, 0.6f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.8f, 0.4f, 0.4f, 0.8f));
                     if (ImGui.SmallButton($"Remove##{kvp.Key}"))
@@ -3018,10 +3117,16 @@ namespace CharacterSelectPlugin.Windows.Components
                 DrawColorCategory(category, customTheme, totalScale);
             }
 
-            // Draw custom colour categories (Accents - Favourite icon, card glow, etc.)
+            // Draw custom colour categories that aren't already covered by ImGui categories
+            // (e.g., "Accents" - Favourite icon, card glow)
+            // Skip categories like "Backgrounds" that are already rendered above with their custom colours included
+            var imguiCategories = CustomThemeDefinitions.GetColorCategories().ToHashSet();
             foreach (var category in CustomThemeDefinitions.GetCustomColorCategories())
             {
-                DrawCustomColorCategory(category, customTheme, totalScale);
+                if (!imguiCategories.Contains(category))
+                {
+                    DrawCustomColorCategory(category, customTheme, totalScale);
+                }
             }
 
             // Draw Compact Quick Switch settings (as collapsible category)
@@ -3500,8 +3605,12 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.7f, 0.5f, 0.5f, 0.8f));
                 if (ImGui.SmallButton($"Reset {category}##Reset{category}"))
                 {
-                    // Remove all overrides for this category
+                    // Remove all overrides for this category (both ImGui and custom colours)
                     foreach (var option in CustomThemeDefinitions.GetColorOptionsForCategory(category))
+                    {
+                        customTheme.ColorOverrides.Remove(option.Key);
+                    }
+                    foreach (var option in CustomThemeDefinitions.GetCustomColorOptionsForCategory(category))
                     {
                         customTheme.ColorOverrides.Remove(option.Key);
                     }
@@ -3512,10 +3621,16 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 ImGui.Spacing();
 
-                // Draw color options for this category
+                // Draw ImGui color options for this category
                 foreach (var option in CustomThemeDefinitions.GetColorOptionsForCategory(category))
                 {
                     DrawColorOption(option, customTheme, totalScale);
+                }
+
+                // Draw custom color options for this category (e.g., Design Panel Background)
+                foreach (var option in CustomThemeDefinitions.GetCustomColorOptionsForCategory(category))
+                {
+                    DrawCustomColorOption(option, customTheme, totalScale);
                 }
 
                 ImGui.Unindent(10f);

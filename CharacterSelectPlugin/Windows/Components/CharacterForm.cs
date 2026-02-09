@@ -44,6 +44,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterMoodlePreset = "";
         private int? editedCharacterGearset = null;
         private bool editedCharacterExcludeFromNameSync = false;
+        private string editedCharacterAlias = "";
 
         // Honorific fields
         private string editedCharacterHonorificTitle = "";
@@ -51,6 +52,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterHonorificSuffix = "Suffix";
         private Vector3 editedCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
         private Vector3 editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+        private Vector3? editedCharacterHonorificColor3 = null;  // Second colour for two-colour gradient
         private int? editedCharacterHonorificGradientSet = null;
         private string? editedCharacterHonorificAnimationStyle = null;
 
@@ -60,6 +62,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string tempHonorificSuffix = "Suffix";
         private Vector3 tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
         private Vector3 tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+        private Vector3 tempHonorificColor3 = new Vector3(0.5f, 0.5f, 1.0f);  // Default light blue for contrast
         private int? tempHonorificGradientSet = null;
         private string? tempHonorificAnimationStyle = null;
         private string tempMoodlePreset = "";
@@ -252,6 +255,19 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.SetTooltip("When checked, Name Sync won't apply to this character.");
                 }
             } : null);
+
+            // Character Alias field - only show when Name Sync is enabled
+            if (plugin.Configuration.EnableNameReplacement || plugin.Configuration.EnableSharedNameReplacement)
+            {
+                string tempAlias = IsEditWindowOpen ? editedCharacterAlias : plugin.NewCharacterAlias;
+                DrawFormField("Character Alias", labelWidth, inputWidth, inputOffset, () =>
+                {
+                    ImGui.InputTextWithHint("##CharacterAlias", "Leave empty to use Character Name", ref tempAlias, 100);
+
+                    if (IsEditWindowOpen) editedCharacterAlias = tempAlias;
+                    else plugin.NewCharacterAlias = tempAlias;
+                }, "Optional alias used for Name Sync.\nIf set, this name is displayed instead of Character Name.\nLeave empty to use the Character Name above.", scale);
+            }
 
             ImGui.Separator();
 
@@ -736,7 +752,15 @@ namespace CharacterSelectPlugin.Windows.Components
             Vector3 displayColor;
             if (tempHonorificGradientSet.HasValue)
             {
-                displayColor = GetGradientPreviewColor(tempHonorificGradientSet.Value, animOffset);
+                if (tempHonorificGradientSet.Value == -1)
+                {
+                    // Two-colour gradient: alternate between the two colours
+                    displayColor = GetTwoColourPreviewColor(tempHonorificGlow, tempHonorificColor3, animOffset);
+                }
+                else
+                {
+                    displayColor = GetGradientPreviewColor(tempHonorificGradientSet.Value, animOffset);
+                }
             }
             else
             {
@@ -753,7 +777,12 @@ namespace CharacterSelectPlugin.Windows.Components
             if (ImGui.IsItemHovered())
             {
                 if (tempHonorificGradientSet.HasValue)
-                    ImGui.SetTooltip($"{GradientPresetNames[tempHonorificGradientSet.Value]} ({tempHonorificAnimationStyle ?? "Wave"})");
+                {
+                    if (tempHonorificGradientSet.Value == -1)
+                        ImGui.SetTooltip($"Two Colour Gradient ({tempHonorificAnimationStyle ?? "Wave"})");
+                    else
+                        ImGui.SetTooltip($"{GradientPresetNames[tempHonorificGradientSet.Value]} ({tempHonorificAnimationStyle ?? "Wave"})");
+                }
                 else
                     ImGui.SetTooltip("Glow (click for gradients)");
             }
@@ -761,7 +790,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // The popup with gradient options
             if (ImGui.BeginPopup("##GlowPickerPopup"))
             {
-                float popupWidth = 200 * scale;
+                float popupWidth = 220 * scale;
 
                 // Default Glow option with color picker
                 ImGui.Text("Solid Glow:");
@@ -782,50 +811,99 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
 
                 ImGui.Separator();
-                ImGui.Text("Animated Gradients:");
 
                 // Gate animated gradients behind supporter acknowledgment
                 if (plugin.Configuration.HasAcknowledgedHonorificSupport)
                 {
-                    // Tab bar for animation styles
-                    if (ImGui.BeginTabBar("##GradAnimTabs"))
+                    // Nested combo for gradient selection (like Honorific)
+                    string gradientLabel = tempHonorificGradientSet.HasValue
+                        ? (tempHonorificGradientSet.Value == -1 ? "Two Colour Gradient" : GradientPresetNames[tempHonorificGradientSet.Value])
+                        : "Select Gradient...";
+
+                    ImGui.SetNextItemWidth(popupWidth);
+                    if (ImGui.BeginCombo("##GradientSelect", gradientLabel, ImGuiComboFlags.HeightLargest))
                     {
-                        foreach (var animStyle in new[] { "Wave", "Pulse", "Static" })
+                        // Tab bar for animation styles
+                        if (ImGui.BeginTabBar("##GradAnimTabs"))
                         {
-                            if (ImGui.BeginTabItem(animStyle))
+                            foreach (var animStyle in new[] { "Wave", "Pulse", "Static" })
                             {
-                                // Compact child region for presets
-                                float childHeight = Math.Min(180 * scale, GradientPresetNames.Length * ImGui.GetTextLineHeightWithSpacing());
-                                if (ImGui.BeginChild($"##Presets{animStyle}", new Vector2(popupWidth, childHeight)))
+                                if (ImGui.BeginTabItem(animStyle))
                                 {
-                                    var drawList = ImGui.GetWindowDrawList();
-
-                                    for (int i = 0; i < GradientPresetNames.Length; i++)
+                                    // Child region for scrolling
+                                    float childHeight = Math.Min(180 * scale, (GradientPresetNames.Length + 1) * ImGui.GetTextLineHeightWithSpacing());
+                                    if (ImGui.BeginChild($"##Presets{animStyle}", new Vector2(popupWidth - 16 * scale, childHeight)))
                                     {
-                                        bool isSelected = tempHonorificGradientSet == i && tempHonorificAnimationStyle == animStyle;
+                                        var drawList = ImGui.GetWindowDrawList();
 
-                                        // Draw invisible selectable
-                                        var selectableSize = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeightWithSpacing());
-                                        var cursorPos = ImGui.GetCursorScreenPos();
-
-                                        if (ImGui.Selectable($"##Preset{animStyle}{i}", isSelected, ImGuiSelectableFlags.None, selectableSize))
+                                        // Two Colour Gradient option at top
+                                        bool isTwoColourSelected = tempHonorificGradientSet == -1 && tempHonorificAnimationStyle == animStyle;
+                                        if (ImGui.Selectable("Two Colour Gradient", isTwoColourSelected, ImGuiSelectableFlags.DontClosePopups))
                                         {
-                                            tempHonorificGradientSet = i;
+                                            tempHonorificGradientSet = -1;
                                             tempHonorificAnimationStyle = animStyle;
                                             modified = true;
-                                            ImGui.CloseCurrentPopup();
+                                            ImGui.CloseCurrentPopup();  // Close inner combo only
                                         }
 
-                                        // Draw the preset name with animated gradient effect on top
-                                        var textPos = cursorPos + ImGui.GetStyle().FramePadding;
-                                        DrawGradientTextForPicker(drawList, textPos, GradientPresetNames[i], i, animStyle);
+                                        // Preset gradients
+                                        for (int i = 0; i < GradientPresetNames.Length; i++)
+                                        {
+                                            bool isSelected = tempHonorificGradientSet == i && tempHonorificAnimationStyle == animStyle;
+
+                                            var selectableSize = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeightWithSpacing());
+                                            var cursorPos = ImGui.GetCursorScreenPos();
+
+                                            if (ImGui.Selectable($"##Preset{animStyle}{i}", isSelected, ImGuiSelectableFlags.DontClosePopups, selectableSize))
+                                            {
+                                                tempHonorificGradientSet = i;
+                                                tempHonorificAnimationStyle = animStyle;
+                                                modified = true;
+                                                ImGui.CloseCurrentPopup();
+                                            }
+
+                                            // Draw the preset name with animated gradient effect
+                                            var textPos = cursorPos + ImGui.GetStyle().FramePadding;
+                                            DrawGradientTextForPicker(drawList, textPos, GradientPresetNames[i], i, animStyle);
+                                        }
                                     }
+                                    ImGui.EndChild();
+                                    ImGui.EndTabItem();
                                 }
-                                ImGui.EndChild();
-                                ImGui.EndTabItem();
                             }
+                            ImGui.EndTabBar();
                         }
-                        ImGui.EndTabBar();
+                        ImGui.EndCombo();
+                    }
+
+                    // Show animated preview of selected gradient (below the combo, still in popup)
+                    if (tempHonorificGradientSet.HasValue)
+                    {
+                        var previewText = tempHonorificGradientSet.Value == -1
+                            ? "Two Colour Gradient"
+                            : GradientPresetNames[tempHonorificGradientSet.Value];
+
+                        var previewPos = ImGui.GetCursorScreenPos();
+                        var drawList = ImGui.GetWindowDrawList();
+
+                        // Reserve space and draw preview
+                        ImGui.Dummy(new Vector2(popupWidth, ImGui.GetTextLineHeightWithSpacing()));
+                        DrawGradientTextForPicker(drawList, previewPos, previewText,
+                            tempHonorificGradientSet.Value, tempHonorificAnimationStyle ?? "Wave");
+                    }
+
+                    // Two colour pickers (shown below combo when two-colour is selected)
+                    if (tempHonorificGradientSet == -1)
+                    {
+                        if (ImGui.ColorEdit3("##TwoColour1", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs))
+                        {
+                            modified = true;
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.ColorEdit3("Colours##TwoColour2", ref tempHonorificColor3, ImGuiColorEditFlags.NoInputs))
+                        {
+                            modified = true;
+                        }
                     }
                 }
                 else
@@ -843,6 +921,16 @@ namespace CharacterSelectPlugin.Windows.Components
         }
 
         /// <summary>
+        /// Gets a preview colour for the two-colour gradient (alternates between the two)
+        /// </summary>
+        private Vector3 GetTwoColourPreviewColor(Vector3 color1, Vector3 color2, long animOffset)
+        {
+            // Simple wave between the two colours
+            float t = (float)(Math.Sin(animOffset / 500.0) * 0.5 + 0.5);
+            return Vector3.Lerp(color1, color2, t);
+        }
+
+        /// <summary>
         /// Draws text with animated gradient for the picker preview
         /// </summary>
         private void DrawGradientTextForPicker(ImDrawListPtr drawList, Vector2 pos, string text, int gradientSet, string animStyle)
@@ -855,7 +943,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 char c = text[i];
                 string charStr = c.ToString();
 
-                Vector3 charColor = GetGradientColor(gradientSet, i, animOffset, 5, animStyle);
+                // For two-colour gradient, pass the current colours
+                Vector3 charColor = GetGradientColor(gradientSet, i, animOffset, 5, animStyle, text.Length,
+                    gradientSet == -1 ? tempHonorificGlow : null,
+                    gradientSet == -1 ? tempHonorificColor3 : null);
                 uint colorU32 = ImGui.ColorConvertFloat4ToU32(new Vector4(charColor, 1f));
 
                 drawList.AddText(new Vector2(charX, pos.Y), colorU32, charStr);
@@ -1421,13 +1512,23 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 var c = tempHonorificColor;
                 var g = tempHonorificGlow;
+                var c3 = tempHonorificColor3;
                 string colorHex = $"#{(int)(c.X * 255):X2}{(int)(c.Y * 255):X2}{(int)(c.Z * 255):X2}";
                 string glowHex = $"#{(int)(g.X * 255):X2}{(int)(g.Y * 255):X2}{(int)(g.Z * 255):X2}";
+                string color3Hex = $"#{(int)(c3.X * 255):X2}{(int)(c3.Y * 255):X2}{(int)(c3.Z * 255):X2}";
 
                 string gradientPart = "";
                 if (tempHonorificGradientSet.HasValue && !string.IsNullOrEmpty(tempHonorificAnimationStyle))
                 {
-                    gradientPart = $" | +{tempHonorificGradientSet.Value}/{tempHonorificAnimationStyle}";
+                    if (tempHonorificGradientSet.Value == -1)
+                    {
+                        // Two-colour gradient: include Color3 in the command
+                        gradientPart = $" | {color3Hex} | +-1/{tempHonorificAnimationStyle}";
+                    }
+                    else
+                    {
+                        gradientPart = $" | +{tempHonorificGradientSet.Value}/{tempHonorificAnimationStyle}";
+                    }
                 }
 
                 string setLine = $"/honorific force set {tempHonorificTitle} | {tempHonorificPrefix} | {colorHex} | {glowHex}{gradientPart} | silent";
@@ -1528,6 +1629,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 editedCharacterHonorificSuffix = tempHonorificSuffix;
                 editedCharacterHonorificColor = tempHonorificColor;
                 editedCharacterHonorificGlow = tempHonorificGlow;
+                editedCharacterHonorificColor3 = tempHonorificGradientSet == -1 ? tempHonorificColor3 : null;
                 editedCharacterHonorificGradientSet = tempHonorificGradientSet;
                 editedCharacterHonorificAnimationStyle = tempHonorificAnimationStyle;
             }
@@ -1538,6 +1640,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.NewCharacterHonorificSuffix = tempHonorificSuffix;
                 plugin.NewCharacterHonorificColor = tempHonorificColor;
                 plugin.NewCharacterHonorificGlow = tempHonorificGlow;
+                plugin.NewCharacterHonorificColor3 = tempHonorificGradientSet == -1 ? tempHonorificColor3 : null;
                 plugin.NewCharacterHonorificGradientSet = tempHonorificGradientSet;
                 plugin.NewCharacterHonorificAnimationStyle = tempHonorificAnimationStyle;
             }
@@ -1572,8 +1675,11 @@ namespace CharacterSelectPlugin.Windows.Components
             if (tempHonorificGradientSet.HasValue)
             {
                 // For gradients, build per-character SeString with animated colors
+                // For two-colour gradient (-1), pass both colours
                 seString = BuildGradientSeString(tempHonorificTitle, tempHonorificGradientSet.Value,
-                    tempHonorificAnimationStyle ?? "Wave", tempHonorificColor);
+                    tempHonorificAnimationStyle ?? "Wave", tempHonorificColor,
+                    tempHonorificGradientSet.Value == -1 ? tempHonorificGlow : null,
+                    tempHonorificGradientSet.Value == -1 ? tempHonorificColor3 : null);
             }
             else
             {
@@ -1620,7 +1726,8 @@ namespace CharacterSelectPlugin.Windows.Components
         /// <summary>
         /// Builds an SeString with animated gradient glow effect
         /// </summary>
-        private SeString BuildGradientSeString(string text, int gradientSet, string animStyle, Vector3 textColor)
+        private SeString BuildGradientSeString(string text, int gradientSet, string animStyle, Vector3 textColor,
+            Vector3? twoColourFirst = null, Vector3? twoColourSecond = null)
         {
             var builder = new SeStringBuilder();
             long animOffset = AnimationTimer.ElapsedMilliseconds;
@@ -1631,7 +1738,7 @@ namespace CharacterSelectPlugin.Windows.Components
             for (int i = 0; i < text.Length; i++)
             {
                 // Calculate gradient color for this character
-                Vector3 glowColor = GetGradientColor(gradientSet, i, animOffset, 5, animStyle);
+                Vector3 glowColor = GetGradientColor(gradientSet, i, animOffset, 5, animStyle, text.Length, twoColourFirst, twoColourSecond);
 
                 // Push edge color for this character
                 builder.PushEdgeColorRgba(new Vector4(glowColor, 1f));
@@ -1647,8 +1754,16 @@ namespace CharacterSelectPlugin.Windows.Components
         /// <summary>
         /// Gets a color from the gradient using Honorific's exact algorithm
         /// </summary>
-        private Vector3 GetGradientColor(int gradientSet, int charIndex, long rawMilliseconds, int throttle, string animStyle)
+        private Vector3 GetGradientColor(int gradientSet, int charIndex, long rawMilliseconds, int throttle, string animStyle,
+            int textLength = 16, Vector3? twoColourFirst = null, Vector3? twoColourSecond = null)
         {
+            // Handle two-colour gradient (gradientSet == -1)
+            if (gradientSet == -1 && twoColourFirst.HasValue && twoColourSecond.HasValue)
+            {
+                return GetTwoColourGradientColor(twoColourFirst.Value, twoColourSecond.Value,
+                    charIndex, rawMilliseconds, throttle, animStyle, textLength);
+            }
+
             if (gradientSet < 0 || gradientSet >= DecodedGradients.Length)
                 return new Vector3(1f, 1f, 1f);
 
@@ -1667,7 +1782,7 @@ namespace CharacterSelectPlugin.Windows.Components
             else if (animStyle == "Static")
             {
                 // Static: spread gradient across text length, no animation
-                index = (int)Math.Round(charIndex / (float)Math.Max(1, 16) * colorCount) % colorCount;
+                index = (int)Math.Round(charIndex / (float)Math.Max(1, textLength) * colorCount) % colorCount;
             }
             else // Wave
             {
@@ -1680,6 +1795,49 @@ namespace CharacterSelectPlugin.Windows.Components
                 colors[index, 1] / 255f,
                 colors[index, 2] / 255f
             );
+        }
+
+        /// <summary>
+        /// Gets a color for two-colour gradient animation (matching Honorific's GradientSystem.GetDualColourStyle)
+        /// </summary>
+        private Vector3 GetTwoColourGradientColor(Vector3 color1, Vector3 color2, int charIndex,
+            long rawMilliseconds, int throttle, string animStyle, int textLength)
+        {
+            // Honorific generates a gradient: color1 -> fade -> color2 -> fade -> color1
+            // We simulate this with 64 steps like Honorific does
+            const int GradientSteps = 64;
+
+            var animationOffset = rawMilliseconds / 15;
+
+            int index;
+            if (animStyle == "Pulse")
+            {
+                // Pulse: whole text uses same color
+                index = (int)((animationOffset / throttle) % GradientSteps);
+            }
+            else if (animStyle == "Static")
+            {
+                // Static: spread gradient across text, no animation
+                index = (int)Math.Round(charIndex / (float)Math.Max(1, textLength) * GradientSteps) % GradientSteps;
+            }
+            else // Wave
+            {
+                // Wave: position based on character index + time
+                index = (int)((animationOffset / throttle + charIndex) % GradientSteps);
+            }
+
+            // Calculate interpolation: 0->32 goes color1->color2, 32->64 goes color2->color1
+            float t;
+            if (index < GradientSteps / 2)
+            {
+                t = index / (float)(GradientSteps / 2);  // 0 to 1
+            }
+            else
+            {
+                t = 1f - ((index - GradientSteps / 2) / (float)(GradientSteps / 2));  // 1 to 0
+            }
+
+            return Vector3.Lerp(color1, color2, t);
         }
 
         /// <summary>
@@ -1812,11 +1970,21 @@ namespace CharacterSelectPlugin.Windows.Components
                 string glowHex = $"#{(int)(honorificGlow.X * 255):X2}{(int)(honorificGlow.Y * 255):X2}{(int)(honorificGlow.Z * 255):X2}";
                 int? gradientSet = IsEditWindowOpen ? editedCharacterHonorificGradientSet : plugin.NewCharacterHonorificGradientSet;
                 string? animStyle = IsEditWindowOpen ? editedCharacterHonorificAnimationStyle : plugin.NewCharacterHonorificAnimationStyle;
+                Vector3? color3 = IsEditWindowOpen ? editedCharacterHonorificColor3 : plugin.NewCharacterHonorificColor3;
 
                 string gradientPart = "";
                 if (gradientSet.HasValue && !string.IsNullOrEmpty(animStyle))
                 {
-                    gradientPart = $" | +{gradientSet.Value}/{animStyle}";
+                    if (gradientSet.Value == -1 && color3.HasValue)
+                    {
+                        // Two-colour gradient: include Color3 in the command
+                        string color3Hex = $"#{(int)(color3.Value.X * 255):X2}{(int)(color3.Value.Y * 255):X2}{(int)(color3.Value.Z * 255):X2}";
+                        gradientPart = $" | {color3Hex} | +-1/{animStyle}";
+                    }
+                    else
+                    {
+                        gradientPart = $" | +{gradientSet.Value}/{animStyle}";
+                    }
                 }
 
                 macro += $"/honorific force set {honorificTitle} | {honorificPrefix} | {colorHex} | {glowHex}{gradientPart} | silent\n";
@@ -1843,6 +2011,7 @@ namespace CharacterSelectPlugin.Windows.Components
             string honorPref = IsEditWindowOpen ? editedCharacterHonorificPrefix : plugin.NewCharacterHonorificPrefix;
             Vector3 honorColor = IsEditWindowOpen ? editedCharacterHonorificColor : plugin.NewCharacterHonorificColor;
             Vector3 honorGlow = IsEditWindowOpen ? editedCharacterHonorificGlow : plugin.NewCharacterHonorificGlow;
+            Vector3? honorColor3 = IsEditWindowOpen ? editedCharacterHonorificColor3 : plugin.NewCharacterHonorificColor3;
             int? honorGradientSet = IsEditWindowOpen ? editedCharacterHonorificGradientSet : plugin.NewCharacterHonorificGradientSet;
             string? honorAnimStyle = IsEditWindowOpen ? editedCharacterHonorificAnimationStyle : plugin.NewCharacterHonorificAnimationStyle;
             string moodlePreset = IsEditWindowOpen ? editedCharacterMoodlePreset : plugin.NewCharacterMoodlePreset;
@@ -1880,7 +2049,16 @@ namespace CharacterSelectPlugin.Windows.Components
                 string gradientPart = "";
                 if (honorGradientSet.HasValue && !string.IsNullOrEmpty(honorAnimStyle))
                 {
-                    gradientPart = $" | +{honorGradientSet.Value}/{honorAnimStyle}";
+                    if (honorGradientSet.Value == -1 && honorColor3.HasValue)
+                    {
+                        // Two-colour gradient: include Color3 in the command
+                        var color3Hex = $"#{(int)(honorColor3.Value.X * 255):X2}{(int)(honorColor3.Value.Y * 255):X2}{(int)(honorColor3.Value.Z * 255):X2}";
+                        gradientPart = $" | {color3Hex} | +-1/{honorAnimStyle}";
+                    }
+                    else
+                    {
+                        gradientPart = $" | +{honorGradientSet.Value}/{honorAnimStyle}";
+                    }
                 }
 
                 sb.AppendLine($"/honorific force set {honorTitle} | {honorPref} | {colorHex} | {glowHex}{gradientPart} | silent");
@@ -1925,6 +2103,7 @@ namespace CharacterSelectPlugin.Windows.Components
         public void ResetFields()
         {
             plugin.NewCharacterName = "";
+            plugin.NewCharacterAlias = "";
             plugin.NewCharacterColor = new Vector3(1.0f, 1.0f, 1.0f);
             plugin.NewPenumbraCollection = "";
             plugin.NewGlamourerDesign = "";
@@ -1937,6 +2116,7 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.NewCharacterHonorificSuffix = "Suffix";
             plugin.NewCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             plugin.NewCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            plugin.NewCharacterHonorificColor3 = null;
             plugin.NewCharacterHonorificGradientSet = null;
             plugin.NewCharacterHonorificAnimationStyle = null;
             plugin.NewCharacterMoodlePreset = "";
@@ -1948,6 +2128,7 @@ namespace CharacterSelectPlugin.Windows.Components
             tempHonorificSuffix = "Suffix";
             tempHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             tempHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            tempHonorificColor3 = new Vector3(0.5f, 0.5f, 1.0f);
             tempHonorificGradientSet = null;
             tempHonorificAnimationStyle = null;
             tempMoodlePreset = "";
@@ -1964,11 +2145,14 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterAutomation = "";
             editedCharacterMoodlePreset = "";
             editedCharacterGearset = null;
+            editedCharacterExcludeFromNameSync = false;
+            editedCharacterAlias = "";
             editedCharacterHonorificTitle = "";
             editedCharacterHonorificPrefix = "Prefix";
             editedCharacterHonorificSuffix = "Suffix";
             editedCharacterHonorificColor = new Vector3(1.0f, 1.0f, 1.0f);
             editedCharacterHonorificGlow = new Vector3(1.0f, 1.0f, 1.0f);
+            editedCharacterHonorificColor3 = null;
             editedCharacterHonorificGradientSet = null;
             editedCharacterHonorificAnimationStyle = null;
 
@@ -2002,11 +2186,13 @@ namespace CharacterSelectPlugin.Windows.Components
             character.HonorificSuffix = editedCharacterHonorificSuffix;
             character.HonorificColor = editedCharacterHonorificColor;
             character.HonorificGlow = editedCharacterHonorificGlow;
+            character.HonorificColor3 = editedCharacterHonorificColor3;
             character.HonorificGradientSet = editedCharacterHonorificGradientSet;
             character.HonorificAnimationStyle = editedCharacterHonorificAnimationStyle;
             character.MoodlePreset = editedCharacterMoodlePreset;
             character.AssignedGearset = editedCharacterGearset;
             character.ExcludeFromNameSync = editedCharacterExcludeFromNameSync;
+            character.Alias = string.IsNullOrWhiteSpace(editedCharacterAlias) ? null : editedCharacterAlias;
 
             character.Macros = isAdvancedModeCharacter ? advancedCharacterMacroText : editedCharacterMacros;
 
@@ -2102,11 +2288,13 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterHonorificSuffix = character.HonorificSuffix ?? "Suffix";
             editedCharacterHonorificColor = character.HonorificColor;
             editedCharacterHonorificGlow = character.HonorificGlow;
+            editedCharacterHonorificColor3 = character.HonorificColor3;
             editedCharacterHonorificGradientSet = character.HonorificGradientSet;
             editedCharacterHonorificAnimationStyle = character.HonorificAnimationStyle;
             editedCharacterMoodlePreset = character.MoodlePreset ?? "";
             editedCharacterGearset = character.AssignedGearset;
             editedCharacterExcludeFromNameSync = character.ExcludeFromNameSync;
+            editedCharacterAlias = character.Alias ?? "";
 
             string safeAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";
             editedCharacterAutomation = safeAutomation;
@@ -2117,6 +2305,7 @@ namespace CharacterSelectPlugin.Windows.Components
             tempHonorificSuffix = editedCharacterHonorificSuffix;
             tempHonorificColor = editedCharacterHonorificColor;
             tempHonorificGlow = editedCharacterHonorificGlow;
+            tempHonorificColor3 = editedCharacterHonorificColor3 ?? new Vector3(0.5f, 0.5f, 1.0f);
             tempHonorificGradientSet = editedCharacterHonorificGradientSet;
             tempHonorificAnimationStyle = editedCharacterHonorificAnimationStyle;
             tempMoodlePreset = editedCharacterMoodlePreset;

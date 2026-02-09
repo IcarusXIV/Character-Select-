@@ -229,6 +229,13 @@ namespace CharacterSelectPlugin.Windows.Styles
                 new Vector4(0.4f, 0.6f, 1.0f, 0.6f),
                 "Glow effect around selected/hovered character cards"
             ),
+            new CustomColorOption(
+                "custom.designPanelBg",
+                "Design Panel Background",
+                "Backgrounds",
+                new Vector4(0.08f, 0.08f, 0.10f, 0.98f),
+                "Background colour of the Design Panel on the right side"
+            ),
         };
 
         #endregion

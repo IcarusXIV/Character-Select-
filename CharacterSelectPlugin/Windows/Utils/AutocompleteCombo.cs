@@ -21,7 +21,8 @@ namespace CharacterSelectPlugin.Windows.Utils
             float width,
             string placeholder = "Select...",
             int maxVisibleItems = 8,
-            string? currentActive = null)
+            string? currentActive = null,
+            bool allowCustomInput = true)
         {
             bool valueChanged = false;
             var scale = ImGuiHelpers.GlobalScale;
@@ -55,10 +56,22 @@ namespace CharacterSelectPlugin.Windows.Utils
                 ImGui.PushStyleColor(ImGuiCol.Header, new Vector4(0.26f, 0.59f, 0.98f, 0.4f));
                 ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new Vector4(0.26f, 0.59f, 0.98f, 0.6f));
 
-                // Filter input at top of dropdown
+                // Filter/custom input at top of dropdown
                 ImGui.SetNextItemWidth(-1);
                 var filterText = _filterTexts[id];
-                if (ImGui.InputTextWithHint($"##{id}_filter", "Search...", ref filterText, 256))
+                if (ImGui.InputTextWithHint($"##{id}_filter", allowCustomInput ? "Search or type custom..." : "Search...", ref filterText, 256,
+                    allowCustomInput ? ImGuiInputTextFlags.EnterReturnsTrue : ImGuiInputTextFlags.None))
+                {
+                    // If Enter pressed and custom input allowed, use the typed value
+                    if (allowCustomInput && !string.IsNullOrWhiteSpace(filterText))
+                    {
+                        value = filterText;
+                        valueChanged = true;
+                        _filterTexts[id] = "";
+                        ImGui.CloseCurrentPopup();
+                    }
+                }
+                if (filterText != _filterTexts[id])
                 {
                     _filterTexts[id] = filterText;
                 }
@@ -73,6 +86,23 @@ namespace CharacterSelectPlugin.Windows.Utils
                 ImGui.Separator();
                 ImGui.Spacing();
 
+                // Show hint for custom input when filter doesn't match any options
+                var searchTerm = filterText.ToLowerInvariant().Trim();
+                var hasExactMatch = options.Any(o => o.Equals(filterText, StringComparison.OrdinalIgnoreCase));
+                if (allowCustomInput && !string.IsNullOrEmpty(filterText) && !hasExactMatch)
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.8f, 0.5f, 1.0f));
+                    if (ImGui.Selectable($"Use: \"{filterText}\" (Enter)", false))
+                    {
+                        value = filterText;
+                        valueChanged = true;
+                        _filterTexts[id] = "";
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.PopStyleColor();
+                    ImGui.Separator();
+                }
+
                 // "None" option to clear selection
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.55f, 1.0f));
                 if (ImGui.Selectable("(None)", string.IsNullOrEmpty(value)))
@@ -86,8 +116,7 @@ namespace CharacterSelectPlugin.Windows.Utils
 
                 ImGui.Separator();
 
-                // Filter options
-                var searchTerm = filterText.ToLowerInvariant();
+                // Filter options (searchTerm defined above)
                 var filteredOptions = string.IsNullOrEmpty(searchTerm)
                     ? options.ToList()
                     : options.Where(o => o.ToLowerInvariant().Contains(searchTerm)).ToList();

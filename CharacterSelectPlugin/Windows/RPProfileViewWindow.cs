@@ -2798,13 +2798,18 @@ namespace CharacterSelectPlugin.Windows
             var namePos = ImGui.GetCursorScreenPos();
             var color = ResolveNameplateColor();
 
+            // Use Alias if set, otherwise fall back to Name, finally to rp.CharacterName
+            var displayName = showingExternal
+                ? (rp.CharacterName ?? "Unknown")
+                : (!string.IsNullOrWhiteSpace(character?.Alias) ? character.Alias : character?.Name ?? rp.CharacterName ?? "Unknown");
+
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.95f, 0.8f, 1f));
-            ImGui.Text(rp.CharacterName ?? "Unknown");
+            ImGui.Text(displayName);
             ImGui.PopStyleColor();
 
-            var nameSize = ImGui.CalcTextSize(rp.CharacterName ?? "Unknown");
+            var nameSize = ImGui.CalcTextSize(displayName);
             var glowColor = new Vector4(color.X, color.Y, color.Z, 0.3f);
-            dl.AddText(namePos - new Vector2(1 * scale, 1 * scale), ImGui.ColorConvertFloat4ToU32(glowColor), rp.CharacterName ?? "Unknown");
+            dl.AddText(namePos - new Vector2(1 * scale, 1 * scale), ImGui.ColorConvertFloat4ToU32(glowColor), displayName);
 
             if (!string.IsNullOrEmpty(rp.Pronouns))
             {
@@ -3879,7 +3884,10 @@ namespace CharacterSelectPlugin.Windows
             ImGui.SetCursorPos(new Vector2(imageX + imageSize + 22 * scale, navHeight + bannerHeight + 5 * scale));
             
             // Name with pronouns on same line
-            var characterName = showingExternal ? (rp.CharacterName ?? "Unknown") : (character?.Name ?? "Unknown");
+            // Use Alias if set, otherwise fall back to Name
+            var characterName = showingExternal
+                ? (rp.CharacterName ?? "Unknown")
+                : (!string.IsNullOrWhiteSpace(character?.Alias) ? character.Alias : character?.Name ?? "Unknown");
             
             // Draw name with larger font and pronouns with regular font
             using (Plugin.Instance?.NameFont?.Push())
@@ -4035,8 +4043,8 @@ namespace CharacterSelectPlugin.Windows
             else
             {
                 // For Overview tab, use existing calculation
-                var estimatedMainHeight = 3500f * scale; // Increased for all the new sections
-                var estimatedSidebarHeight = 1500f * scale; // Will be calculated based on actual content
+                var estimatedMainHeight = 3500f * scale;
+                var estimatedSidebarHeight = 1500f * scale;
                 totalContentHeight = Math.Max(estimatedMainHeight, estimatedSidebarHeight) + 40 * scale;
             }
             
@@ -4122,7 +4130,7 @@ namespace CharacterSelectPlugin.Windows
                 var mainContentX = contentMargin + 12 * scale;
                 var mainContentMaxX = contentMargin + mainColumnWidth - 24 * scale;
                 ImGui.SetCursorPos(new Vector2(mainContentX, 18 * scale));
-                ImGui.BeginChild("##MainContentInner", new Vector2(mainColumnWidth - 24 * scale, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar);
+                ImGui.BeginChild("##MainContentInner", new Vector2(mainColumnWidth - 24 * scale, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(32 * scale, 24 * scale));
                 DrawMainContentCards(rp, scale);
                 ImGui.PopStyleVar();
@@ -4131,7 +4139,7 @@ namespace CharacterSelectPlugin.Windows
                 // Sidebar content - positioned properly within its area
                 var sidebarContentX = contentMargin + mainColumnWidth + columnSpacing + 12 * scale;
                 ImGui.SetCursorPos(new Vector2(sidebarContentX, 18 * scale));
-                ImGui.BeginChild("##SidebarInner", new Vector2(sidebarWidth - 24 * scale, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar);
+                ImGui.BeginChild("##SidebarInner", new Vector2(sidebarWidth - 24 * scale, totalContentHeight), false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(24 * scale, 24 * scale));
                 DrawSidebarCards(rp, scale);
                 ImGui.PopStyleVar();
@@ -4158,7 +4166,10 @@ namespace CharacterSelectPlugin.Windows
         
         private void DrawMainContentCards(RPProfile rp, float scale)
         {
-            var characterName = showingExternal ? rp.CharacterName : character?.Name;
+            // Use Alias if set, otherwise fall back to Name
+            var characterName = showingExternal
+                ? rp.CharacterName
+                : (!string.IsNullOrWhiteSpace(character?.Alias) ? character.Alias : character?.Name);
             
             var drawList = ImGui.GetWindowDrawList();
             var headerPos = ImGui.GetCursorScreenPos();
@@ -4275,7 +4286,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Dummy(new Vector2(0, 24 * scale));
                 
                 // Additional Details - only show if data exists
-                if (!string.IsNullOrEmpty(rp.Relationship) || !string.IsNullOrEmpty(rp.Occupation))
+                if (!string.IsNullOrEmpty(rp.Relationship) || !string.IsNullOrEmpty(rp.Occupation) || !string.IsNullOrEmpty(rp.AdditionalDetailsCustom))
                 {
                     DrawCard("Additional Details", null, () =>
                     {
@@ -4365,24 +4376,22 @@ namespace CharacterSelectPlugin.Windows
         {
             var profileColor = ResolveNameplateColor();
             var cardId = $"##{title}Card";
-            
+
             // Calculate base card height dynamically
-            float headerHeight = 60 * scale; // Height for title/subtitle area
-            float minContentHeight = isMainContent ? 120 * scale : 80 * scale; // Minimum content area
-            float padding = 20 * scale; // Top and bottom padding
-            
-            // Set appropriate base heights based on sidebar vs main content
+            float headerHeight = 60 * scale;
+            float minContentHeight = isMainContent ? 120 * scale : 80 * scale;
+            float padding = 20 * scale;
+
             float baseCardHeight;
-            if (isMainContent) 
+            if (isMainContent)
             {
-                baseCardHeight = 200 * scale; // Base height for main content (left side)
+                baseCardHeight = 200 * scale;
             }
-            else 
+            else
             {
-                // Right sidebar - different bases for different types
                 if (title == "Quick Info")
                     baseCardHeight = 250 * scale;
-                else if (title == "Additional Details") 
+                else if (title == "Additional Details")
                     baseCardHeight = 180 * scale;
                 else if (title == "Key Traits")
                     baseCardHeight = 200 * scale;
@@ -4391,59 +4400,73 @@ namespace CharacterSelectPlugin.Windows
                 else if (title == "External Links")
                     baseCardHeight = 120 * scale;
                 else
-                    baseCardHeight = 150 * scale; // Default for new content boxes
+                    baseCardHeight = 150 * scale;
             }
-            
-            // Calculate actual content height by rendering content in a temporary invisible area
+
+            // Measure content height using a temporary child window that matches the card's
+            // exact layout (same padding, border) so GetContentRegionAvail() returns the
+            // correct width and pills/text wrap identically to the real card
             float actualContentHeight = 0f;
             var tempCursor = ImGui.GetCursorPos();
-            var availableWidth = ImGui.GetContentRegionAvail().X - (48 * scale); // Account for card padding
-            
-            // Measure content height by rendering it invisibly
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0, 0, 0, 0)); // Invisible
-            ImGui.BeginGroup();
-            ImGui.PushTextWrapPos(availableWidth);
-            
+
+            // Invisible styles
+            ImGui.PushStyleColor(ImGuiCol.Text, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.Border, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, Vector4.Zero);
+
+            // Match the card's padding and border so content width is identical
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(24 * scale, 20 * scale));
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, 1.0f);
+
+            ImGui.BeginChild("##measure" + cardId, new Vector2(0, 5000 * scale), true,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoMouseInputs | ImGuiWindowFlags.NoNav);
+
+            // Clip drawList inside measurement child to hide any drawList rendering
+            var measureDl = ImGui.GetWindowDrawList();
+            measureDl.PushClipRect(Vector2.Zero, Vector2.Zero);
+
             var startY = ImGui.GetCursorPosY();
             content();
-            var endY = ImGui.GetCursorPosY();
-            actualContentHeight = endY - startY;
-            
-            ImGui.PopTextWrapPos();
-            ImGui.EndGroup();
-            ImGui.PopStyleColor();
-            ImGui.SetCursorPos(tempCursor); // Reset cursor position
-            
-            // Calculate required height: header + actual content + padding + breathing room
-            float breathingRoom = 20 * scale; // Extra space at bottom for visual comfort
+            actualContentHeight = ImGui.GetCursorPosY() - startY;
+
+            measureDl.PopClipRect();
+            ImGui.EndChild();
+
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(8);
+            ImGui.SetCursorPos(tempCursor);
+
+            float breathingRoom = 20 * scale;
             float requiredHeight = headerHeight + actualContentHeight + padding + breathingRoom;
-            
-            // Allow Timeline boxes to expand more (2.5x) since they're vertical in nature
-            float growthMultiplier = 1.5f; // Default growth for most content
-            if (title == "Character Timeline" || title == "Timeline" || 
+
+            float growthMultiplier = 1.5f;
+            if (title == "Character Timeline" || title == "Timeline" ||
                 (isMainContent && title.Contains("Timeline")))
             {
-                growthMultiplier = 2.5f; // Allow timeline to grow more
+                growthMultiplier = 2.5f;
             }
-            
-            float maxCardHeight = baseCardHeight * growthMultiplier; // Allow growth before scrolling
-            
+
+            float maxCardHeight = baseCardHeight * growthMultiplier;
+
             float finalCardHeight;
             var flags = ImGuiWindowFlags.None;
-            
+
             if (requiredHeight <= maxCardHeight)
             {
-                // Content fits within growth limit - use required height and no scrollbar
                 finalCardHeight = Math.Max(baseCardHeight, requiredHeight);
                 flags = ImGuiWindowFlags.NoScrollbar;
             }
             else
             {
-                // Content exceeds growth limit - use max height and enable scrolling
                 finalCardHeight = maxCardHeight;
                 flags = ImGuiWindowFlags.AlwaysVerticalScrollbar;
             }
-                
+
             // Card styling - clean like HTML
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.067f, 0.067f, 0.067f, 1.0f));
             ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.102f, 0.102f, 0.102f, 1.0f));
@@ -4573,7 +4596,10 @@ namespace CharacterSelectPlugin.Windows
             // Gallery grid layout with thumbnails
             if (rp.GalleryImages?.Count > 0)
             {
-                var characterName = showingExternal ? rp.CharacterName : character?.Name;
+                // Use Alias if set, otherwise fall back to Name
+                var characterName = showingExternal
+                    ? rp.CharacterName
+                    : (!string.IsNullOrWhiteSpace(character?.Alias) ? character.Alias : character?.Name);
                 var headerText = !string.IsNullOrEmpty(characterName) ? $"{characterName}'s Gallery" : "Character Gallery";
                 
                 // Use exact header styling matching Overview tab cards
@@ -4930,7 +4956,10 @@ namespace CharacterSelectPlugin.Windows
             else
             {
                 // Empty state - also with header and container
-                var characterName = showingExternal ? rp.CharacterName : character?.Name;
+                // Use Alias if set, otherwise fall back to Name
+                var characterName = showingExternal
+                    ? rp.CharacterName
+                    : (!string.IsNullOrWhiteSpace(character?.Alias) ? character.Alias : character?.Name);
                 var headerText = !string.IsNullOrEmpty(characterName) ? $"{characterName}'s Gallery" : "Character Gallery";
                 
                 // Use exact header styling matching Overview tab cards
@@ -5193,19 +5222,47 @@ namespace CharacterSelectPlugin.Windows
                 );
             }
             
-            // Draw relationship and occupation
-            int cardCount = 0;
+            // Collect all items to display
+            var items = new List<(string label, string value)>();
+
             if (!string.IsNullOrEmpty(rp.Relationship))
-            {
-                DrawInfoCard("RELATIONSHIP", rp.Relationship, cardCount % 2 == 0 ? 0 : cardWidth + spacing, 0);
-                cardCount++;
-            }
-            
+                items.Add(("RELATIONSHIP", rp.Relationship));
+
             if (!string.IsNullOrEmpty(rp.Occupation))
+                items.Add(("OCCUPATION", rp.Occupation));
+
+            // Add custom key-value pairs
+            if (!string.IsNullOrEmpty(rp.AdditionalDetailsCustom))
             {
-                DrawInfoCard("OCCUPATION", rp.Occupation, cardCount % 2 == 0 ? 0 : cardWidth + spacing, cardCount > 1 ? cardHeight + spacing : 0);
-                cardCount++;
+                foreach (var line in rp.AdditionalDetailsCustom.Split('\n'))
+                {
+                    var trimmed = line.Trim();
+                    if (string.IsNullOrWhiteSpace(trimmed)) continue;
+
+                    var colonIndex = trimmed.IndexOf(':');
+                    if (colonIndex > 0)
+                    {
+                        var key = trimmed.Substring(0, colonIndex).Trim().ToUpper();
+                        var value = trimmed.Substring(colonIndex + 1).Trim();
+                        if (!string.IsNullOrWhiteSpace(value))
+                            items.Add((key, value));
+                    }
+                }
             }
+
+            // Draw all items in a grid (2 columns)
+            for (int i = 0; i < items.Count; i++)
+            {
+                var col = i % 2;
+                var row = i / 2;
+                var xPos = col == 0 ? 0 : cardWidth + spacing;
+                var yPos = row * (cardHeight + spacing);
+                DrawInfoCard(items[i].label, items[i].value, xPos, yPos);
+            }
+
+            // Reserve space for all rows
+            var rowCount = (items.Count + 1) / 2;
+            ImGui.Dummy(new Vector2(availWidth, rowCount * (cardHeight + spacing)));
         }
         
         private void DrawExternalLink(string link, float scale)
@@ -5357,11 +5414,15 @@ namespace CharacterSelectPlugin.Windows
         private void DrawTraitItem(string trait, float scale)
         {
             var profileColor = ResolveNameplateColor();
-            var drawList = ImGui.GetWindowDrawList();
-            var itemPos = ImGui.GetCursorScreenPos();
             var itemWidth = ImGui.GetContentRegionAvail().X;
             var itemHeight = 32f * scale;
-            
+
+            // InvisibleButton handles layout and cursor advancement properly with scroll
+            ImGui.InvisibleButton($"##trait_{trait}", new Vector2(itemWidth, itemHeight));
+            var itemPos = ImGui.GetItemRectMin();
+
+            var drawList = ImGui.GetWindowDrawList();
+
             // Item background
             drawList.AddRectFilled(
                 itemPos,
@@ -5369,7 +5430,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
                 6f * scale
             );
-            
+
             // Item border
             drawList.AddRect(
                 itemPos,
@@ -5379,39 +5440,43 @@ namespace CharacterSelectPlugin.Windows
                 ImDrawFlags.None,
                 1f * scale
             );
-            
-            // Left accent border (blue)
+
+            // Left accent
             drawList.AddRectFilled(
                 itemPos,
                 itemPos + new Vector2(3 * scale, itemHeight),
                 ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X, profileColor.Y, profileColor.Z, 1.0f))
             );
-            
-            // Text
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 12 * scale);
-            ImGui.TextColored(new Vector4(0.847f, 0.847f, 0.863f, 1.0f), trait);
-            
-            // Move cursor past the item
-            ImGui.SetCursorPosY(itemPos.Y - ImGui.GetWindowPos().Y + itemHeight + 8 * scale);
+
+            // Text overlay
+            var textPos = itemPos + new Vector2(12 * scale, (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
+            drawList.AddText(textPos,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.847f, 0.847f, 0.863f, 1.0f)), trait);
+
+            // Spacing between items
+            ImGui.Dummy(new Vector2(0, 8 * scale));
         }
         
         private void DrawLikesDislikesTraitItem(string trait, float scale, bool isLike = true)
         {
-            var drawList = ImGui.GetWindowDrawList();
-            var itemPos = ImGui.GetCursorScreenPos();
             var itemWidth = ImGui.GetContentRegionAvail().X;
             var itemHeight = 32f * scale;
-            
-            // Item background (exact same as Key Traits)
+
+            // InvisibleButton handles layout and cursor advancement properly with scroll
+            ImGui.InvisibleButton($"##ld_{trait}_{isLike}", new Vector2(itemWidth, itemHeight));
+            var itemPos = ImGui.GetItemRectMin();
+
+            var drawList = ImGui.GetWindowDrawList();
+
+            // Item background
             drawList.AddRectFilled(
                 itemPos,
                 itemPos + new Vector2(itemWidth, itemHeight),
                 ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
                 6f * scale
             );
-            
-            // Item border (exact same as Key Traits)
+
+            // Item border
             drawList.AddRect(
                 itemPos,
                 itemPos + new Vector2(itemWidth, itemHeight),
@@ -5420,29 +5485,27 @@ namespace CharacterSelectPlugin.Windows
                 ImDrawFlags.None,
                 1f * scale
             );
-            
-            // Left accent border (hardcoded green for likes, red for dislikes) - with rounding to match background
-            var accentColor = isLike 
-                ? new Vector4(0.067f, 0.714f, 0.506f, 1.0f) // Hardcoded green
-                : new Vector4(0.8f, 0.2f, 0.2f, 1.0f);      // Hardcoded red
+
+            // Left accent (green for likes, red for dislikes)
+            var accentColor = isLike
+                ? new Vector4(0.067f, 0.714f, 0.506f, 1.0f)
+                : new Vector4(0.8f, 0.2f, 0.2f, 1.0f);
             drawList.AddRectFilled(
                 itemPos,
                 itemPos + new Vector2(3 * scale, itemHeight),
                 ImGui.ColorConvertFloat4ToU32(accentColor),
-                6f * scale, // Match the background rounding
-                ImDrawFlags.RoundCornersLeft // Only round the left side
+                6f * scale,
+                ImDrawFlags.RoundCornersLeft
             );
-            
-            // Text with FontAwesome thumbs icons
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 12 * scale);
-            
-            // Draw emoji icon and text
-            string emoji = isLike ? "👍" : "👎";
-            ImGui.TextColored(new Vector4(0.847f, 0.847f, 0.863f, 1.0f), $"{emoji} {trait}");
-            
-            // Move cursor past the item (exact same as Key Traits)
-            ImGui.SetCursorPosY(itemPos.Y - ImGui.GetWindowPos().Y + itemHeight + 8 * scale);
+
+            // Text overlay with emoji
+            string emoji = isLike ? "\U0001f44d" : "\U0001f44e";
+            var textPos = itemPos + new Vector2(12 * scale, (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
+            drawList.AddText(textPos,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.847f, 0.847f, 0.863f, 1.0f)), $"{emoji} {trait}");
+
+            // Spacing between items
+            ImGui.Dummy(new Vector2(0, 8 * scale));
         }
         
         private void DrawCollapseButton(float scale)

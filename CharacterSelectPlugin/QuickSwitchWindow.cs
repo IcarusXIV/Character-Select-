@@ -37,6 +37,9 @@ namespace CharacterSelectPlugin.Windows
         {
             float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
+            // Apply escape key and focus settings based on config
+            RespectCloseHotkey = !plugin.Configuration.QuickSwitchIgnoreEscape;
+
             int themeColorCount = ThemeHelper.PushThemeColors(plugin.Configuration);
 
             try
@@ -47,14 +50,19 @@ namespace CharacterSelectPlugin.Windows
                     hasInitializedSelection = true;
                 }
 
+            // Base flags for compact/non-compact modes
+            var baseFlags = plugin.Configuration.QuickSwitchCompact
+                ? ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoBackground
+                : ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+
+            // Add NoFocusOnAppearing if configured to ignore escape
+            if (plugin.Configuration.QuickSwitchIgnoreEscape)
+                baseFlags |= ImGuiWindowFlags.NoFocusOnAppearing;
+
+            this.Flags = baseFlags;
+
             if (plugin.Configuration.QuickSwitchCompact)
             {
-                this.Flags = ImGuiWindowFlags
-                    .NoTitleBar
-                    | ImGuiWindowFlags.NoResize
-                    | ImGuiWindowFlags.NoScrollbar
-                    | ImGuiWindowFlags.NoScrollWithMouse
-                    | ImGuiWindowFlags.NoBackground;
                 SizeConstraints = new WindowSizeConstraints
                 {
                     MinimumSize = new System.Numerics.Vector2(360 * scale, 28 * scale),
@@ -78,9 +86,6 @@ namespace CharacterSelectPlugin.Windows
             }
             else
             {
-                this.Flags = ImGuiWindowFlags.NoResize
-                           | ImGuiWindowFlags.NoScrollbar
-                           | ImGuiWindowFlags.NoScrollWithMouse;
                 SizeConstraints = new WindowSizeConstraints
                 {
                     MinimumSize = new System.Numerics.Vector2(360 * scale, 55 * scale),

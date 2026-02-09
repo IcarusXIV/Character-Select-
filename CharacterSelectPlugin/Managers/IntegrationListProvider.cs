@@ -196,9 +196,9 @@ namespace CharacterSelectPlugin.Managers
                 if (presets != null)
                 {
                     // Preset tuple: (Guid ID, string FullPath)
-                    // FullPath includes folder structure, extract just the name
+                    // Use the full path as Moodles commands require it (e.g., "Chars/Male/Rayven/Rayven")
                     cachedMoodlesPresets = presets
-                        .Select(p => ExtractPresetName(p.Item2))
+                        .Select(p => p.Item2) // Use full path, not just the name
                         .Where(n => !string.IsNullOrWhiteSpace(n))
                         .Distinct()
                         .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
@@ -291,17 +291,6 @@ namespace CharacterSelectPlugin.Managers
                 // Silently fail - this is called frequently during UI rendering
             }
             return null;
-        }
-
-        /// <summary>Extracts preset name from full path (e.g., "Folder/SubFolder/PresetName" -> "PresetName")</summary>
-        private static string ExtractPresetName(string fullPath)
-        {
-            if (string.IsNullOrEmpty(fullPath))
-                return fullPath;
-
-            // Get the last segment after any path separator
-            var lastSlash = fullPath.LastIndexOfAny(new[] { '/', '\\' });
-            return lastSlash >= 0 ? fullPath.Substring(lastSlash + 1) : fullPath;
         }
 
         /// <summary>Extracts title string from Honorific TitleData object.</summary>

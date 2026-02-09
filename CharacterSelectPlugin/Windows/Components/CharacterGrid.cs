@@ -51,6 +51,7 @@ namespace CharacterSelectPlugin.Windows.Components
         // Cache UI calculations
         private float cachedCardWidth = 0f;
         private int cachedColumnCount = 0;
+        private float cachedColumnWidth = 0f;
         private float cachedAvailableWidth = 0f;
         private float cachedScale = 0f;
         private bool layoutCacheDirty = true;
@@ -528,6 +529,42 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
+        private void DrawCharacterCardChocolateOverlay(ImDrawListPtr drawList, Vector2 cardMin, float cardWidth, float imageHeight, float scale, float hoverAmount)
+        {
+            // Load chocolate.png from Assets folder
+            string pluginDirectory = plugin.PluginDirectory;
+            string chocolateImagePath = Path.Combine(pluginDirectory, "Assets", "chocolate.png");
+
+            if (File.Exists(chocolateImagePath))
+            {
+                var chocolateTexture = Plugin.TextureProvider.GetFromFile(chocolateImagePath).GetWrapOrDefault();
+
+                if (chocolateTexture != null)
+                {
+                    // Calculate chocolate overlay size and position for top left corner
+                    float chocolateSize = 100f * scale; // About double the snow size
+                    // Position so top of chocolate is just below the glow frame
+                    var borderMargin = (4f + (hoverAmount * 2f)) * scale;
+                    float extraOffsetUp = -1f * scale; // Just inside the glow frame
+                    float extraOffsetLeft = -10f * scale; // Moved right into the card
+                    Vector2 chocolatePos = cardMin - new Vector2(borderMargin + extraOffsetLeft, borderMargin + extraOffsetUp);
+                    Vector2 chocolatePosMax = chocolatePos + new Vector2(chocolateSize, chocolateSize);
+
+                    // Draw chocolate overlay
+                    drawList.AddImageRounded(
+                        (ImTextureID)chocolateTexture.Handle,
+                        chocolatePos,
+                        chocolatePosMax,
+                        new Vector2(0, 0),
+                        new Vector2(1, 1),
+                        ImGui.GetColorU32(new Vector4(1, 1, 1, 1.0f)),
+                        4f * scale,
+                        ImDrawFlags.RoundCornersAll
+                    );
+                }
+            }
+        }
+
         private void DrawEffects()
         {
             foreach (var kvp in characterFavoriteEffects.ToList())
@@ -575,41 +612,44 @@ namespace CharacterSelectPlugin.Windows.Components
             float tagDropdownOffset = tagDropdownWidth + tagIconOffset + (10f * scale);
             float buttonSize = 25f * scale;
 
-            // Tag Filter Toggle
-            ImGui.SameLine(ImGui.GetWindowWidth() - tagIconOffset - (20f * scale));
-            if (uiStyles.IconButton("\uf0b0", "Filter by Tags"))
+            // Tag Filter Toggle (hidden when search bar is open)
+            if (!showSearchBar)
             {
-                showTagFilter = !showTagFilter;
-                InvalidateCache();
-            }
-
-            // Tag Filter Dropdown
-            if (showTagFilter)
-            {
-                ImGui.SameLine(ImGui.GetWindowWidth() - tagDropdownOffset - (20f * scale));
-                ImGui.SetNextItemWidth(tagDropdownWidth);
-                if (ImGui.BeginCombo("##TagFilter", selectedTag))
+                ImGui.SameLine(ImGui.GetWindowWidth() - tagIconOffset - (20f * scale));
+                if (uiStyles.IconButton("\uf0b0", "Filter by Tags"))
                 {
-                    var allTags = plugin.Characters
-                        .SelectMany(c => c.Tags ?? new List<string>())
-                        .Distinct()
-                        .OrderBy(f => f)
-                        .Prepend("All")
-                        .ToList();
+                    showTagFilter = !showTagFilter;
+                    InvalidateCache();
+                }
 
-                    foreach (var tag in allTags)
+                // Tag Filter Dropdown
+                if (showTagFilter)
+                {
+                    ImGui.SameLine(ImGui.GetWindowWidth() - tagDropdownOffset - (20f * scale));
+                    ImGui.SetNextItemWidth(tagDropdownWidth);
+                    if (ImGui.BeginCombo("##TagFilter", selectedTag))
                     {
-                        bool isSelected = tag == selectedTag;
-                        if (ImGui.Selectable(tag, isSelected))
-                        {
-                            selectedTag = tag;
-                            InvalidateFilterCache();
-                        }
+                        var allTags = plugin.Characters
+                            .SelectMany(c => c.Tags ?? new List<string>())
+                            .Distinct()
+                            .OrderBy(f => f)
+                            .Prepend("All")
+                            .ToList();
 
-                        if (isSelected)
-                            ImGui.SetItemDefaultFocus();
+                        foreach (var tag in allTags)
+                        {
+                            bool isSelected = tag == selectedTag;
+                            if (ImGui.Selectable(tag, isSelected))
+                            {
+                                selectedTag = tag;
+                                InvalidateFilterCache();
+                            }
+
+                            if (isSelected)
+                                ImGui.SetItemDefaultFocus();
+                        }
+                        ImGui.EndCombo();
                     }
-                    ImGui.EndCombo();
                 }
             }
 
@@ -622,6 +662,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     searchQuery = "";
                     InvalidateFilterCache();
+                }
+                else
+                {
+                    // Close tag filter when opening search
+                    showTagFilter = false;
                 }
             }
 
@@ -651,13 +696,20 @@ namespace CharacterSelectPlugin.Windows.Components
             float cardWidth = cachedCardWidth;
             int columnCount = cachedColumnCount;
 
-            float containerMargin = 17f * scale; // Scale the margin
-            ImGui.SetCursorPos(ImGui.GetCursorPos() + new Vector2(containerMargin, containerMargin));
+            // Centre the grid horizontally
+            float columnWidth = cardWidth + (plugin.ProfileSpacing * scale) + (24f * scale);
+            float totalGridWidth = columnCount > 1
+                ? columnCount * columnWidth
+                : cardWidth;
+            float horizontalIndent = Math.Max(17f * scale, (availableWidth - totalGridWidth) / 2f);
+            float verticalMargin = 17f * scale;
+
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + verticalMargin);
+            ImGui.Indent(horizontalIndent);
 
             if (columnCount > 1)
             {
                 ImGui.Columns(columnCount, "CharacterGrid", false);
-                float columnWidth = cardWidth + (plugin.ProfileSpacing * scale) + (24f * scale); // Scale spacing
                 for (int i = 0; i < columnCount; i++)
                 {
                     ImGui.SetColumnWidth(i, columnWidth);
@@ -689,6 +741,8 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 ImGui.Columns(1);
             }
+
+            ImGui.Unindent(horizontalIndent);
         }
 
         private void RecalculateLayout(float availableWidth, float scale)
@@ -712,6 +766,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Cache the results
             cachedCardWidth = cardWidth;
             cachedColumnCount = columnCount;
+            cachedColumnWidth = columnWidth;
             cachedAvailableWidth = availableWidth;
             cachedScale = scale;
             layoutCacheDirty = false;
@@ -823,9 +878,14 @@ namespace CharacterSelectPlugin.Windows.Components
                         
                     case SeasonalTheme.Christmas:
                         // Alternate between red and green based on character index
-                        borderColor = index % 2 == 0 
+                        borderColor = index % 2 == 0
                             ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)     // Red
                             : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Green
+                        break;
+
+                    case SeasonalTheme.Valentines:
+                        // White glow for Valentine's
+                        borderColor = new Vector3(1.0f, 1.0f, 1.0f);
                         break;
                 }
             }
@@ -852,7 +912,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             var drawList = ImGui.GetWindowDrawList();
             
-            // Draw winter icicles BEHIND character cards - before background is drawn
+            // Draw seasonal decorations BEHIND character cards - before background is drawn
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
@@ -861,6 +921,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     // Draw icicles behind the character card
                     DrawCharacterCardIcicles(drawList, wiggleCardMin, cardWidth, imageHeight, scale);
                 }
+                // Valentine's - no card decorations, just falling hearts background
             }
             
             uint cardBgColor = ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.12f, 0.95f));
@@ -966,11 +1027,18 @@ namespace CharacterSelectPlugin.Windows.Components
             // Winter icicles now drawn behind cards earlier in the draw order
             
             // Draw snow.png overlay in top left corner for Winter/Christmas themes
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
-                (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter || 
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
                  SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Christmas))
             {
                 DrawCharacterCardSnowOverlay(drawList, wiggleCardMin, cardWidth, imageHeight, scale, hoverAmount);
+            }
+
+            // Draw chocolate.png overlay in top left corner for Valentine's theme
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
+                SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Valentines)
+            {
+                DrawCharacterCardChocolateOverlay(drawList, wiggleCardMin, cardWidth, imageHeight, scale, hoverAmount);
             }
 
             DrawIntegratedNameplate(character, wiggleCardMin, cardWidth, imageHeight, nameplateHeight, index, hoverAmount, scale);
@@ -1110,6 +1178,11 @@ namespace CharacterSelectPlugin.Windows.Components
                     starSymbol = "\uf2dc"; // Snowflake icon (different colours for favourite/unfavourite)
                     usesFontAwesome = true;
                 }
+                else if (effectiveTheme == SeasonalTheme.Valentines)
+                {
+                    starSymbol = "\uf004"; // Heart icon for Valentine's Day
+                    usesFontAwesome = true;
+                }
                 else
                 {
                     starSymbol = character.IsFavorite ? "★" : "☆"; // Default stars
@@ -1185,6 +1258,19 @@ namespace CharacterSelectPlugin.Windows.Components
                     else
                     {
                         starMainColor = new Vector4(0.7f, 0.7f, 0.8f, 0.6f + hoverAmount * 0.3f); // Light grey for unfavourited
+                        starGlowColor = starMainColor;
+                    }
+                }
+                else if (effectiveTheme == SeasonalTheme.Valentines)
+                {
+                    if (character.IsFavorite)
+                    {
+                        starMainColor = new Vector4(1.0f, 0.0f, 0.5f, 1.0f); // Vivid magenta-pink for favourited heart
+                        starGlowColor = new Vector4(1.0f, 0.1f, 0.45f, 0.7f + hoverAmount * 0.3f); // Vibrant pink glow
+                    }
+                    else
+                    {
+                        starMainColor = new Vector4(0.85f, 0.4f, 0.55f, 0.65f + hoverAmount * 0.35f); // Brighter muted pink for unfavourited
                         starGlowColor = starMainColor;
                     }
                 }
@@ -1417,6 +1503,15 @@ namespace CharacterSelectPlugin.Windows.Components
                             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.80f, 0.22f, 0.15f, 0.9f));
                             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.95f, 0.28f, 0.20f, 0.9f));
                             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.98f, 0.95f, 1.0f)); // Bright warm white text
+                            buttonColorCount = 4;
+                            break;
+
+                        case SeasonalTheme.Valentines:
+                            // Valentine's button styling - pink/rose theme
+                            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.55f, 0.12f, 0.30f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.70f, 0.18f, 0.40f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.85f, 0.25f, 0.50f, 0.9f));
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.95f, 0.97f, 1.0f)); // Soft pink-white text
                             buttonColorCount = 4;
                             break;
 

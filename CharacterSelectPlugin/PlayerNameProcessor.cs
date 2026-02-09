@@ -1,5 +1,6 @@
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Gui.NamePlate;
 using Dalamud.Game.Text;
@@ -30,11 +31,16 @@ namespace CharacterSelectPlugin
         private readonly IAddonLifecycle addonLifecycle;
         private readonly IPluginLog log;
         private readonly IPartyList partyList;
+        private readonly ICondition condition;
 
         // Wave animation
         private static readonly Stopwatch AnimationTimer = Stopwatch.StartNew();
         private const int GradientSteps = 64;
         private const int AnimationSpeed = 15;
+
+        // Periodic redraw for smooth animation on other players' nameplates
+        private DateTime lastRedrawRequest = DateTime.MinValue;
+        private static readonly TimeSpan RedrawInterval = TimeSpan.FromMilliseconds(50);
 
         // Cached level prefix for local player (e.g. "Lv100 ")
         private byte[]? cachedLevelPrefixBytes = null;
@@ -44,6 +50,9 @@ namespace CharacterSelectPlugin
 
         // Track party slot -> level prefix bytes for other players (each player has their own level)
         private readonly Dictionary<int, byte[]> partySlotPrefixBytes = new();
+
+        // Track party composition by ObjectId to detect when party changes
+        private HashSet<uint> trackedPartyObjectIds = new();
 
         // Target bar addons
         private static readonly string[] TargetAddonNames = { "_TargetInfo", "_TargetInfoMainTarget", "_TargetInfoCastBar" };
@@ -58,7 +67,8 @@ namespace CharacterSelectPlugin
             IClientState clientState,
             IAddonLifecycle addonLifecycle,
             IPluginLog log,
-            IPartyList partyList)
+            IPartyList partyList,
+            ICondition condition)
         {
             this.plugin = plugin;
             this.namePlateGui = namePlateGui;
@@ -67,6 +77,7 @@ namespace CharacterSelectPlugin
             this.addonLifecycle = addonLifecycle;
             this.log = log;
             this.partyList = partyList;
+            this.condition = condition;
 
             namePlateGui.OnNamePlateUpdate += OnNamePlateUpdate;
             chatGui.ChatMessage += OnChatMessage;
@@ -106,6 +117,28 @@ namespace CharacterSelectPlugin
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Request nameplate redraw for smooth animation on other players' names.
+        /// Call this periodically from framework update when shared name replacement is enabled.
+        /// </summary>
+        public void RequestRedrawIfNeeded()
+        {
+            // Only request redraws when shared name replacement is enabled and there are replaced names
+            // Skip if using simple glow for others (no animation needed)
+            if (!plugin.Configuration.EnableSharedNameReplacement ||
+                !plugin.Configuration.NameReplacementNameplate ||
+                plugin.Configuration.UseSimpleGlowForOthers ||
+                replacedNameplateNames.Count == 0)
+                return;
+
+            var now = DateTime.UtcNow;
+            if (now - lastRedrawRequest < RedrawInterval)
+                return;
+
+            lastRedrawRequest = now;
+            namePlateGui.RequestRedraw();
         }
 
         /// <summary>Get wave colour at character position.</summary>
@@ -175,6 +208,15 @@ namespace CharacterSelectPlugin
             return true;
         }
 
+        /// <summary>
+        /// Checks if we're in instanced content (dungeon, raid, trial, etc.)
+        /// Party list uses a fixed gold glow in instances so CS+ names are always recognisable.
+        /// </summary>
+        private bool IsInInstance()
+        {
+            return condition[ConditionFlag.BoundByDuty] || condition[ConditionFlag.BoundByDuty56];
+        }
+
         // Note: Previously had MaxWaveTextElements = 25 to switch to pair grouping for long names.
         // Now always use pair grouping to avoid conflicts with Honorific (both using per-char causes crash).
 
@@ -194,7 +236,8 @@ namespace CharacterSelectPlugin
         }
 
         /// <summary>Create coloured name with wave glow effect and italics.</summary>
-        private SeString CreateColoredName(string name, Vector3 glowColor)
+        /// <param name="forPartyList">If true, uses gold glow in instances for visibility.</param>
+        private SeString CreateColoredName(string name, Vector3 glowColor, bool forPartyList = false)
         {
             // Get text elements (grapheme clusters) - handles emojis as single units
             var textElements = GetTextElements(name);
@@ -202,12 +245,15 @@ namespace CharacterSelectPlugin
             // Use simple glow only if explicitly configured
             if (plugin.Configuration.UseSimpleNameplateGlow)
             {
-                return CreateSimpleColoredName(name, glowColor);
+                return CreateSimpleColoredName(name, glowColor, forPartyList);
             }
+
+            // In instances, party list uses a fixed gold glow so CS+ names are always recognisable
+            if (forPartyList && IsInInstance())
+                glowColor = InstancePartyListGlowColor;
 
             var payloads = new List<Payload>();
 
-            // Italics on
             payloads.Add(EmphasisItalicPayload.ItalicsOn);
 
             // Build coloured part with wave glow
@@ -238,17 +284,25 @@ namespace CharacterSelectPlugin
             var coloredPart = SeString.Parse(builder.GetViewAsSpan());
             payloads.AddRange(coloredPart.Payloads);
 
-            // Italics off
             payloads.Add(EmphasisItalicPayload.ItalicsOff);
 
             return new SeString(payloads);
         }
 
-        /// <summary>Create coloured name with simple solid glow (no wave animation).</summary>
-        private SeString CreateSimpleColoredName(string name, Vector3 glowColor)
+        // Fixed gold glow for CS+ names in party list while in instances
+        // Distinct from the default blue so Name Sync names are immediately recognisable
+        private static readonly Vector3 InstancePartyListGlowColor = new(1.0f, 0.8f, 0.2f);
+
+        /// <summary>Create coloured name with simple solid glow (no wave animation) and italics.</summary>
+        /// <param name="forPartyList">If true, uses gold glow in instances for visibility.</param>
+        private SeString CreateSimpleColoredName(string name, Vector3 glowColor, bool forPartyList = false)
         {
-            // Simple glow with italics
+            // In instances, party list uses a fixed gold glow so CS+ names are always recognisable
+            if (forPartyList && IsInInstance())
+                glowColor = InstancePartyListGlowColor;
+
             var payloads = new List<Payload>();
+
             payloads.Add(EmphasisItalicPayload.ItalicsOn);
 
             var builder = new LuminaSeStringBuilder();
@@ -260,6 +314,7 @@ namespace CharacterSelectPlugin
 
             var coloredPart = SeString.Parse(builder.GetViewAsSpan());
             payloads.AddRange(coloredPart.Payloads);
+
             payloads.Add(EmphasisItalicPayload.ItalicsOff);
 
             return new SeString(payloads);
@@ -406,10 +461,12 @@ namespace CharacterSelectPlugin
                 // Local player
                 if (gameObject.GameObjectId == localPlayer.GameObjectId)
                 {
-                    if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name) && !revealActualNames)
+                    // Use Alias if set, otherwise fall back to Name
+                    var displayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
+                    if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(displayName) && !revealActualNames)
                     {
-                        // Apply CS+ name
-                        handler.NameParts.Text = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+                        // Apply CS+ name (using alias if set)
+                        handler.NameParts.Text = CreateColoredName(displayName, activeChar.NameplateColor);
 
                         // Hide FC tag
                         if (plugin.Configuration.HideFCTagInNameplate)
@@ -453,7 +510,11 @@ namespace CharacterSelectPlugin
                         if (sharedEntry != null && !revealActualNames)
                         {
                             // Replace with their CS+ name
-                            handler.NameParts.Text = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
+                            // Use simple glow if configured (disables wave animation for others)
+                            if (plugin.Configuration.UseSimpleGlowForOthers)
+                                handler.NameParts.Text = CreateSimpleColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
+                            else
+                                handler.NameParts.Text = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
                             replacedNameplateNames.Add(physicalName);
                         }
                         else if (replacedNameplateNames.Contains(physicalName))
@@ -503,9 +564,11 @@ namespace CharacterSelectPlugin
             if (selfReplacementEnabled && senderText.Contains(localName))
             {
                 var activeChar = plugin.GetActiveCharacter();
-                if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(activeChar.Name))
+                // Use Alias if set, otherwise fall back to Name
+                var chatDisplayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
+                if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(chatDisplayName))
                 {
-                    sender = ReplaceSenderName(sender, localName, activeChar.Name, activeChar.NameplateColor);
+                    sender = ReplaceSenderName(sender, localName, chatDisplayName, activeChar.NameplateColor);
                     return;
                 }
             }
@@ -607,10 +670,12 @@ namespace CharacterSelectPlugin
                 if (selfReplacementEnabled)
                 {
                     var activeChar = plugin.GetActiveCharacter();
-                    if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(activeChar.Name))
+                    // Use Alias if set, otherwise fall back to Name
+                    var targetDisplayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
+                    if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(targetDisplayName))
                     {
                         var localName = localPlayer.Name.TextValue;
-                        ReplaceNameInAllTextNodes(addon, localName, activeChar.Name, activeChar.NameplateColor);
+                        ReplaceNameInAllTextNodes(addon, localName, targetDisplayName, activeChar.NameplateColor);
                     }
                 }
 
@@ -698,6 +763,42 @@ namespace CharacterSelectPlugin
         }
 
         /// <summary>
+        /// Checks if party composition has changed and clears tracking if so.
+        /// This prevents stale CS+ names from being applied to new party members.
+        /// </summary>
+        private void CheckForPartyChange()
+        {
+            // Skip if we have no tracking to validate - avoid unnecessary work
+            if (partySlotToPhysicalName.Count == 0 && trackedPartyObjectIds.Count == 0)
+                return;
+
+            var currentObjectIds = new HashSet<uint>();
+
+            for (int i = 0; i < partyList.Length; i++)
+            {
+                var member = partyList[i];
+                if (member != null && member.ObjectId != 0)
+                {
+                    currentObjectIds.Add(member.ObjectId);
+                }
+            }
+
+            // Check if party composition changed
+            if (!currentObjectIds.SetEquals(trackedPartyObjectIds))
+            {
+                // Clear tracking if we had any
+                if (partySlotToPhysicalName.Count > 0 || partySlotPrefixBytes.Count > 0)
+                {
+                    log.Debug($"[PartyList] Party composition changed (was {trackedPartyObjectIds.Count} members, now {currentObjectIds.Count}) - clearing all tracking");
+                    partySlotToPhysicalName.Clear();
+                    partySlotPrefixBytes.Clear();
+                }
+
+                trackedPartyObjectIds = currentObjectIds;
+            }
+        }
+
+        /// <summary>
         /// Core logic for updating party list names
         /// </summary>
         private unsafe void UpdatePartyListNames(AddonPartyList* addon, bool forceUpdate, bool selfReplacementEnabled, bool sharedReplacementEnabled)
@@ -714,46 +815,14 @@ namespace CharacterSelectPlugin
             var activeChar = selfReplacementEnabled ? plugin.GetActiveCharacter() : null;
             if (activeChar?.ExcludeFromNameSync == true) activeChar = null; // Per-character opt-out
 
+            // Check for party composition changes - clear all tracking if party changed
+            CheckForPartyChange();
+
             // Process all slots - local player is ALWAYS slot 0
+            // Note: We rely on CheckForPartyChange() (ObjectId-based) to detect party composition changes.
+            // Don't validate against IPartyList indices here - they don't match addon slot indices reliably.
             for (int i = 0; i < addon->MemberCount && i < 8; i++)
             {
-                // Validate tracking against real party data to detect when someone leaves/joins
-                // Skip slot 0 (local player) - we always know who we are
-                if (i > 0 && partySlotToPhysicalName.TryGetValue(i, out var trackedPhysicalName))
-                {
-                    // Get real party member from game data (IPartyList includes local player at index 0)
-                    string? realNameForSlot = null;
-                    if (i < partyList.Length)
-                    {
-                        var partyMember = partyList[i];
-                        if (partyMember != null)
-                        {
-                            realNameForSlot = partyMember.Name.TextValue;
-                        }
-                    }
-
-                    // If we have a real name and it doesn't match our tracking, clear stale data
-                    if (!string.IsNullOrEmpty(realNameForSlot))
-                    {
-                        // Extract just the character name from tracked (format might be "Name Surname" or "Name Surname@World")
-                        var trackedName = trackedPhysicalName;
-                        var atIndex = trackedPhysicalName.IndexOf('@');
-                        if (atIndex > 0)
-                        {
-                            trackedName = trackedPhysicalName.Substring(0, atIndex);
-                        }
-
-                        // Compare real name against tracked name
-                        if (!realNameForSlot.Equals(trackedName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Different person in this slot - clear stale tracking
-                            log.Debug($"[PartyList] Slot {i}: Real name '{realNameForSlot}' doesn't match tracked '{trackedName}' - clearing stale tracking");
-                            partySlotToPhysicalName.Remove(i);
-                            partySlotPrefixBytes.Remove(i);
-                        }
-                    }
-                }
-
                 var member = addon->PartyMembers[i];
                 var nameNode = member.Name;
 
@@ -792,7 +861,9 @@ namespace CharacterSelectPlugin
                             var prefixBytes = ConstructLevelPrefix(localPlayer.Level);
                             cachedLevelPrefixBytes = prefixBytes;
 
-                            var coloredName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+                            // Use Alias if set, otherwise fall back to Name
+                            var selfDisplayName = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
+                            var coloredName = CreateColoredName(selfDisplayName, activeChar.NameplateColor, forPartyList: true);
                             var coloredBytes = coloredName.Encode();
 
                             // +1 for null terminator - SetText expects null-terminated C string
@@ -806,7 +877,9 @@ namespace CharacterSelectPlugin
                         else
                         {
                             // Fallback: no prefix available at all - Encode() doesn't include null terminator
-                            var fallbackName = CreateColoredName(activeChar.Name, activeChar.NameplateColor);
+                            // Use Alias if set, otherwise fall back to Name
+                            var selfDisplayNameFallback = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
+                            var fallbackName = CreateColoredName(selfDisplayNameFallback, activeChar.NameplateColor, forPartyList: true);
                             var fallbackBytes = fallbackName.Encode();
                             var nullTerminated = new byte[fallbackBytes.Length + 1];
                             Array.Copy(fallbackBytes, 0, nullTerminated, 0, fallbackBytes.Length);
@@ -845,7 +918,7 @@ namespace CharacterSelectPlugin
                         // Replace with their CS+ name using the captured prefix
                         try
                         {
-                            var coloredName = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor);
+                            var coloredName = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor, forPartyList: true);
                             var coloredBytes = coloredName.Encode();
                             if (slotPrefix != null)
                             {
@@ -903,7 +976,7 @@ namespace CharacterSelectPlugin
 
                                 try
                                 {
-                                    var coloredName = CreateColoredName(entry.CSName, entry.NameplateColor);
+                                    var coloredName = CreateColoredName(entry.CSName, entry.NameplateColor, forPartyList: true);
                                     var coloredBytes = coloredName.Encode();
                                     if (slotPrefix != null)
                                     {
