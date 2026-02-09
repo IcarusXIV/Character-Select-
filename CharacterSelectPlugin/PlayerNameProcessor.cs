@@ -217,8 +217,10 @@ namespace CharacterSelectPlugin
             return condition[ConditionFlag.BoundByDuty] || condition[ConditionFlag.BoundByDuty56];
         }
 
-        // Note: Previously had MaxWaveTextElements = 25 to switch to pair grouping for long names.
-        // Now always use pair grouping to avoid conflicts with Honorific (both using per-char causes crash).
+        // Cap edge colour groups to prevent vsprintf_s overflow when combined with
+        // Honorific's wave glow on the same nameplate (pair grouping alone wasn't enough)
+        private const int MaxWaveEdgeGroups = 4;
+        private const int MaxSafeSeStringBytes = 128;
 
         /// <summary>Get text elements (grapheme clusters) from a string. Handles emojis correctly.</summary>
         private static List<string> GetTextElements(string name)
@@ -239,42 +241,31 @@ namespace CharacterSelectPlugin
         /// <param name="forPartyList">If true, uses gold glow in instances for visibility.</param>
         private SeString CreateColoredName(string name, Vector3 glowColor, bool forPartyList = false)
         {
-            // Get text elements (grapheme clusters) - handles emojis as single units
             var textElements = GetTextElements(name);
 
-            // Use simple glow only if explicitly configured
             if (plugin.Configuration.UseSimpleNameplateGlow)
-            {
                 return CreateSimpleColoredName(name, glowColor, forPartyList);
-            }
 
-            // In instances, party list uses a fixed gold glow so CS+ names are always recognisable
             if (forPartyList && IsInInstance())
                 glowColor = InstancePartyListGlowColor;
 
             var payloads = new List<Payload>();
-
             payloads.Add(EmphasisItalicPayload.ItalicsOn);
 
-            // Build coloured part with wave glow
             var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
 
-            // Always use pair grouping for wave glow to avoid conflicts with Honorific
-            // (both plugins using per-char wave on same nameplate causes crash)
-            for (int i = 0; i < textElements.Count; i += 2)
+            // Dynamic group size: cap at MaxWaveEdgeGroups to keep payload small enough
+            // to coexist with Honorific's wave glow on the same nameplate
+            int groupSize = Math.Max(2, (int)Math.Ceiling((double)textElements.Count / MaxWaveEdgeGroups));
+
+            for (int i = 0; i < textElements.Count; i += groupSize)
             {
                 var waveColor = GetWaveColor(glowColor, i);
                 builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
 
-                // Append current element
-                builder.Append(textElements[i]);
-
-                // Append next element if exists (pair grouping)
-                if (i + 1 < textElements.Count)
-                {
-                    builder.Append(textElements[i + 1]);
-                }
+                for (int j = i; j < Math.Min(i + groupSize, textElements.Count); j++)
+                    builder.Append(textElements[j]);
 
                 builder.PopEdgeColor();
             }
@@ -283,10 +274,15 @@ namespace CharacterSelectPlugin
 
             var coloredPart = SeString.Parse(builder.GetViewAsSpan());
             payloads.AddRange(coloredPart.Payloads);
-
             payloads.Add(EmphasisItalicPayload.ItalicsOff);
 
-            return new SeString(payloads);
+            var result = new SeString(payloads);
+
+            // Safety fallback: if our SeString is too large, use simple glow
+            if (result.Encode().Length > MaxSafeSeStringBytes)
+                return CreateSimpleColoredName(name, glowColor, forPartyList);
+
+            return result;
         }
 
         // Fixed gold glow for CS+ names in party list while in instances
@@ -352,7 +348,6 @@ namespace CharacterSelectPlugin
             var builder = new LuminaSeStringBuilder();
             builder.PushColorRgba(new Vector4(1f, 1f, 1f, 1f));
 
-            // Use simple glow when wave is disabled (target bar) or explicitly configured
             if (!useWave || plugin.Configuration.UseSimpleNameplateGlow)
             {
                 builder.PushEdgeColorRgba(new Vector4(glowColor, 1f));
@@ -361,21 +356,16 @@ namespace CharacterSelectPlugin
             }
             else
             {
-                // Always use pair grouping for wave glow to avoid conflicts with Honorific
-                // (both plugins using per-char wave on same nameplate causes crash)
-                for (int i = 0; i < textElements.Count; i += 2)
+                // Dynamic group size capped at MaxWaveEdgeGroups
+                int groupSize = Math.Max(2, (int)Math.Ceiling((double)textElements.Count / MaxWaveEdgeGroups));
+
+                for (int i = 0; i < textElements.Count; i += groupSize)
                 {
                     var waveColor = GetWaveColor(glowColor, i);
                     builder.PushEdgeColorRgba(new Vector4(waveColor, 1f));
 
-                    // Append current element
-                    builder.Append(textElements[i]);
-
-                    // Append next element if exists (pair grouping)
-                    if (i + 1 < textElements.Count)
-                    {
-                        builder.Append(textElements[i + 1]);
-                    }
+                    for (int j = i; j < Math.Min(i + groupSize, textElements.Count); j++)
+                        builder.Append(textElements[j]);
 
                     builder.PopEdgeColor();
                 }
