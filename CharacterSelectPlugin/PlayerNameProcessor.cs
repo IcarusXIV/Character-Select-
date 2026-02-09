@@ -863,7 +863,7 @@ namespace CharacterSelectPlugin
 
                             // Use Alias if set, otherwise fall back to Name
                             var selfDisplayName = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
-                            var coloredName = CreateColoredName(selfDisplayName, activeChar.NameplateColor, forPartyList: true);
+                            var coloredName = CreateSimpleColoredName(selfDisplayName, activeChar.NameplateColor, forPartyList: true);
                             var coloredBytes = coloredName.Encode();
 
                             // +1 for null terminator - SetText expects null-terminated C string
@@ -879,7 +879,7 @@ namespace CharacterSelectPlugin
                             // Fallback: no prefix available at all - Encode() doesn't include null terminator
                             // Use Alias if set, otherwise fall back to Name
                             var selfDisplayNameFallback = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
-                            var fallbackName = CreateColoredName(selfDisplayNameFallback, activeChar.NameplateColor, forPartyList: true);
+                            var fallbackName = CreateSimpleColoredName(selfDisplayNameFallback, activeChar.NameplateColor, forPartyList: true);
                             var fallbackBytes = fallbackName.Encode();
                             var nullTerminated = new byte[fallbackBytes.Length + 1];
                             Array.Copy(fallbackBytes, 0, nullTerminated, 0, fallbackBytes.Length);
@@ -918,7 +918,7 @@ namespace CharacterSelectPlugin
                         // Replace with their CS+ name using the captured prefix
                         try
                         {
-                            var coloredName = CreateColoredName(sharedEntry.CSName, sharedEntry.NameplateColor, forPartyList: true);
+                            var coloredName = CreateSimpleColoredName(sharedEntry.CSName, sharedEntry.NameplateColor, forPartyList: true);
                             var coloredBytes = coloredName.Encode();
                             if (slotPrefix != null)
                             {
@@ -976,7 +976,7 @@ namespace CharacterSelectPlugin
 
                                 try
                                 {
-                                    var coloredName = CreateColoredName(entry.CSName, entry.NameplateColor, forPartyList: true);
+                                    var coloredName = CreateSimpleColoredName(entry.CSName, entry.NameplateColor, forPartyList: true);
                                     var coloredBytes = coloredName.Encode();
                                     if (slotPrefix != null)
                                     {

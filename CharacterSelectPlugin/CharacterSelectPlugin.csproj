@@ -3,7 +3,7 @@
     <PropertyGroup>
         <TargetFramework>net10.0-windows</TargetFramework>
         <!-- Windows-specific target framework -->
-        <Version>2.1.0.7</Version>
+        <Version>2.1.0.8</Version>
         <Description>Instant Character Switching Made Simple. Create and save character profiles, then switch between them instantly. Applies Penumbra Collections, Glamourer Designs, Customize+ Profiles, Honorifics, Moodles, and Idles. Perfect for roleplayers, gposers, and anyone who loves seamless character customization.</Description>
         <PackageProjectUrl>https://github.com/USBTURTLECUP/Character-Select-</PackageProjectUrl>
         <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
