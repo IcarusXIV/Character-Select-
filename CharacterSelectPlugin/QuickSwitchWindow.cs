@@ -41,6 +41,7 @@ namespace CharacterSelectPlugin.Windows
             RespectCloseHotkey = !plugin.Configuration.QuickSwitchIgnoreEscape;
 
             int themeColorCount = ThemeHelper.PushThemeColors(plugin.Configuration);
+            int themeStyleVarCount = ThemeHelper.PushThemeStyleVars(plugin.Configuration.UIScaleMultiplier);
 
             try
             {
@@ -259,6 +260,7 @@ namespace CharacterSelectPlugin.Windows
                 {
                     ImGui.PopStyleColor(6);
                 }
+                ThemeHelper.PopThemeStyleVars(themeStyleVarCount);
                 ThemeHelper.PopThemeColors(themeColorCount);
             }
         }

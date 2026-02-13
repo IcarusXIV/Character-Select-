@@ -736,6 +736,14 @@ namespace CharacterSelectPlugin.Windows
             {
                 Confirmed = true;
                 SelectedPath = selectedFile;
+
+                // Remember last used directory
+                if (configuration != null)
+                {
+                    configuration.LastBrowserDirectory = currentDirectory;
+                    configuration.Save();
+                }
+
                 OnFileSelected?.Invoke(selectedFile);
                 IsOpen = false;
             }
@@ -751,6 +759,9 @@ namespace CharacterSelectPlugin.Windows
 
             if (!string.IsNullOrEmpty(startDirectory) && Directory.Exists(startDirectory))
                 currentDirectory = startDirectory;
+            else if (!string.IsNullOrEmpty(configuration?.LastBrowserDirectory) &&
+                     Directory.Exists(configuration.LastBrowserDirectory))
+                currentDirectory = configuration.LastBrowserDirectory;
 
             RefreshDirectory();
             IsOpen = true;

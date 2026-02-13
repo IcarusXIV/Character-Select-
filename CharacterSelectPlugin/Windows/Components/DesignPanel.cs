@@ -1948,11 +1948,11 @@ namespace CharacterSelectPlugin.Windows.Components
                         {
                             float buttonSize = 18f * scale;
 
-                            // Green plus symbol
+                            // Green plus symbol — use design GUID for unique ID (names can collide)
                             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.2f, 0.8f, 0.2f, 1.0f));
                             ImGui.PushFont(UiBuilder.IconFont);
 
-                            if (ImGui.Selectable($"\uf067##import_{character.Name}_{design.Name}", false, ImGuiSelectableFlags.None, new Vector2(buttonSize, buttonSize)))
+                            if (ImGui.Selectable($"\uf067##import_{design.Id}", false, ImGuiSelectableFlags.None, new Vector2(buttonSize, buttonSize)))
                             {
                                 // Clone the entire design using JSON serialization (exact copy like copy-paste in config)
                                 var json = JsonConvert.SerializeObject(design);
@@ -1960,6 +1960,7 @@ namespace CharacterSelectPlugin.Windows.Components
                                 clone.Name = design.Name + " (Copy)";
                                 clone.Id = Guid.NewGuid();
                                 clone.DateAdded = DateTime.UtcNow;
+                                clone.FolderId = null; // reset so it appears at root level
 
                                 targetForDesignImport.Designs.Add(clone);
                                 plugin.SaveConfiguration();

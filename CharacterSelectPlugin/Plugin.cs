@@ -3515,11 +3515,11 @@ namespace CharacterSelectPlugin
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}"; // Who is logged in
-                string pluginCharacterKey = $"{character.Name}@{worldName}"; // Who was selected (CS+ character name)
+                string pluginCharacterKey = $"{character.Name}@{worldName}"; // CS+ character identity
 
                 ActiveProfilesByPlayerName[fullKey] = character.Name;
 
-                // This is what OnLogin uses to find the right profile (physical in-game name)
+                // Track which physical character last used this profile
                 character.LastInGameName = fullKey;
 
                 // This is the key logic: player -> selected plugin character
@@ -3530,7 +3530,7 @@ namespace CharacterSelectPlugin
                 try
                 {
                     File.WriteAllText(SessionInfoPath, character.Name);
-                    Plugin.Log.Debug($"[ApplyProfile] 📝 Wrote session_info.txt = {character.Name}");
+                    Plugin.Log.Debug($"[ApplyProfile] Wrote session_info.txt = {character.Name}");
                 }
                 catch (Exception ex)
                 {
@@ -3546,7 +3546,6 @@ namespace CharacterSelectPlugin
                     Plugin.Log.Error($"[SetActiveCharacter] Failed to save configuration: {ex.Message}");
                 }
 
-                // These log lines now match and won't be skipped
                 Plugin.Log.Debug($"[SetActiveCharacter] Saved: {fullKey} → {pluginCharacterKey}");
                 Plugin.Log.Debug($"[SetActiveCharacter] Set LastInGameName = {fullKey} for profile {character.Name}");
 
@@ -4417,10 +4416,43 @@ namespace CharacterSelectPlugin
                     lastAppliedCharacter = fullKey;
                     characterAlreadyAppliedOnStartup = true; // Mark as handled
                 }
-                else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
+                else
                 {
-                    Plugin.Log.Debug($"[AutoLoad-LastUsed] ❌ No match found for {lastUsedKey}");
-                    lastAppliedCharacter = $"!notfound:{lastUsedKey}";
+                    // Recovery: if value equals key (corrupted by old SetActiveCharacter bug),
+                    // try to find character via LastUsedCharacterKey or session_info.txt
+                    Character? recovered = null;
+                    if (lastUsedKey == fullKey)
+                    {
+                        Plugin.Log.Debug($"[AutoLoad-LastUsed] Detected corrupted entry (value=key), attempting recovery");
+
+                        // Try LastUsedCharacterKey first
+                        if (!string.IsNullOrEmpty(Configuration.LastUsedCharacterKey))
+                        {
+                            recovered = Characters.FirstOrDefault(c =>
+                                c.Name.Equals(Configuration.LastUsedCharacterKey, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        // Try session_info.txt
+                        if (recovered == null && _pendingSessionCharacterName != null)
+                        {
+                            recovered = Characters.FirstOrDefault(c =>
+                                c.Name.Equals(_pendingSessionCharacterName, StringComparison.OrdinalIgnoreCase));
+                        }
+                    }
+
+                    if (recovered != null)
+                    {
+                        Plugin.Log.Debug($"[AutoLoad-LastUsed] ✅ Recovered: applying {recovered.Name} for {fullKey}");
+                        int designIndex = GetLastUsedDesignIndex(recovered);
+                        ApplyProfile(recovered, designIndex);
+                        lastAppliedCharacter = fullKey;
+                        characterAlreadyAppliedOnStartup = true;
+                    }
+                    else if (lastAppliedCharacter != $"!notfound:{lastUsedKey}")
+                    {
+                        Plugin.Log.Debug($"[AutoLoad-LastUsed] ❌ No match found for {lastUsedKey}");
+                        lastAppliedCharacter = $"!notfound:{lastUsedKey}";
+                    }
                 }
             }
             else
@@ -4699,7 +4731,17 @@ namespace CharacterSelectPlugin
                     return;
 
                 // Gearset indices are 0-based internally, but 1-based for users
-                gearsetModule->EquipGearset(gearsetNumber - 1);
+                int targetIndex = gearsetNumber - 1;
+
+                // Skip if already on target gearset — re-equipping the same gearset
+                // triggers a base equipment reload that overrides Glamourer's design
+                if (gearsetModule->CurrentGearsetIndex == targetIndex)
+                {
+                    Log.Debug($"[Gearset] Already on gearset {gearsetNumber}, skipping switch");
+                    return;
+                }
+
+                gearsetModule->EquipGearset(targetIndex);
             }
             catch (Exception ex)
             {

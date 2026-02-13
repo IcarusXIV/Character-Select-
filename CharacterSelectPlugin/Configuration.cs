@@ -92,6 +92,7 @@ namespace CharacterSelectPlugin
         public bool EnableCharacterHoverEffects { get; set; } = false;
         public bool UseImGuiFilePicker { get; set; } = false;
         public List<string> PinnedFileBrowserPaths { get; set; } = new();
+        public string? LastBrowserDirectory { get; set; }
 
         // Theme Settings
         public ThemeSelection SelectedTheme { get; set; } = ThemeSelection.Current;
