@@ -54,6 +54,10 @@ namespace CharacterSelectPlugin
         // Track party composition by ObjectId to detect when party changes
         private HashSet<uint> trackedPartyObjectIds = new();
 
+        // Skip replacement for a few frames after party change so the game can refresh text nodes
+        private int partyChangeSkipFrames = 0;
+        private const int PartyChangeSkipFrameCount = 5;
+
         // Target bar addons
         private static readonly string[] TargetAddonNames = { "_TargetInfo", "_TargetInfoMainTarget", "_TargetInfoCastBar" };
 
@@ -782,6 +786,10 @@ namespace CharacterSelectPlugin
                     log.Debug($"[PartyList] Party composition changed (was {trackedPartyObjectIds.Count} members, now {currentObjectIds.Count}) - clearing all tracking");
                     partySlotToPhysicalName.Clear();
                     partySlotPrefixBytes.Clear();
+
+                    // Skip replacement for a few frames so the game can refresh text nodes
+                    // Without this, stale CS+ names linger on slots that now belong to different players
+                    partyChangeSkipFrames = PartyChangeSkipFrameCount;
                 }
 
                 trackedPartyObjectIds = currentObjectIds;
@@ -807,6 +815,14 @@ namespace CharacterSelectPlugin
 
             // Check for party composition changes - clear all tracking if party changed
             CheckForPartyChange();
+
+            // After a party change, skip replacement for a few frames so the game
+            // can refresh text nodes with the correct names for new members
+            if (partyChangeSkipFrames > 0)
+            {
+                partyChangeSkipFrames--;
+                return;
+            }
 
             // Process all slots - local player is ALWAYS slot 0
             // Note: We rely on CheckForPartyChange() (ObjectId-based) to detect party composition changes.

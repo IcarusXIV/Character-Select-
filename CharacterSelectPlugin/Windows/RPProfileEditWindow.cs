@@ -443,20 +443,44 @@ namespace CharacterSelectPlugin.Windows
                 keyTraitsBox.Content = rp.Tags ?? "";
             }
 
-            // Additional Details - populate with Relationship, Occupation, and any custom entries
+            // Additional Details - populate LeftColumn/RightColumn for KeyValue editor
             var additionalDetailsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Additional Details");
-            if (additionalDetailsBox != null && string.IsNullOrWhiteSpace(additionalDetailsBox.Content))
+            if (additionalDetailsBox != null && string.IsNullOrWhiteSpace(additionalDetailsBox.LeftColumn))
             {
-                // Build initial content from RP Profile fields + custom data
-                var lines = new List<string>();
+                // Build key-value pairs from RP Profile fields + custom data
+                var keys = new List<string>();
+                var values = new List<string>();
                 if (!string.IsNullOrWhiteSpace(rp.Relationship))
-                    lines.Add($"Relationship: {rp.Relationship}");
+                {
+                    keys.Add("Relationship");
+                    values.Add(rp.Relationship);
+                }
                 if (!string.IsNullOrWhiteSpace(rp.Occupation))
-                    lines.Add($"Occupation: {rp.Occupation}");
+                {
+                    keys.Add("Occupation");
+                    values.Add(rp.Occupation);
+                }
                 if (!string.IsNullOrWhiteSpace(rp.AdditionalDetailsCustom))
-                    lines.Add(rp.AdditionalDetailsCustom);
-                additionalDetailsBox.Content = string.Join("\n", lines);
-                // Use KeyValue layout for structured display
+                {
+                    foreach (var line in rp.AdditionalDetailsCustom.Split('\n'))
+                    {
+                        var trimmed = line.Trim();
+                        if (string.IsNullOrWhiteSpace(trimmed)) continue;
+                        var colonIndex = trimmed.IndexOf(':');
+                        if (colonIndex > 0)
+                        {
+                            keys.Add(trimmed.Substring(0, colonIndex).Trim());
+                            values.Add(trimmed.Substring(colonIndex + 1).Trim());
+                        }
+                        else
+                        {
+                            keys.Add(trimmed);
+                            values.Add("");
+                        }
+                    }
+                }
+                additionalDetailsBox.LeftColumn = string.Join("\n", keys);
+                additionalDetailsBox.RightColumn = string.Join("\n", values);
                 additionalDetailsBox.LayoutType = ContentBoxLayoutType.KeyValue;
             }
         }
@@ -1424,35 +1448,26 @@ namespace CharacterSelectPlugin.Windows
                 rp.Tags = keyTraitsBox.Content;
             }
 
-            // Additional Details - parse and save structured data
+            // Additional Details - save from KeyValue editor's LeftColumn/RightColumn
             var additionalDetailsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Additional Details");
-            if (additionalDetailsBox != null && !string.IsNullOrWhiteSpace(additionalDetailsBox.Content))
+            if (additionalDetailsBox != null && !string.IsNullOrWhiteSpace(additionalDetailsBox.LeftColumn))
             {
-                // Parse key-value pairs from content
+                var keys = additionalDetailsBox.LeftColumn.Split('\n');
+                var values = additionalDetailsBox.RightColumn?.Split('\n') ?? Array.Empty<string>();
                 var customLines = new List<string>();
-                foreach (var line in additionalDetailsBox.Content.Split('\n'))
+
+                for (int i = 0; i < keys.Length; i++)
                 {
-                    var trimmed = line.Trim();
-                    if (string.IsNullOrWhiteSpace(trimmed)) continue;
+                    var key = keys[i].Trim();
+                    var value = i < values.Length ? values[i].Trim() : "";
+                    if (string.IsNullOrWhiteSpace(key)) continue;
 
-                    var colonIndex = trimmed.IndexOf(':');
-                    if (colonIndex > 0)
-                    {
-                        var key = trimmed.Substring(0, colonIndex).Trim();
-                        var value = trimmed.Substring(colonIndex + 1).Trim();
-
-                        // Check if this is a known field
-                        if (key.Equals("Relationship", StringComparison.OrdinalIgnoreCase))
-                            rp.Relationship = value;
-                        else if (key.Equals("Occupation", StringComparison.OrdinalIgnoreCase))
-                            rp.Occupation = value;
-                        else
-                            customLines.Add(trimmed); // Keep custom entries
-                    }
+                    if (key.Equals("Relationship", StringComparison.OrdinalIgnoreCase))
+                        rp.Relationship = value;
+                    else if (key.Equals("Occupation", StringComparison.OrdinalIgnoreCase))
+                        rp.Occupation = value;
                     else
-                    {
-                        customLines.Add(trimmed); // Keep lines without colon as custom
-                    }
+                        customLines.Add($"{key}: {value}");
                 }
                 rp.AdditionalDetailsCustom = customLines.Count > 0 ? string.Join("\n", customLines) : null;
             }

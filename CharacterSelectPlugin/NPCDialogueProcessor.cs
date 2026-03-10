@@ -82,6 +82,15 @@ namespace CharacterSelectPlugin
                         var flagInfo = ExtractFlagWords(data, pos);
                         if (flagInfo != null)
                         {
+                            // Reject false positives — real gender flags always have words of 2+ chars
+                            if (flagInfo.FemaleWord.Length < 2 || flagInfo.MaleWord.Length < 2)
+                            {
+                                log.Info($"[FLAG] Skipping false positive at {pos}: '{flagInfo.FemaleWord}' / '{flagInfo.MaleWord}'");
+                                result.Add(data[pos]);
+                                pos++;
+                                continue;
+                            }
+
                             var flagId = data[pos + 2];
                             log.Info($"[FLAG] Processing flag 0x{flagId:X2} with '{flagInfo.FemaleWord}' / '{flagInfo.MaleWord}'");
 

@@ -1751,6 +1751,12 @@ namespace CharacterSelectPlugin.Windows.Components
                 // Check if this is a Secret Mode (Conflict Resolution) design
                 if (design.SecretModState != null && design.SecretModState.Any())
                 {
+                    // Ensure the correct Penumbra collection is assigned before CR modifies it
+                    if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
+                    {
+                        plugin.EnsurePenumbraCollectionAssignment(character.PenumbraCollection);
+                    }
+
                     // Apply mod state asynchronously first, then execute macro with proper threading
                     _ = Task.Run(async () =>
                     {

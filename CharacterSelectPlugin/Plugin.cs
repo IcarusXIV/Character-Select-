@@ -83,6 +83,7 @@ namespace CharacterSelectPlugin
             "/honorific force set",
             "/moodle remove",
             "/moodle apply",
+            "/wait",
             "/sidle",
             "/penumbra redraw"
         };
@@ -237,7 +238,11 @@ namespace CharacterSelectPlugin
         private readonly Dictionary<string, (string designName, DateTime time)> lastRandomDesignApplied = new();
         private readonly Dictionary<string, DateTime> lastDesignMacroExecuted = new();
         private bool randomDesignCRAppliedThisSession = false;
-        
+
+        // Persisted macro — kept alive so the game can finish processing /wait commands.
+        // Cleaned up on next execution or plugin dispose.
+        private unsafe RaptureMacroModule.Macro* persistedMacro = null;
+
         // Conflict Resolution mod categorization cache
         internal Dictionary<string, ModType>? modCategorizationCache = null;
         private readonly string ModCacheFilePath;
@@ -1589,9 +1594,13 @@ namespace CharacterSelectPlugin
 
             // Dispose Penumbra integration services
             PenumbraIntegration?.Dispose();
-            
+
+            // Clean up persisted macro memory
+            CleanupPersistedMacro();
+
             // Dispose IPC provider
             ipcProvider?.Dispose();
+
             try
             {
                 string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
@@ -2453,62 +2462,17 @@ namespace CharacterSelectPlugin
                     }
                 }
             }
-            var pluginCommands = new List<string>();
-            var gameCommands = new List<string>();
-
-            // Track gearset usage for future filtering
-            var currentJobId = ClientState.LocalPlayer?.ClassJob.RowId ?? 0;
-
-            // Check if this macro contains wait commands
-            bool containsWaitCommands = macroText.Split('\n')
-                .Any(line => line.Trim().StartsWith("/wait", StringComparison.OrdinalIgnoreCase));
-
-            // Separate plugin commands from game commands
+            // Build command list
+            var allCommands = new List<string>();
             foreach (var raw in macroText.Split('\n'))
             {
                 var cmd = raw.Trim();
-                if (cmd.Length == 0) continue;
-
-                // Check for duplicate gearset commands FIRST
-                if (IsGearsetChangeCommand(cmd))
-                {
-                    // ... keep your existing gearset tracking code here
-                }
-
-                // KEY CHANGE: If macro contains waits, send ALL commands through game system
-                if (containsWaitCommands)
-                {
-                    if (cmd.StartsWith("/"))
-                    {
-                        gameCommands.Add(cmd);
-                        Log.Debug($"Queued for sequential execution: '{cmd}'");
-                    }
-                }
-                else
-                {
-                    // Normal execution: immediate plugin commands
-                    bool handledByPlugin = CommandManager.ProcessCommand(cmd);
-
-                    if (handledByPlugin)
-                    {
-                        Log.Debug($"Plugin command executed: '{cmd}'");
-                    }
-                    else if (cmd.StartsWith("/"))
-                    {
-                        gameCommands.Add(cmd);
-                        Log.Debug($"Queued game command: '{cmd}'");
-                    }
-                    else
-                    {
-                        Log.Debug($"Skipping non-command text: '{cmd}'");
-                    }
-                }
+                if (cmd.Length > 0 && cmd.StartsWith("/"))
+                    allCommands.Add(cmd);
             }
 
-            if (gameCommands.Count > 0)
-            {
-                ExecuteGameCommands(gameCommands);
-            }
+            // Execute commands, handling /wait with our own timing
+            ExecuteCommandsWithWaitHandling(allCommands);
 
             if (character != null)
             {
@@ -2552,6 +2516,54 @@ namespace CharacterSelectPlugin
             return "";
         }
 
+        /// <summary>Processes commands in order, executing immediately until a /wait is hit,
+        /// then scheduling the rest after the delay via Framework.RunOnTick.</summary>
+        private void ExecuteCommandsWithWaitHandling(List<string> commands)
+        {
+            for (int i = 0; i < commands.Count; i++)
+            {
+                var cmd = commands[i];
+
+                if (cmd.StartsWith("/wait", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Parse the wait duration
+                    float waitSeconds = 1.0f;
+                    var parts = cmd.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 2 && float.TryParse(parts[1], System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out float parsed))
+                    {
+                        waitSeconds = Math.Clamp(parsed, 0.1f, 60f);
+                    }
+
+                    // Schedule remaining commands after the delay
+                    var remaining = commands.Skip(i + 1).ToList();
+                    if (remaining.Count > 0)
+                    {
+                        var delayMs = (int)(waitSeconds * 1000);
+                        Log.Debug($"[WaitHandler] /wait {waitSeconds}s — scheduling {remaining.Count} remaining commands after {delayMs}ms");
+                        Framework.RunOnTick(() =>
+                        {
+                            ExecuteCommandsWithWaitHandling(remaining);
+                        }, TimeSpan.FromMilliseconds(delayMs));
+                    }
+                    return; // Stop — remaining commands are scheduled
+                }
+
+                // Try as plugin command first, fall back to game macro
+                bool handled = CommandManager.ProcessCommand(cmd);
+                if (handled)
+                {
+                    Log.Debug($"Plugin command executed: '{cmd}'");
+                }
+                else
+                {
+                    // Native game command — send through game macro system
+                    ExecuteGameCommands(new List<string> { cmd });
+                    Log.Debug($"Game command executed: '{cmd}'");
+                }
+            }
+        }
+
         // Execute game commands using the macro system
         private unsafe void ExecuteGameCommands(List<string> commands)
         {
@@ -2568,9 +2580,15 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Warning("Could not get RaptureShellModule instance");
                 return;
             }
-            var macro = new RaptureMacroModule.Macro();
-            macro.Name.Ctor();
-            foreach (ref var line in macro.Lines)
+
+            // Clean up the previous macro if one exists
+            CleanupPersistedMacro();
+
+            // Allocate on the heap so the game can read it across ticks (for /wait)
+            persistedMacro = (RaptureMacroModule.Macro*)System.Runtime.InteropServices.Marshal.AllocHGlobal(
+                sizeof(RaptureMacroModule.Macro));
+            persistedMacro->Name.Ctor();
+            foreach (ref var line in persistedMacro->Lines)
             {
                 line.Ctor();
             }
@@ -2583,41 +2601,54 @@ namespace CharacterSelectPlugin
                     var cmd = commands[i];
                     if (string.IsNullOrWhiteSpace(cmd))
                     {
-                        macro.Lines[i].Clear();
+                        persistedMacro->Lines[i].Clear();
                         continue;
                     }
 
                     var encoded = System.Text.Encoding.UTF8.GetBytes(cmd + "\0");
                     if (encoded.Length == 0)
                     {
-                        macro.Lines[i].Clear();
+                        persistedMacro->Lines[i].Clear();
                         continue;
                     }
 
                     fixed (byte* encodedPtr = encoded)
                     {
-                        macro.Lines[i].SetString(encodedPtr);
+                        persistedMacro->Lines[i].SetString(encodedPtr);
                     }
                 }
 
-                // Execute the macro
-                raptureShellModule->ExecuteMacro(&macro);
+                // Execute — macro memory persists until next call or plugin dispose
+                raptureShellModule->ExecuteMacro(persistedMacro);
                 Plugin.Log.Debug($"Executed {commands.Count} game commands via macro system");
             }
             catch (Exception ex)
             {
                 Plugin.Log.Error($"Failed to execute game commands: {ex.Message}");
             }
-            finally
+        }
+
+        /// <summary>Frees the heap-allocated macro from a previous ExecuteGameCommands call.</summary>
+        private unsafe void CleanupPersistedMacro()
+        {
+            if (persistedMacro == null) return;
+
+            try
             {
-                // Clean up the macro object
-                foreach (ref var line in macro.Lines)
+                foreach (ref var line in persistedMacro->Lines)
                 {
                     line.Dtor();
                 }
+                persistedMacro->Name.Dtor();
+                System.Runtime.InteropServices.Marshal.FreeHGlobal((IntPtr)persistedMacro);
             }
-        }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning($"[CleanupPersistedMacro] Error during cleanup: {ex.Message}");
+            }
 
+            persistedMacro = null;
+        }
 
         public void SaveConfiguration()
         {
@@ -5749,6 +5780,49 @@ namespace CharacterSelectPlugin
             }
         }
         
+        /// <summary>Ensures the character's Penumbra collection is set as the individual assignment via IPC.</summary>
+        public bool EnsurePenumbraCollectionAssignment(string collectionName)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(collectionName))
+                    return false;
+
+                var collections = penumbraGetCollectionsIpc?.InvokeFunc();
+                if (collections == null)
+                {
+                    Log.Warning("[CR] Could not get Penumbra collections for assignment");
+                    return false;
+                }
+
+                var targetCollection = collections.FirstOrDefault(kvp =>
+                    string.Equals(kvp.Value, collectionName, StringComparison.OrdinalIgnoreCase));
+
+                if (targetCollection.Key == Guid.Empty)
+                {
+                    Log.Warning($"[CR] Collection '{collectionName}' not found in Penumbra");
+                    return false;
+                }
+
+                // Set individual assignment for the local player (object index 0)
+                var (ec, _) = penumbraSetCollectionForObjectIpc?.InvokeFunc(0, targetCollection.Key, true, true) ?? (-1, null);
+
+                if (ec == 0 || ec == 1) // Success or NothingChanged
+                {
+                    Log.Info($"[CR] Set Penumbra individual assignment to '{collectionName}'");
+                    return true;
+                }
+
+                Log.Warning($"[CR] Failed to set collection assignment, error code: {ec}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[CR] Error setting Penumbra collection assignment: {ex.Message}");
+                return false;
+            }
+        }
+
         public async Task ApplyDesignModState(Character character, CharacterDesign design)
         {
             // Check if Conflict Resolution is enabled
@@ -5766,28 +5840,48 @@ namespace CharacterSelectPlugin
                     return;
                 }
                 
-                // Get current collection
-                var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
-                var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2); // ApiCollectionType.Current
-                
-                if (currentCollectionResult?.Item1 == null)
+                // Resolve the character's collection GUID by name
+                Guid collectionId;
+                if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
                 {
-                    Log.Warning("Could not get current Penumbra collection for design mod state");
-                    return;
+                    var collections = penumbraGetCollectionsIpc?.InvokeFunc();
+                    if (collections == null)
+                    {
+                        Log.Warning("Could not get Penumbra collections for design mod state");
+                        return;
+                    }
+                    var match = collections.FirstOrDefault(kvp =>
+                        string.Equals(kvp.Value, character.PenumbraCollection, StringComparison.OrdinalIgnoreCase));
+                    if (match.Key == Guid.Empty)
+                    {
+                        Log.Warning($"Collection '{character.PenumbraCollection}' not found in Penumbra");
+                        return;
+                    }
+                    collectionId = match.Key;
                 }
-                
-                var collectionId = currentCollectionResult.Value.Item1;
-                
+                else
+                {
+                    // Fallback: use Penumbra's current UI collection
+                    var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
+                    var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2);
+                    if (currentCollectionResult?.Item1 == null)
+                    {
+                        Log.Warning("Could not get Penumbra collection for design mod state");
+                        return;
+                    }
+                    collectionId = currentCollectionResult.Value.Item1;
+                }
+
                 // Get all mod settings to determine what needs to be disabled
                 var getAllModSettings = PluginInterface.GetIpcSubscriber<Guid, bool, bool, int, (int, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)>?)>("Penumbra.GetAllModSettings");
                 var result = getAllModSettings?.InvokeFunc(collectionId, false, false, 0);
-                
+
                 if (result?.Item2 == null)
                 {
                     Log.Warning("Could not get mod settings for design mod state");
                     return;
                 }
-                
+
                 var trySetMod = PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5");
                 if (trySetMod == null)
                 {
@@ -5966,29 +6060,49 @@ namespace CharacterSelectPlugin
             try
             {
                 Log.Info($"Applying Secret Mode mod state for character: {character.Name}");
-                
-                // Get current collection
-                var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
-                var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2); // ApiCollectionType.Current
-                
-                if (currentCollectionResult?.Item1 == null)
+
+                // Resolve the character's collection GUID by name
+                Guid collectionId;
+                if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
                 {
-                    Log.Warning("Could not get current Penumbra collection");
-                    return;
+                    var collections = penumbraGetCollectionsIpc?.InvokeFunc();
+                    if (collections == null)
+                    {
+                        Log.Warning("Could not get Penumbra collections for secret mod state");
+                        return;
+                    }
+                    var match = collections.FirstOrDefault(kvp =>
+                        string.Equals(kvp.Value, character.PenumbraCollection, StringComparison.OrdinalIgnoreCase));
+                    if (match.Key == Guid.Empty)
+                    {
+                        Log.Warning($"Collection '{character.PenumbraCollection}' not found in Penumbra");
+                        return;
+                    }
+                    collectionId = match.Key;
                 }
-                
-                var collectionId = currentCollectionResult.Value.Item1;
-                
+                else
+                {
+                    // Fallback: use Penumbra's current UI collection
+                    var getCurrentCollection = PluginInterface.GetIpcSubscriber<byte, (Guid, string)?>("Penumbra.GetCollection");
+                    var currentCollectionResult = getCurrentCollection?.InvokeFunc(0xE2);
+                    if (currentCollectionResult?.Item1 == null)
+                    {
+                        Log.Warning("Could not get Penumbra collection for secret mod state");
+                        return;
+                    }
+                    collectionId = currentCollectionResult.Value.Item1;
+                }
+
                 // Get all mod settings to determine what needs to be disabled
                 var getAllModSettings = PluginInterface.GetIpcSubscriber<Guid, bool, bool, int, (int, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)>?)>("Penumbra.GetAllModSettings");
                 var result = getAllModSettings?.InvokeFunc(collectionId, false, false, 0);
-                
+
                 if (result?.Item2 == null)
                 {
                     Log.Warning("Could not get mod settings");
                     return;
                 }
-                
+
                 var trySetMod = PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TrySetMod.V5");
                 if (trySetMod == null)
                 {
