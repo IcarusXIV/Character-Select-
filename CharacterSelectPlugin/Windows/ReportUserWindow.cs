@@ -215,7 +215,7 @@ public class ReportUserWindow : Window, IDisposable
 
     private string GetReporterName()
     {
-        var localPlayer = Plugin.ClientState?.LocalPlayer;
+        var localPlayer = Plugin.ObjectTable.LocalPlayer;
         if (localPlayer != null)
         {
             var name = localPlayer.Name.TextValue;

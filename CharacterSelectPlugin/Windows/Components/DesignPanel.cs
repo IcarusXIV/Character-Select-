@@ -1769,7 +1769,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             plugin.Configuration.LastUsedCharacterKey = character.Name;
                             
                             // Update player-specific character tracking for green highlighting
-                            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                            if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
                             {
                                 string localName = player.Name.TextValue;
                                 string worldName = player.HomeWorld.Value.Name.ToString();
@@ -1792,7 +1792,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     plugin.Configuration.LastUsedCharacterKey = character.Name;
                     
                     // Update player-specific character tracking for green highlighting
-                    if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                    if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
                     {
                         string localName = player.Name.TextValue;
                         string worldName = player.HomeWorld.Value.Name.ToString();
@@ -3937,7 +3937,7 @@ namespace CharacterSelectPlugin.Windows.Components
             Character? currentCharacter = null;
 
             // Try player-specific mapping first
-            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();

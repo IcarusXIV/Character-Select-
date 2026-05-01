@@ -214,7 +214,7 @@ namespace CharacterSelectPlugin.Windows
 
             string? currentPlayerName = null;
             string? currentWorldName = null;
-            var currentPlayer = Plugin.ClientState.LocalPlayer;
+            var currentPlayer = Plugin.ObjectTable.LocalPlayer;
             if (currentPlayer?.HomeWorld.IsValid == true)
             {
                 currentPlayerName = currentPlayer.Name.TextValue;
@@ -889,7 +889,7 @@ namespace CharacterSelectPlugin.Windows
 
                     if (!string.IsNullOrWhiteSpace(character.LastInGameName))
                     {
-                        if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                        if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
                         {
                             string localName = player.Name.TextValue;
                             string worldName = player.HomeWorld.Value.Name.ToString();

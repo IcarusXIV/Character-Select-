@@ -519,7 +519,7 @@ namespace CharacterSelectPlugin
             try
             {
                 // Get local player's object index
-                var localPlayer = clientState.LocalPlayer;
+                var localPlayer = Plugin.ObjectTable.LocalPlayer;
                 if (localPlayer == null)
                 {
                     log.Warning("No local player for collection reset");

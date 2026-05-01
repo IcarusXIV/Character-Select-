@@ -272,10 +272,10 @@ namespace CharacterSelectPlugin.Windows
             {
                 Plugin.Log.Debug("[QuickSwitch] Initializing last used selection...");
 
-                if (Plugin.ClientState.LocalPlayer?.HomeWorld.IsValid == true)
+                if (Plugin.ObjectTable.LocalPlayer?.HomeWorld.IsValid == true)
                 {
-                    string localName = Plugin.ClientState.LocalPlayer.Name.TextValue;
-                    string worldName = Plugin.ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                    string localName = Plugin.ObjectTable.LocalPlayer.Name.TextValue;
+                    string worldName = Plugin.ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                     string fullKey = $"{localName}@{worldName}";
 
                     if (plugin.Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))

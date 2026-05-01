@@ -2232,7 +2232,7 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.SetActiveCharacter(character);
 
             // Check if we should upload to server
-            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();

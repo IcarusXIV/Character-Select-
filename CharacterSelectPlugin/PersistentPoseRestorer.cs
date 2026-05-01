@@ -20,7 +20,7 @@ public unsafe class PoseRestorer
 
     public void RestorePosesFor(Character character)
     {
-        if (clientState.LocalPlayer == null) return;
+        if (Plugin.ObjectTable.LocalPlayer == null) return;
 
         Plugin.Framework.RunOnTick(() =>
         {
@@ -30,7 +30,7 @@ public unsafe class PoseRestorer
 
     private void ApplyPose(Character character)
     {
-        var local = clientState.LocalPlayer;
+        var local = Plugin.ObjectTable.LocalPlayer;
         if (local == null || local.Address == IntPtr.Zero)
             return;
 

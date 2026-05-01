@@ -227,7 +227,7 @@ namespace CharacterSelectPlugin.Managers
 
             try
             {
-                var localPlayer = Plugin.ClientState?.LocalPlayer;
+                var localPlayer = Plugin.ObjectTable.LocalPlayer;
                 if (localPlayer == null)
                 {
                     return cachedHonorificTitles;

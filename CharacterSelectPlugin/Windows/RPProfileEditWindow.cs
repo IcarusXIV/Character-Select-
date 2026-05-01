@@ -1477,7 +1477,7 @@ namespace CharacterSelectPlugin.Windows
 
             plugin.SaveConfiguration();
 
-            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid && character != null)
+            if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid && character != null)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();

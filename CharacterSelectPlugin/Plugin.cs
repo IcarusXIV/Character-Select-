@@ -579,7 +579,7 @@ namespace CharacterSelectPlugin
             // Initialize custom fonts for RP Profile View
             NameFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
             {
-                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansJpMedium, new()
+                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, new()
                 {
                     SizePx = 30  // Large size for character names
                 }));
@@ -587,7 +587,7 @@ namespace CharacterSelectPlugin
             
             HeaderFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
             {
-                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansJpMedium, new()
+                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, new()
                 {
                     SizePx = 26  // Larger size for card headers
                 }));
@@ -700,7 +700,7 @@ namespace CharacterSelectPlugin
             ClientState.Login += () =>
             {
                 lastAppliedCharacter = null;
-                Plugin.Log.Debug($"[Character Select+] Local character name: {ClientState.LocalPlayer?.Name.TextValue}");
+                Plugin.Log.Debug($"[Character Select+] Local character name: {ObjectTable.LocalPlayer?.Name.TextValue}");
             };
 
             contextMenuManager = new ContextMenuManager(this, Plugin.ContextMenu);
@@ -837,7 +837,7 @@ namespace CharacterSelectPlugin
 
         private void OnLogin()
         {
-            if (ClientState.LocalPlayer == null || !ClientState.IsLoggedIn)
+            if (ObjectTable.LocalPlayer == null || !ClientState.IsLoggedIn)
             {
                 Plugin.Log.Debug("[OnLogin] Ignored – LocalPlayer is null or not logged in.");
                 return;
@@ -849,7 +849,7 @@ namespace CharacterSelectPlugin
             suppressIdleSaveForFrames = 60;
             secondsSinceLogin = 0f;
 
-            var id = ClientState.LocalPlayer.ClassJob.RowId;
+            var id = ObjectTable.LocalPlayer.ClassJob.RowId;
             if (Configuration.LastKnownJobId == 0 && id != 0)
             {
                 Configuration.LastKnownJobId = id;
@@ -881,10 +881,10 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                if (ClientState.LocalPlayer == null) return;
+                if (ObjectTable.LocalPlayer == null) return;
 
-                var playerName = ClientState.LocalPlayer.Name.TextValue;
-                var world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                var playerName = ObjectTable.LocalPlayer.Name.TextValue;
+                var world = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 var physicalName = $"{playerName}@{world}";
 
                 var encodedName = Uri.EscapeDataString(physicalName);
@@ -958,13 +958,13 @@ namespace CharacterSelectPlugin
 
             try
             {
-                if (ClientState.LocalPlayer == null)
+                if (ObjectTable.LocalPlayer == null)
                 {
                     return new NameChangeResult { HasWarning = false };
                 }
 
-                var playerName = ClientState.LocalPlayer.Name.TextValue;
-                var world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                var playerName = ObjectTable.LocalPlayer.Name.TextValue;
+                var world = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 var physicalName = $"{playerName}@{world}";
 
                 var url = "https://character-select-profile-server-production.up.railway.app/user/check-name-change";
@@ -1034,14 +1034,14 @@ namespace CharacterSelectPlugin
 
         private unsafe void ApplyStoredPoses()
         {
-            if (ClientState.LocalPlayer?.Address is not nint address || address == IntPtr.Zero)
+            if (ObjectTable.LocalPlayer?.Address is not nint address || address == IntPtr.Zero)
                 return;
 
             // Check if current character is assigned "None" - skip pose application
-            if (ClientState.LocalPlayer != null && ClientState.LocalPlayer.HomeWorld.IsValid)
+            if (ObjectTable.LocalPlayer != null && ObjectTable.LocalPlayer.HomeWorld.IsValid)
             {
-                string world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
-                string fullKey = $"{ClientState.LocalPlayer.Name.TextValue}@{world}";
+                string world = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string fullKey = $"{ObjectTable.LocalPlayer.Name.TextValue}@{world}";
                 
                 if (Configuration.CharacterAssignments.TryGetValue(fullKey, out var assignedCharacterName) && 
                     assignedCharacterName == "None")
@@ -1051,7 +1051,7 @@ namespace CharacterSelectPlugin
                 }
             }
 
-            var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+            var character = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ObjectTable.LocalPlayer.Address;
             if (character == null)
                 return;
 
@@ -1134,15 +1134,15 @@ namespace CharacterSelectPlugin
             // Do nothing if world isn't ready, honestly I don't know if it will ever truly be ready for...you! You special thing.
             if (!ClientState.IsLoggedIn ||
                 ClientState.TerritoryType == 0 ||
-                ClientState.LocalPlayer == null ||
-                string.IsNullOrEmpty(ClientState.LocalPlayer.Name.TextValue) ||
-                !ClientState.LocalPlayer.HomeWorld.IsValid)
+                ObjectTable.LocalPlayer == null ||
+                string.IsNullOrEmpty(ObjectTable.LocalPlayer.Name.TextValue) ||
+                !ObjectTable.LocalPlayer.HomeWorld.IsValid)
             {
                 Plugin.Log.Debug("[ApplyProfile] Skipped: Player not fully loaded.");
                 return;
             }
 
-            if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            if (ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
@@ -1703,11 +1703,11 @@ namespace CharacterSelectPlugin
                 if (idleArgs.Length == 1)
                 {
                     // /select idle - check current pose
-                    if (ClientState.LocalPlayer != null)
+                    if (ObjectTable.LocalPlayer != null)
                     {
                         unsafe
                         {
-                            var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ClientState.LocalPlayer.Address;
+                            var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)ObjectTable.LocalPlayer.Address;
                             var currentIdle = charPtr->EmoteController.CPoseState;
 
                             ChatGui.Print($"[CS+] Current idle pose: {currentIdle} (range: 0-6)");
@@ -1901,7 +1901,7 @@ namespace CharacterSelectPlugin
             Character? currentCharacter = null;
             
             // Try to get the last used character for this player first
-            var currentPlayer = ClientState.LocalPlayer;
+            var currentPlayer = ObjectTable.LocalPlayer;
             if (currentPlayer != null)
             {
                 string localName = currentPlayer.Name.ToString();
@@ -2019,7 +2019,7 @@ namespace CharacterSelectPlugin
             try
             {
                 // Get the current player's object ID
-                var localPlayer = ClientState.LocalPlayer;
+                var localPlayer = ObjectTable.LocalPlayer;
                 if (localPlayer == null)
                 {
                     Log.Warning("Local player not found for Glamourer design export");
@@ -2062,7 +2062,7 @@ namespace CharacterSelectPlugin
             try
             {
                 // Get the current player's object ID
-                var localPlayer = ClientState.LocalPlayer;
+                var localPlayer = ObjectTable.LocalPlayer;
                 if (localPlayer == null)
                 {
                     Log.Warning("Local player not found for Customize+ profile export");
@@ -2123,7 +2123,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var localPlayer = ClientState?.LocalPlayer;
+                var localPlayer = ObjectTable.LocalPlayer;
                 if (localPlayer == null) return null;
 
                 // Get active profile GUID
@@ -3406,9 +3406,9 @@ namespace CharacterSelectPlugin
             string lookupKey = requestedName;
 
             // Otherwise, assume it's FullName and append your own world
-            if (!requestedName.Contains('@') && ClientState.LocalPlayer?.HomeWorld.IsValid == true)
+            if (!requestedName.Contains('@') && ObjectTable.LocalPlayer?.HomeWorld.IsValid == true)
             {
-                string world = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string world = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 lookupKey = $"{requestedName}@{world}";
             }
 
@@ -3437,7 +3437,7 @@ namespace CharacterSelectPlugin
 
             if (targetName.Equals("self", StringComparison.OrdinalIgnoreCase))
             {
-                var me = Plugin.ClientState.LocalPlayer;
+                var me = Plugin.ObjectTable.LocalPlayer;
                 if (me != null && me.HomeWorld.IsValid)
                 {
                     var localNameStr = me.Name.TextValue;
@@ -3457,14 +3457,14 @@ namespace CharacterSelectPlugin
 
                 ChatGui.Print($"[DEBUG] Target kind: {rawTarget.ObjectKind}, Name: {rawTarget.Name}");
 
-                if (rawTarget.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player)
+                if (rawTarget.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
                 {
                     ChatGui.PrintError("[Character Select+] You must target a player.");
                     return;
                 }
 
                 string name = rawTarget.Name.ToString();
-                string world = ClientState.LocalPlayer?.HomeWorld.Value.Name.ToString() ?? "Unknown";
+                string world = ObjectTable.LocalPlayer?.HomeWorld.Value.Name.ToString() ?? "Unknown";
 
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(world))
                 {
@@ -3479,7 +3479,7 @@ namespace CharacterSelectPlugin
             ChatGui.Print($"[Character Select+] Looking for {targetName}'s profile");
 
             // Try to get local name first
-            string? localName = ClientState.LocalPlayer?.Name.TextValue;
+            string? localName = ObjectTable.LocalPlayer?.Name.TextValue;
 
             // If player is trying to view their own profile
             if (ActiveProfilesByPlayerName.TryGetValue(targetName, out var overrideName))
@@ -3499,8 +3499,8 @@ namespace CharacterSelectPlugin
                 return;
 
             }
-            else if (!string.IsNullOrEmpty(ClientState.LocalPlayer?.Name.TextValue) &&
-                     ClientState.LocalPlayer?.Name.TextValue.Equals(targetName, StringComparison.OrdinalIgnoreCase) == true)
+            else if (!string.IsNullOrEmpty(ObjectTable.LocalPlayer?.Name.TextValue) &&
+                     ObjectTable.LocalPlayer?.Name.TextValue.Equals(targetName, StringComparison.OrdinalIgnoreCase) == true)
             {
 
                 var match = Characters.FirstOrDefault(c => c.LastInGameName != null &&
@@ -3541,7 +3541,7 @@ namespace CharacterSelectPlugin
         {
             Plugin.Log.Debug("[SetActiveCharacter] CALLED");
 
-            if (ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+            if (ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
@@ -4039,7 +4039,7 @@ namespace CharacterSelectPlugin
         {
             if (Configuration.EnableSafeMode)
                 return;
-            if (!ClientState.IsLoggedIn || ClientState.LocalPlayer == null)
+            if (!ClientState.IsLoggedIn || ObjectTable.LocalPlayer == null)
                 return;
 
             // Process pending shared name lookups (has internal rate limiting)
@@ -4068,7 +4068,7 @@ namespace CharacterSelectPlugin
                     return;
             }
 
-            var player = ClientState.LocalPlayer!;
+            var player = ObjectTable.LocalPlayer!;
             uint currentJobId = player.ClassJob.RowId;
 
             // Job change detection - handles both Job Assignments and Reapply features
@@ -4164,7 +4164,7 @@ namespace CharacterSelectPlugin
                 }
             }
 
-            if (!ClientState.IsLoggedIn || ClientState.LocalPlayer == null || ClientState.TerritoryType == 0)
+            if (!ClientState.IsLoggedIn || ObjectTable.LocalPlayer == null || ClientState.TerritoryType == 0)
                 return;
             unsafe
             {
@@ -4304,13 +4304,13 @@ namespace CharacterSelectPlugin
             if (Configuration.EnableLastUsedCharacterAutoload &&
                 _pendingSessionCharacterName != null &&
                 ClientState.IsLoggedIn &&
-                ClientState.LocalPlayer != null &&
+                ObjectTable.LocalPlayer != null &&
                 ClientState.TerritoryType != 0 &&
                 (Configuration.EnableLoginDelay ? DateTime.Now - loginTime > TimeSpan.FromSeconds(3) : true))
             {
                 // Check if current character has a specific assignment - if so, skip deferred startup
-                string localName = ClientState.LocalPlayer.Name.TextValue;
-                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string localName = ObjectTable.LocalPlayer.Name.TextValue;
+                string worldName = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
 
                 bool hasAssignment = Configuration.CharacterAssignments.ContainsKey(fullKey);
@@ -4436,7 +4436,7 @@ namespace CharacterSelectPlugin
             if (Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedKey))
             {
                 var character = Characters.FirstOrDefault(c =>
-                    $"{c.Name}@{ClientState.LocalPlayer!.HomeWorld.Value.Name}" == lastUsedKey);
+                    $"{c.Name}@{ObjectTable.LocalPlayer!.HomeWorld.Value.Name}" == lastUsedKey);
 
                 if (character != null)
                 {
@@ -4931,7 +4931,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var local = ClientState.LocalPlayer;
+                var local = ObjectTable.LocalPlayer;
                 if (local == null)
                 {
                     Log.Warning("[RevertAllChanges] No local player - cannot revert");
@@ -5051,7 +5051,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var local = ClientState.LocalPlayer;
+                var local = ObjectTable.LocalPlayer;
                 if (local == null) return;
 
                 // Get design list and find matching design
@@ -5090,7 +5090,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var local = ClientState.LocalPlayer;
+                var local = ObjectTable.LocalPlayer;
                 if (local == null) return;
 
                 // SetTemporaryProfileOnCharacter(objectIndex, profileName) - returns (errorCode, guid?)
@@ -5110,7 +5110,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var local = ClientState.LocalPlayer;
+                var local = ObjectTable.LocalPlayer;
                 if (local == null) return;
 
                 penumbraRedrawIpc?.InvokeAction((int)local.ObjectIndex, 0);
@@ -5212,10 +5212,10 @@ namespace CharacterSelectPlugin
             activeCharacter = selectedCharacter;
 
             // Update ActiveProfilesByPlayerName for GetActiveCharacter() (used by name sync)
-            if (ClientState.LocalPlayer != null)
+            if (ObjectTable.LocalPlayer != null)
             {
-                string localName = ClientState.LocalPlayer.Name.TextValue;
-                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string localName = ObjectTable.LocalPlayer.Name.TextValue;
+                string worldName = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
                 ActiveProfilesByPlayerName[fullKey] = selectedCharacter.Name;
                 selectedCharacter.LastInGameName = fullKey;
@@ -5241,9 +5241,9 @@ namespace CharacterSelectPlugin
             playerNameProcessor?.RefreshPartyList();
 
             // Update character tracking for job change and quick switch features
-            if (ClientState.LocalPlayer != null)
+            if (ObjectTable.LocalPlayer != null)
             {
-                var player = ClientState.LocalPlayer;
+                var player = ObjectTable.LocalPlayer;
                 string localName = player.Name.ToString();
                 string worldName = player.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
@@ -5264,7 +5264,7 @@ namespace CharacterSelectPlugin
             SaveConfiguration();
 
             // Always upload to keep server in sync - server uses sharing/exclusion flags to decide visibility
-            if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
+            if (ObjectTable.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
             {
                 string localName = uploadPlayer.Name.TextValue;
                 string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
@@ -5298,10 +5298,10 @@ namespace CharacterSelectPlugin
             activeCharacter = character;
 
             // Update ActiveProfilesByPlayerName for GetActiveCharacter() (used by name sync)
-            if (ClientState.LocalPlayer != null)
+            if (ObjectTable.LocalPlayer != null)
             {
-                string localName = ClientState.LocalPlayer.Name.TextValue;
-                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string localName = ObjectTable.LocalPlayer.Name.TextValue;
+                string worldName = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
                 ActiveProfilesByPlayerName[fullKey] = character.Name;
                 character.LastInGameName = fullKey;
@@ -5356,7 +5356,7 @@ namespace CharacterSelectPlugin
             }
 
             // Always upload to keep server in sync - server uses sharing/exclusion flags to decide visibility
-            if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
+            if (ObjectTable.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
             {
                 string localName = uploadPlayer.Name.TextValue;
                 string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
@@ -5408,10 +5408,10 @@ namespace CharacterSelectPlugin
             activeCharacter = selectedCharacter;
 
             // Update ActiveProfilesByPlayerName for GetActiveCharacter() (used by name sync)
-            if (ClientState.LocalPlayer != null)
+            if (ObjectTable.LocalPlayer != null)
             {
-                string localName = ClientState.LocalPlayer.Name.TextValue;
-                string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                string localName = ObjectTable.LocalPlayer.Name.TextValue;
+                string worldName = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
                 ActiveProfilesByPlayerName[fullKey] = selectedCharacter.Name;
                 selectedCharacter.LastInGameName = fullKey;
@@ -5461,7 +5461,7 @@ namespace CharacterSelectPlugin
             }
 
             // Always upload to keep server in sync
-            if (ClientState.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
+            if (ObjectTable.LocalPlayer is { } uploadPlayer && uploadPlayer.HomeWorld.IsValid)
             {
                 string localName = uploadPlayer.Name.TextValue;
                 string worldName = uploadPlayer.HomeWorld.Value.Name.ToString();
@@ -5617,7 +5617,7 @@ namespace CharacterSelectPlugin
             {
                 var target = TargetManager.Target;
 
-                if (target == null || target.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player)
+                if (target == null || target.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
                     return null;
 
                 if (target is IPlayerCharacter player)
@@ -5700,11 +5700,11 @@ namespace CharacterSelectPlugin
 
         public Character? GetActiveCharacter()
         {
-            if (ClientState.LocalPlayer?.HomeWorld.IsValid != true)
+            if (ObjectTable.LocalPlayer?.HomeWorld.IsValid != true)
                 return null;
 
-            string localName = ClientState.LocalPlayer.Name.TextValue;
-            string worldName = ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+            string localName = ObjectTable.LocalPlayer.Name.TextValue;
+            string worldName = ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
             string fullKey = $"{localName}@{worldName}";
 
             // Find which CS+ character is currently active for this physical character
@@ -5728,7 +5728,7 @@ namespace CharacterSelectPlugin
         }
         private void TryRestorePosesAfterLogin()
         {
-            if (ClientState.LocalPlayer == null)
+            if (ObjectTable.LocalPlayer == null)
                 return;
 
             var currentActiveCharacter = GetActiveCharacter();
@@ -6471,7 +6471,7 @@ namespace CharacterSelectPlugin
         private bool IsValidTargetForModification(IGameObject target)
         {
             // Only allow modification of players, GPose actors, and companions
-            return target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player ||
+            return target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc ||
                    target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc ||
                    target.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion;
         }
@@ -6541,7 +6541,7 @@ namespace CharacterSelectPlugin
             {
                 // Validate target type - accept Players, NPCs, and GPose actors
                 var validTypes = new[] { 
-                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Player, 
+                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc, 
                     Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc, 
                     Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc,
                     Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Companion 

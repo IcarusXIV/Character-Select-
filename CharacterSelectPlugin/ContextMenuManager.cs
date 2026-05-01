@@ -153,7 +153,7 @@ namespace CharacterSelectPlugin.Managers
                 var currentTarget = Plugin.TargetManager.Target;
 
                 if (currentTarget != null &&
-                    currentTarget.ObjectKind == ObjectKind.Player &&
+                    currentTarget.ObjectKind == ObjectKind.Pc &&
                     currentTarget is IPlayerCharacter player)
                 {
                     string characterName = player.Name.TextValue;

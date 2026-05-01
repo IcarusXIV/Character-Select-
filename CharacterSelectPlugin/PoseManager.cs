@@ -30,10 +30,10 @@ public class PoseManager
     {
         Plugin.Log.Debug($"[ApplyPose] Applying {type} pose {index}");
 
-        if (index >= 7 || clientState.LocalPlayer == null)
+        if (index >= 7 || Plugin.ObjectTable.LocalPlayer == null)
             return;
 
-        var characterAddress = clientState.LocalPlayer.Address;
+        var characterAddress = Plugin.ObjectTable.LocalPlayer.Address;
         
         unsafe
         {
@@ -179,10 +179,10 @@ public class PoseManager
     {
         if (!plugin.Configuration.EnablePoseAutoSave || !clientState.IsLoggedIn)
             return;
-        if (clientState.LocalPlayer == null)
+        if (Plugin.ObjectTable.LocalPlayer == null)
             return;
 
-        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)clientState.LocalPlayer.Address;
+        var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)Plugin.ObjectTable.LocalPlayer.Address;
     }
 
     private EmoteController.PoseType TranslatePoseState(byte state)

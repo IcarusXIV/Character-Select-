@@ -1936,7 +1936,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var playerName = clientState.LocalPlayer?.Name.TextValue;
+                var playerName = Plugin.ObjectTable.LocalPlayer?.Name.TextValue;
                 if (string.IsNullOrEmpty(playerName)) return;
 
                 var textSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);

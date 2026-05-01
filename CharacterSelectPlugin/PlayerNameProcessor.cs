@@ -3,6 +3,7 @@ using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Gui.NamePlate;
+using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
@@ -421,7 +422,7 @@ namespace CharacterSelectPlugin
             INamePlateUpdateContext context,
             IReadOnlyList<INamePlateUpdateHandler> handlers)
         {
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -528,14 +529,9 @@ namespace CharacterSelectPlugin
             }
         }
 
-        private void OnChatMessage(
-            XivChatType type,
-            int timestamp,
-            ref SeString sender,
-            ref SeString message,
-            ref bool isHandled)
+        private void OnChatMessage(IHandleableChatMessage chatMsg)
         {
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -552,7 +548,7 @@ namespace CharacterSelectPlugin
                 return;
 
             var localName = localPlayer.Name.TextValue;
-            var senderText = sender.TextValue;
+            var senderText = chatMsg.Sender.TextValue;
 
             // Self replacement
             if (selfReplacementEnabled && senderText.Contains(localName))
@@ -562,7 +558,7 @@ namespace CharacterSelectPlugin
                 var chatDisplayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
                 if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(chatDisplayName))
                 {
-                    sender = ReplaceSenderName(sender, localName, chatDisplayName, activeChar.NameplateColor);
+                    chatMsg.Sender = ReplaceSenderName(chatMsg.Sender, localName, chatDisplayName, activeChar.NameplateColor);
                     return;
                 }
             }
@@ -575,7 +571,7 @@ namespace CharacterSelectPlugin
                 if (match.HasValue)
                 {
                     var (sharedEntry, originalName) = match.Value;
-                    sender = ReplaceSenderName(sender, originalName, sharedEntry.CSName, sharedEntry.NameplateColor);
+                    chatMsg.Sender = ReplaceSenderName(chatMsg.Sender, originalName, sharedEntry.CSName, sharedEntry.NameplateColor);
                 }
             }
         }
@@ -633,7 +629,7 @@ namespace CharacterSelectPlugin
         /// </summary>
         private unsafe void OnTargetAddonUpdate(AddonEvent type, AddonArgs args)
         {
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -804,7 +800,7 @@ namespace CharacterSelectPlugin
             if (addon == null || !addon->AtkUnitBase.IsVisible)
                 return;
 
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -1178,7 +1174,7 @@ namespace CharacterSelectPlugin
                 return;
 
             // Get local player name to exclude from shared replacement
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             var localName = localPlayer?.Name.TextValue;
 
             var nodeList = addon->UldManager.NodeList;

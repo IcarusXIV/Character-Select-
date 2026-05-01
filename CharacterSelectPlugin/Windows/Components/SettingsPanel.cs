@@ -1889,9 +1889,9 @@ namespace CharacterSelectPlugin.Windows.Components
             var knownRealCharacters = plugin.Configuration.LastUsedCharacterByPlayer.Keys.ToList();
 
             // Add current character if logged in and not already in list
-            if (Plugin.ClientState.IsLoggedIn && Plugin.ClientState.LocalPlayer != null)
+            if (Plugin.ClientState.IsLoggedIn && Plugin.ObjectTable.LocalPlayer != null)
             {
-                var player = Plugin.ClientState.LocalPlayer;
+                var player = Plugin.ObjectTable.LocalPlayer;
                 if (player.HomeWorld.IsValid)
                 {
                     string currentFormat = $"{player.Name.TextValue}@{player.HomeWorld.Value.Name}";

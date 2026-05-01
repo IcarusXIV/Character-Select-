@@ -275,11 +275,11 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor();
 
             // Idle pose indicator
-            if (Plugin.ClientState.LocalPlayer != null)
+            if (Plugin.ObjectTable.LocalPlayer != null)
             {
                 unsafe
                 {
-                    var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)Plugin.ClientState.LocalPlayer.Address;
+                    var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)Plugin.ObjectTable.LocalPlayer.Address;
                     var currentIdle = charPtr->EmoteController.CPoseState;
                     
                     var scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
