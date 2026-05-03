@@ -49,6 +49,7 @@ public class WarningModalWindow : Window, IDisposable
         IsOpen = true;
     }
 
+    private int _chromeColorCount = 0;
     public override void PreDraw()
     {
         var viewport = ImGui.GetMainViewport();
@@ -58,6 +59,12 @@ public class WarningModalWindow : Window, IDisposable
             viewport.Pos.Y + (viewport.Size.Y - windowSize.Y) / 2
         );
         ImGui.SetNextWindowPos(centerPos, ImGuiCond.Always);
+        _chromeColorCount = ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+    }
+    public override void PostDraw()
+    {
+        ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+        _chromeColorCount = 0;
     }
 
     public override void Draw()

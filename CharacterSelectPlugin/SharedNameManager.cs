@@ -29,7 +29,11 @@ namespace CharacterSelectPlugin
         private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan NegativeCacheDuration = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan PositiveRefreshInterval = TimeSpan.FromSeconds(10);
-        private static readonly TimeSpan NegativeRefreshInterval = TimeSpan.FromSeconds(10); // Match positive for responsive updates when switching from excluded
+        // Negative cache refresh every 60s (vs positive's 10s). Non-CS+ nearby players are the vast
+        // majority of lookups, and re-checking them every 10s dominates server load without any benefit
+        // for the common case. Cost: newly-opted-in users take up to 60s to appear to nearby clients
+        // (already-cached hits still update on the 10s positive path).
+        private static readonly TimeSpan NegativeRefreshInterval = TimeSpan.FromSeconds(60);
 
         private const string ApiBaseUrl = "https://character-select-profile-server-production.up.railway.app";
         private const int MaxBatchSize = 30; // Increased to reduce number of batches needed

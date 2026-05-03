@@ -221,7 +221,7 @@ namespace CharacterSelectPlugin.Windows
                 {
                     new ContentBox { Title = "Quick Info", Subtitle = "Basic character information", Content = "", Type = ContentBoxType.AdditionalDetails },
                     new ContentBox { Title = "Additional Details", Subtitle = "Key: Value pairs (e.g., Occupation: Adventurer)", Content = "", Type = ContentBoxType.AdditionalDetails, LayoutType = ContentBoxLayoutType.KeyValue },
-                    new ContentBox { Title = "Key Traits", Subtitle = "Comma-separated traits (e.g., Brave, Loyal, Curious)", Content = "", Type = ContentBoxType.KeyTraits },
+                    new ContentBox { Title = "Key Traits", Subtitle = "Same as the mini profile Tags field - comma-separated (e.g., Roleplay, Adventurer, Lore-heavy)", Content = "", Type = ContentBoxType.KeyTraits },
                     new ContentBox { Title = "Likes & Dislikes", Subtitle = "Preferences that define this character", Content = "", Likes = "", Dislikes = "", Type = ContentBoxType.LikesAndDislikes, LayoutType = ContentBoxLayoutType.LikesDislikes },
                     new ContentBox { Title = "External Links", Subtitle = "Social media, websites, and related content", Content = "", Type = ContentBoxType.ExternalLinks }
                 };
@@ -398,22 +398,22 @@ namespace CharacterSelectPlugin.Windows
         }
 
         /// <summary>
-        /// Migrates legacy field data into content boxes.
-        /// Only overwrites boxes that have empty content to preserve user edits.
+        /// Sync mini-editor fields (Bio / Abilities / Tags) into the matching
+        /// content boxes on open so mini edits always reach the expanded view.
+        /// Other boxes only seed on first load to preserve standalone edits.
         /// </summary>
         private void LoadContentIntoBoxes(RPProfile rp)
         {
-            // Only migrate legacy data to boxes that are empty (migration scenario)
-            // This prevents overwriting content that was saved in the content boxes themselves
-
+            // Core Identity mirrors rp.Bio - always sync on open
             var coreIdentityBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Core Identity");
-            if (coreIdentityBox != null && string.IsNullOrWhiteSpace(coreIdentityBox.Content))
+            if (coreIdentityBox != null)
             {
                 coreIdentityBox.Content = rp.Bio ?? "";
             }
 
+            // Combat Prowess mirrors rp.Abilities - always sync on open
             var combatBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Combat Prowess");
-            if (combatBox != null && string.IsNullOrWhiteSpace(combatBox.Content))
+            if (combatBox != null)
             {
                 combatBox.Content = rp.Abilities ?? "";
             }
@@ -436,9 +436,9 @@ namespace CharacterSelectPlugin.Windows
                 linksBox.Content = rp.Links ?? "";
             }
 
-            // Key Traits - populate from rp.Tags (comma-separated tags)
+            // Key Traits mirrors rp.Tags - always sync on open
             var keyTraitsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Key Traits");
-            if (keyTraitsBox != null && string.IsNullOrWhiteSpace(keyTraitsBox.Content))
+            if (keyTraitsBox != null)
             {
                 keyTraitsBox.Content = rp.Tags ?? "";
             }
@@ -483,6 +483,17 @@ namespace CharacterSelectPlugin.Windows
                 additionalDetailsBox.RightColumn = string.Join("\n", values);
                 additionalDetailsBox.LayoutType = ContentBoxLayoutType.KeyValue;
             }
+        }
+
+        private int _chromeColorCount = 0;
+        public override void PreDraw()
+        {
+            _chromeColorCount = CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+        }
+        public override void PostDraw()
+        {
+            CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+            _chromeColorCount = 0;
         }
 
         public override void Draw()
@@ -1475,9 +1486,54 @@ namespace CharacterSelectPlugin.Windows
             rp.LeftContentBoxes = new List<ContentBox>(leftContentBoxes);
             rp.RightContentBoxes = new List<ContentBox>(rightContentBoxes);
 
+            // Achievement hook for title/status
+            if (!string.IsNullOrWhiteSpace(rp.Title) || !string.IsNullOrWhiteSpace(rp.Status))
+                plugin.AchievementTracker?.OnProfileTitleSet();
+
+            // ── Expanded RP profile achievement hooks ──
+            if ((rp.Bio?.Length ?? 0) >= 500)
+                plugin.AchievementTracker?.OnLongBioWritten();
+            if (!string.IsNullOrWhiteSpace(rp.BannerImagePath))
+                plugin.AchievementTracker?.OnBannerImageSet();
+            if (!string.IsNullOrWhiteSpace(rp.BackgroundImageUrl) || !string.IsNullOrWhiteSpace(rp.RPBackgroundImageUrl))
+                plugin.AchievementTracker?.OnUrlBackgroundSet();
+
+            int totalBoxes = (rp.LeftContentBoxes?.Count ?? 0) + (rp.RightContentBoxes?.Count ?? 0);
+            if (totalBoxes >= 6) plugin.AchievementTracker?.OnSixContentBoxes();
+
+            // Layout type checks (this character + breadth across all)
+            bool hasTimeline = (rp.LeftContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Timeline) ?? false)
+                            || (rp.RightContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Timeline) ?? false);
+            bool hasQuote    = (rp.LeftContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Quote) ?? false)
+                            || (rp.RightContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Quote) ?? false);
+            if (hasTimeline) plugin.AchievementTracker?.OnTimelineLayoutUsed();
+            if (hasQuote)    plugin.AchievementTracker?.OnQuoteLayoutUsed();
+
+            var distinctLayouts = new HashSet<ContentBoxLayoutType>();
+            foreach (var c in plugin.Characters)
+            {
+                if (c.RPProfile?.LeftContentBoxes != null)
+                    foreach (var b in c.RPProfile.LeftContentBoxes) distinctLayouts.Add(b.LayoutType);
+                if (c.RPProfile?.RightContentBoxes != null)
+                    foreach (var b in c.RPProfile.RightContentBoxes) distinctLayouts.Add(b.LayoutType);
+            }
+            if (distinctLayouts.Count >= 5)
+                plugin.AchievementTracker?.OnLayoutTypesExplored();
+
+            // Fully Realised composite - all 5 fields filled out on this character
+            bool hasBio      = !string.IsNullOrWhiteSpace(rp.Bio);
+            bool hasPronouns = !string.IsNullOrWhiteSpace(rp.Pronouns);
+            bool hasImage    = !string.IsNullOrWhiteSpace(character?.ImagePath);
+            bool hasBg       = !string.IsNullOrWhiteSpace(rp.BackgroundImage)
+                            || !string.IsNullOrWhiteSpace(rp.BackgroundImageUrl)
+                            || !string.IsNullOrWhiteSpace(rp.RPBackgroundImageUrl);
+            bool hasBox      = totalBoxes > 0;
+            if (hasBio && hasPronouns && hasImage && hasBg && hasBox)
+                plugin.AchievementTracker?.OnProfileCompleted();
+
             plugin.SaveConfiguration();
 
-            if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid && character != null)
+            if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid && character != null)
             {
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
@@ -2255,7 +2311,7 @@ namespace CharacterSelectPlugin.Windows
                 case ContentBoxLayoutType.Timeline:
                     ImGui.Text("Timeline Events:");
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 1.0f));
-                    ImGui.TextWrapped("Format: Date — Event description (one per line)");
+                    ImGui.TextWrapped("Format: Date - Event description (one per line)");
                     ImGui.PopStyleColor();
                     break;
 

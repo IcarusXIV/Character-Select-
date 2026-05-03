@@ -2,7 +2,7 @@
   "Author": "Kid Icarus",
   "Name": "Character Select+",
   "InternalName": "CharacterSelectPlugin",
-  "AssemblyVersion": "2.0.0.8",
+  "AssemblyVersion": "2.1.1.0",
   "Description": "Instant Character Switching Made Simple\n\nCreate and save character profiles, then switch between them instantly. Applies Penumbra Collections, Glamourer Designs, Customize+ Profiles, Honorifics, Moodles, and Idles.Key Features: One-click character switching, multiple designs per character, advanced macro support, roleplay profiles, a character gallery, and immersive dialogue options. Perfect for roleplayers, gposers, and anyone who loves seamless character customization without manually switching between multiple plugins.\n",
   "ApplicableVersion": "any",
   "Tags": [
@@ -12,7 +12,7 @@
     "rp",
     "roleplay"
   ],
-  "DalamudApiLevel": 14,
+  "DalamudApiLevel": 15,
   "LoadRequiredState": 0,
   "LoadSync": false,
   "CanUnloadAsync": false,

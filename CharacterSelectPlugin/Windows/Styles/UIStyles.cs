@@ -13,7 +13,10 @@ namespace CharacterSelectPlugin.Windows.Styles
         private Plugin plugin;
         private int styleStackCount = 0;
         private int colorStackCount = 0;
-        private bool pushedPreDrawWindowBg = false;
+
+        // Hover sheen state, keyed by per-element string ID
+        private readonly System.Collections.Generic.Dictionary<string, DateTime> hoverSweepStarts = new();
+        private const float HoverSweepDuration = 0.65f;
 
         public UIStyles(Plugin plugin)
         {
@@ -21,34 +24,166 @@ namespace CharacterSelectPlugin.Windows.Styles
         }
 
         /// <summary>
-        /// Called in PreDraw. Only pushes WindowBg for Custom theme to allow window frame customization.
-        /// Default/Seasonal themes are completely unaffected.
+        /// Per-element hover sweep state. Returns 0..1 sweep progress while an element
+        /// is freshly hovered, or -1 when nothing should draw (either not hovered or the
+        /// sweep has finished its one-shot animation for this hover).
+        /// </summary>
+        public float UpdateAndGetHoverSweepProgress(string id, bool isHovered)
+        {
+            if (!isHovered)
+            {
+                hoverSweepStarts.Remove(id);
+                return -1f;
+            }
+            if (!hoverSweepStarts.ContainsKey(id))
+                hoverSweepStarts[id] = DateTime.UtcNow;
+
+            float elapsed = (float)(DateTime.UtcNow - hoverSweepStarts[id]).TotalSeconds;
+            if (elapsed >= HoverSweepDuration) return -1f;
+            return elapsed / HoverSweepDuration;
+        }
+
+        /// <summary>
+        /// One-liner helper: call immediately after an ImGui.Button (or any item that
+        /// supports IsItemHovered + GetItemRectMin/Max) to overlay the hover sheen sweep
+        /// on the previously-drawn item. Each call site must pass a unique id so hover
+        /// state can be tracked independently per button.
+        /// </summary>
+        public void ApplyHoverSheenToLastItem(string id, float maxAlpha = 0.18f)
+        {
+            bool hovered = ImGui.IsItemHovered();
+            float sheen = UpdateAndGetHoverSweepProgress(id, hovered);
+            if (sheen >= 0f)
+            {
+                var mn = ImGui.GetItemRectMin();
+                var mx = ImGui.GetItemRectMax();
+                DrawHoverSheen(ImGui.GetWindowDrawList(), mn, mx, sheen, maxAlpha);
+            }
+        }
+
+        // Static fallbacks so windows without a UIStyles instance (e.g., QuickSwitchWindow) share state
+        private static readonly System.Collections.Generic.Dictionary<string, DateTime> staticHoverSweepStarts = new();
+        // Continuous hover effects (perimeter streak etc.) need elapsed-since-hover, kept separate from the one-shot sheen
+        private static readonly System.Collections.Generic.Dictionary<string, double> staticHoverStartTimes = new();
+
+        /// <summary>Seconds elapsed since the element started being hovered, or -1 if not hovered.</summary>
+        public static float GetHoverElapsedTime(string id, bool isHovered)
+        {
+            if (!isHovered)
+            {
+                staticHoverStartTimes.Remove(id);
+                return -1f;
+            }
+            double now = ImGui.GetTime();
+            if (!staticHoverStartTimes.TryGetValue(id, out var startTime))
+            {
+                staticHoverStartTimes[id] = now;
+                return 0f;
+            }
+            return (float)(now - startTime);
+        }
+
+        /// <summary>
+        /// Static variant of <see cref="ApplyHoverSheenToLastItem"/> for windows that
+        /// don't hold a UIStyles instance. Call immediately after an ImGui item.
+        /// </summary>
+        public static void ApplyHoverSheenToLastItemStatic(string id, float maxAlpha = 0.18f)
+        {
+            bool hovered = ImGui.IsItemHovered();
+            if (!hovered)
+            {
+                staticHoverSweepStarts.Remove(id);
+                return;
+            }
+            if (!staticHoverSweepStarts.ContainsKey(id))
+                staticHoverSweepStarts[id] = DateTime.UtcNow;
+
+            float elapsed = (float)(DateTime.UtcNow - staticHoverSweepStarts[id]).TotalSeconds;
+            if (elapsed >= HoverSweepDuration) return;
+            float progress = elapsed / HoverSweepDuration;
+
+            var mn = ImGui.GetItemRectMin();
+            var mx = ImGui.GetItemRectMax();
+            DrawHoverSheen(ImGui.GetWindowDrawList(), mn, mx, progress, maxAlpha);
+        }
+
+        /// <summary>
+        /// Draws a glossy left-to-right sheen sweep across the (mn, mx) rect. Feeds off
+        /// the 0..1 progress returned by <see cref="UpdateAndGetHoverSweepProgress"/>.
+        /// Two halves of AddRectFilledMultiColor build the transparent → bright →
+        /// transparent gradient, clipped to the rect so the off-screen halves don't render.
+        /// </summary>
+        public static void DrawHoverSheen(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float progress, float maxAlpha = 0.20f)
+        {
+            if (progress < 0f || progress > 1f) return;
+
+            float w = mx.X - mn.X;
+            float bandLeftX  = mn.X - w + progress * (2f * w);
+            float bandRightX = bandLeftX + w;
+            float bandMidX   = (bandLeftX + bandRightX) * 0.5f;
+
+            dl.PushClipRect(mn, mx, true);
+
+            uint transparentU = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0f));
+            uint brightU      = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, maxAlpha));
+
+            dl.AddRectFilledMultiColor(
+                new Vector2(bandLeftX, mn.Y),
+                new Vector2(bandMidX,  mx.Y),
+                transparentU, brightU,
+                brightU,      transparentU);
+
+            dl.AddRectFilledMultiColor(
+                new Vector2(bandMidX,   mn.Y),
+                new Vector2(bandRightX, mx.Y),
+                brightU,      transparentU,
+                transparentU, brightU);
+
+            dl.PopClipRect();
+        }
+
+        // PreDraw push count, paired with PopCustomWindowBgIfNeeded in PostDraw
+        private int preDrawSlotsPushed = 0;
+
+        /// <summary>
+        /// PreDraw hook: pushes the chrome slots ImGui paints at Begin time
+        /// (WindowBg, TitleBg, TitleBgActive, TitleBgCollapsed, MenuBarBg) so
+        /// the title bar respects the Custom theme.
         /// </summary>
         public void PushCustomWindowBgIfNeeded()
         {
-            pushedPreDrawWindowBg = false;
+            preDrawSlotsPushed = 0;
 
             if (plugin.Configuration.SelectedTheme != ThemeSelection.Custom)
                 return;
 
             var customTheme = plugin.Configuration.CustomTheme;
-            if (customTheme.ColorOverrides.TryGetValue("color.windowBg", out var packed) && packed.HasValue)
+            preDrawSlotsPushed += TryPushSlot(customTheme, "color.windowBg",     ImGuiCol.WindowBg);
+            preDrawSlotsPushed += TryPushSlot(customTheme, "color.titleBg",      ImGuiCol.TitleBg);
+            preDrawSlotsPushed += TryPushSlot(customTheme, "color.titleBgActive", ImGuiCol.TitleBgActive);
+            preDrawSlotsPushed += TryPushSlot(customTheme, "color.titleBg",      ImGuiCol.TitleBgCollapsed);
+            preDrawSlotsPushed += TryPushSlot(customTheme, "color.menuBarBg",    ImGuiCol.MenuBarBg);
+        }
+
+        private static int TryPushSlot(CustomThemeConfig theme, string key, ImGuiCol target)
+        {
+            if (theme.ColorOverrides.TryGetValue(key, out var packed) && packed.HasValue)
             {
-                var color = CustomThemeDefinitions.UnpackColor(packed.Value);
-                ImGui.PushStyleColor(ImGuiCol.WindowBg, color);
-                pushedPreDrawWindowBg = true;
+                ImGui.PushStyleColor(target, CustomThemeDefinitions.UnpackColor(packed.Value));
+                return 1;
             }
+            return 0;
         }
 
         /// <summary>
-        /// Called in PostDraw. Pops WindowBg if it was pushed in PreDraw.
+        /// Called in PostDraw. Pops every slot that was pushed in PreDraw.
         /// </summary>
         public void PopCustomWindowBgIfNeeded()
         {
-            if (pushedPreDrawWindowBg)
+            if (preDrawSlotsPushed > 0)
             {
-                ImGui.PopStyleColor(1);
-                pushedPreDrawWindowBg = false;
+                ImGui.PopStyleColor(preDrawSlotsPushed);
+                preDrawSlotsPushed = 0;
             }
         }
 
@@ -205,7 +340,7 @@ namespace CharacterSelectPlugin.Windows.Styles
             // Styling variables for polish
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8 * scale, 4 * scale));
             ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * scale, 6 * scale));
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * scale); // Scale window rounding
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f); // Boutique: no rounding so tooltips stay sharp-cornered
             ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0f * scale);   // Scale child rounding
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * scale);   // Scale frame rounding
             ImGui.PushStyleVar(ImGuiStyleVar.ScrollbarRounding, 8.0f * scale); // Scale scrollbar rounding
@@ -214,7 +349,9 @@ namespace CharacterSelectPlugin.Windows.Styles
             ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, 0.5f * scale);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0.5f * scale);
 
-            colorStackCount += 21; // Updated count to include button colors
+            // ColorOptions push one slot each, plus the manual SeparatorHovered push.
+            // Compute dynamically so editor option additions/removals don't drift the count.
+            colorStackCount += CustomThemeDefinitions.ColorOptions.Length + 1;
             styleStackCount += 10;
 
         }
@@ -369,9 +506,42 @@ namespace CharacterSelectPlugin.Windows.Styles
         {
             float finalScale = ImGuiHelpers.GlobalScale * scale;
 
-            // Calculate icon size
+            // Calculate icon size and visible-glyph bounds. CalcTextSize returns the
+            // advance width, which can be wider than the visible glyph for some
+            // FontAwesome icons (notably the trophy \uf091), leaving extra space on
+            // the right and visually pushing the glyph to the left when we centre by
+            // advance width alone. Pull the per-glyph X0/X1 so we can centre on the
+            // actual visible bounds instead.
+            float visibleX0 = 0f;
+            float visibleWidth;
+            Vector2 iconSize;
             ImGui.PushFont(UiBuilder.IconFont);
-            var iconSize = ImGui.CalcTextSize(icon);
+            iconSize = ImGui.CalcTextSize(icon);
+            if (!string.IsNullOrEmpty(icon))
+            {
+                visibleWidth = iconSize.X;
+                try
+                {
+                    unsafe
+                    {
+                        var glyphPtr = ImGui.GetFont().FindGlyph(icon[0]);
+                        if (glyphPtr != null)
+                        {
+                            visibleX0 = glyphPtr->X0;
+                            visibleWidth = glyphPtr->X1 - glyphPtr->X0;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Fallback if the glyph API isn't available or the glyph isn't found
+                    visibleWidth = iconSize.X;
+                }
+            }
+            else
+            {
+                visibleWidth = iconSize.X;
+            }
             ImGui.PopFont();
 
             // Determine button size
@@ -410,13 +580,26 @@ namespace CharacterSelectPlugin.Windows.Styles
 
             drawList.AddRectFilled(buttonPos, buttonEnd, ImGui.ColorConvertFloat4ToU32(bgColor), ImGui.GetStyle().FrameRounding);
 
-            // Draw centered icon
-            var iconPos = buttonPos + (buttonSize - iconSize) * 0.5f;
+            // Centre horizontally on the visible glyph bounds (accounts for glyphs
+            // whose advance width exceeds their visible width); Y-centre on the
+            // advance-width cell (FontAwesome has no descent so cell-centring is fine).
+            // AddText draws the glyph starting at (pos.X + glyph.X0), so we subtract
+            // visibleX0 from the target X to line the visible glyph's left edge up
+            // with where we want it.
+            float targetVisibleLeftX = buttonPos.X + (buttonSize.X - visibleWidth) * 0.5f;
+            var iconPos = new Vector2(
+                targetVisibleLeftX - visibleX0,
+                buttonPos.Y + (buttonSize.Y - iconSize.Y) * 0.5f);
             var textColor = iconColor ?? ImGui.GetStyle().Colors[(int)ImGuiCol.Text];
 
             ImGui.PushFont(UiBuilder.IconFont);
             drawList.AddText(iconPos, ImGui.ColorConvertFloat4ToU32(textColor), icon);
             ImGui.PopFont();
+
+            // Hover sheen sweep on hover-enter (plays once, then waits for un-hover + re-hover)
+            float sheen = UpdateAndGetHoverSweepProgress(buttonId, isHovered);
+            if (sheen >= 0f)
+                DrawHoverSheen(drawList, buttonPos, buttonEnd, sheen, maxAlpha: 0.22f);
 
             if (isHovered && !string.IsNullOrEmpty(tooltip))
             {
@@ -551,13 +734,7 @@ namespace CharacterSelectPlugin.Windows.Styles
     /// </summary>
     public static class ThemeHelper
     {
-        /// <summary>
-        /// Pushes theme colors for secondary windows (not the main window).
-        /// Does NOT push background image - only colors.
-        /// Call PopThemeColors with the returned count when done.
-        /// </summary>
-        /// <param name="config">Plugin configuration</param>
-        /// <returns>Number of colors pushed (use for PopStyleColor)</returns>
+        /// <summary>Pushes theme colours for secondary windows. Pair with PopThemeColors.</summary>
         public static int PushThemeColors(Configuration config)
         {
             if (config.SelectedTheme == ThemeSelection.Custom)
@@ -613,6 +790,89 @@ namespace CharacterSelectPlugin.Windows.Styles
         }
 
         /// <summary>
+        /// Pushes chrome colours (WindowBg, TitleBg, TitleBgActive, MenuBarBg)
+        /// for the active theme. Must be called from PreDraw, before ImGui.Begin,
+        /// so the title bar picks them up. Pair with PopWindowChromeColors in PostDraw.
+        /// </summary>
+        public static int PushWindowChromeColors(Configuration config)
+        {
+            Vector4 windowBg, titleBg, titleBgActive, menuBarBg;
+            ResolveChromeColors(config, out windowBg, out titleBg, out titleBgActive, out menuBarBg);
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, windowBg);
+            ImGui.PushStyleColor(ImGuiCol.TitleBg, titleBg);
+            ImGui.PushStyleColor(ImGuiCol.TitleBgActive, titleBgActive);
+            ImGui.PushStyleColor(ImGuiCol.MenuBarBg, menuBarBg);
+            return 4;
+        }
+
+        /// <summary>Counterpart to PushWindowChromeColors. Call in PostDraw.</summary>
+        public static void PopWindowChromeColors(int count)
+        {
+            if (count > 0) ImGui.PopStyleColor(count);
+        }
+
+        private static void ResolveChromeColors(Configuration config,
+            out Vector4 windowBg, out Vector4 titleBg, out Vector4 titleBgActive, out Vector4 menuBarBg)
+        {
+            if (config.SelectedTheme == ThemeSelection.Custom)
+            {
+                var custom = config.CustomTheme;
+                windowBg      = LookupCustom(custom, ImGuiCol.WindowBg,      new Vector4(0.05f, 0.05f, 0.05f, 0.98f));
+                titleBg       = LookupCustom(custom, ImGuiCol.TitleBg,       new Vector4(0.04f, 0.04f, 0.04f, 1.0f));
+                titleBgActive = LookupCustom(custom, ImGuiCol.TitleBgActive, new Vector4(0.06f, 0.06f, 0.06f, 1.0f));
+                menuBarBg     = LookupCustom(custom, ImGuiCol.MenuBarBg,     new Vector4(0.05f, 0.05f, 0.05f, 0.98f));
+                return;
+            }
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(config))
+            {
+                switch (SeasonalThemeManager.GetEffectiveTheme(config))
+                {
+                    case SeasonalTheme.Halloween:
+                        windowBg      = new Vector4(0.08f, 0.04f, 0.02f, 0.98f);
+                        titleBg       = new Vector4(0.06f, 0.03f, 0.02f, 1.0f);
+                        titleBgActive = new Vector4(0.08f, 0.04f, 0.02f, 1.0f);
+                        menuBarBg     = new Vector4(0.08f, 0.04f, 0.02f, 0.98f);
+                        return;
+                    case SeasonalTheme.Winter:
+                        windowBg      = new Vector4(0.12f, 0.16f, 0.22f, 0.98f);
+                        titleBg       = new Vector4(0.08f, 0.12f, 0.18f, 1.0f);
+                        titleBgActive = new Vector4(0.12f, 0.16f, 0.22f, 1.0f);
+                        menuBarBg     = new Vector4(0.12f, 0.16f, 0.22f, 0.98f);
+                        return;
+                    case SeasonalTheme.Christmas:
+                        windowBg      = new Vector4(0.25f, 0.05f, 0.05f, 0.98f);
+                        titleBg       = new Vector4(0.20f, 0.04f, 0.04f, 1.0f);
+                        titleBgActive = new Vector4(0.25f, 0.05f, 0.05f, 1.0f);
+                        menuBarBg     = new Vector4(0.25f, 0.05f, 0.05f, 0.98f);
+                        return;
+                    case SeasonalTheme.Valentines:
+                        windowBg      = new Vector4(0.18f, 0.07f, 0.12f, 0.98f);
+                        titleBg       = new Vector4(0.14f, 0.05f, 0.10f, 1.0f);
+                        titleBgActive = new Vector4(0.20f, 0.08f, 0.14f, 1.0f);
+                        menuBarBg     = new Vector4(0.18f, 0.07f, 0.12f, 0.98f);
+                        return;
+                }
+            }
+            // Default theme
+            windowBg      = new Vector4(0.05f, 0.05f, 0.05f, 0.98f);
+            titleBg       = new Vector4(0.04f, 0.04f, 0.04f, 1.0f);
+            titleBgActive = new Vector4(0.06f, 0.06f, 0.06f, 1.0f);
+            menuBarBg     = new Vector4(0.05f, 0.05f, 0.05f, 0.98f);
+        }
+
+        private static Vector4 LookupCustom(CustomThemeConfig theme, ImGuiCol target, Vector4 fallback)
+        {
+            foreach (var option in CustomThemeDefinitions.ColorOptions)
+            {
+                if (option.Target != target) continue;
+                if (theme.ColorOverrides.TryGetValue(option.Key, out var packed) && packed.HasValue)
+                    return CustomThemeDefinitions.UnpackColor(packed.Value);
+                return option.DefaultValue;
+            }
+            return fallback;
+        }
+
+        /// <summary>
         /// Pushes standard style variables for secondary windows.
         /// </summary>
         /// <param name="scale">UI scale multiplier</param>
@@ -623,7 +883,7 @@ namespace CharacterSelectPlugin.Windows.Styles
 
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8 * finalScale, 4 * finalScale));
             ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(8 * finalScale, 6 * finalScale));
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10.0f * finalScale);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 8.0f * finalScale);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6.0f * finalScale);
             ImGui.PushStyleVar(ImGuiStyleVar.ScrollbarRounding, 8.0f * finalScale);

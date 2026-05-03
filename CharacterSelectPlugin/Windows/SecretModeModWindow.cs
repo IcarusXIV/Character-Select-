@@ -90,6 +90,9 @@ namespace CharacterSelectPlugin.Windows
         private UIStyles uiStyles;
         private List<ModEntry> availableMods = new();
         private Dictionary<string, bool> selectedMods = new(); // true=Enable, false=Disable
+        // Snapshot of selectedMods at Open() time, used to compute the +N enabled / -N
+        // disabled delta in the footer ("vs. saved").
+        private Dictionary<string, bool> originalSelection = new();
         private HashSet<string> modsToInherit = new(); // Mods explicitly set to Inherit (restore Penumbra inheritance)
         private string searchFilter = ""; // Category-specific search
         private string globalSearchFilter = ""; // Global search across all categories
@@ -126,6 +129,53 @@ namespace CharacterSelectPlugin.Windows
         
         // Pinned mods (never disabled)
         private HashSet<string> pinnedMods = new();
+
+        // Tracks which mod's state-combo popup is currently open (only one at a
+        // time across all rows). Cleared when the popup closes.
+        private string? openStateComboKey = null;
+
+        // Wardrobe-style page transition: when currentPage changes, the
+        // previous page's gold border/bg fades out and the new page's fades
+        // in over PageTransitionDur (ease-out-cubic). Mirrors the pattern in
+        // CharacterGrid.PageTransitionT used by MainWindow's pager dots.
+        private int pagePrevIdx = 0;
+        private double pageTransitionStart = -1;
+        private const double PageTransitionDur = 0.28;
+
+        private bool IsPageTransitioning
+        {
+            get
+            {
+                if (pageTransitionStart < 0) return false;
+                if (ImGui.GetTime() - pageTransitionStart >= PageTransitionDur)
+                {
+                    pageTransitionStart = -1;
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        /// <summary>0..1 ease-out-cubic progress of the in-flight page transition.</summary>
+        private float PageTransitionT
+        {
+            get
+            {
+                if (!IsPageTransitioning) return 1f;
+                float u = (float)((ImGui.GetTime() - pageTransitionStart) / PageTransitionDur);
+                u = Math.Clamp(u, 0f, 1f);
+                return 1f - MathF.Pow(1f - u, 3f);
+            }
+        }
+
+        private void TriggerPageChange(int newPage)
+        {
+            if (newPage == currentPage) return;
+            pagePrevIdx = currentPage;
+            pageTransitionStart = ImGui.GetTime();
+            currentPage = newPage;
+            categoryPageNumbers[selectedCategory] = currentPage;
+        }
         
         // Contextual warning system
         private HashSet<string> dismissedWarnings = new();
@@ -140,12 +190,6 @@ namespace CharacterSelectPlugin.Windows
         
         // Performance cache for mod options (prevents overwhelming Penumbra with 7000+ mods)
         private Dictionary<string, bool> modOptionsCache = new();
-        
-        // Old UI fields still used by loading logic
-        private int displayMode = 0;
-        private bool showGear = true;
-        private bool showHair = true;
-        private bool showOther = true;
         
         // Progress tracking for async loading
         private float loadingProgress = 0f;
@@ -257,16 +301,33 @@ namespace CharacterSelectPlugin.Windows
         };
 
         public SecretModeModWindow(Plugin plugin) : base(
-            "Mod Manager", 
-            ImGuiWindowFlags.None)
+            "Mod Manager",
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
         {
             this.plugin = plugin;
             this.uiStyles = new UIStyles(plugin);
+            // Bumped minimum height so the ribbon + toolbar + main + pagination
+            // + footer all fit without ImGui auto-injecting a window scrollbar
+            // (which clips the footer). Mockup target is 1080×720.
             SizeConstraints = new WindowSizeConstraints
             {
-                MinimumSize = new Vector2(900, 600),
+                MinimumSize = new Vector2(960, 720),
                 MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
             };
+        }
+
+        private int _chromeColorCount = 0;
+        public override void PreDraw()
+        {
+            // WindowBg / TitleBg commit at ImGui.Begin time, must be pushed
+            // BEFORE Begin so the title bar respects the theme.
+            _chromeColorCount = CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+        }
+
+        public override void PostDraw()
+        {
+            CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+            _chromeColorCount = 0;
         }
 
         public void Open(int? characterIndex = null, Dictionary<string, bool>? existingSelection = null, HashSet<string>? existingPins = null, Action<Dictionary<string, bool>>? saveCallback = null, Action<HashSet<string>>? savePinsCallback = null, CharacterDesign? design = null, string? characterName = null, Action<HashSet<string>>? saveInheritCallback = null)
@@ -287,11 +348,15 @@ namespace CharacterSelectPlugin.Windows
 
             // Initialize with existing selection if provided
             selectedMods.Clear();
+            originalSelection.Clear();
             modsToInherit.Clear();
             if (existingSelection != null)
             {
                 foreach (var kvp in existingSelection)
+                {
                     selectedMods[kvp.Key] = kvp.Value;
+                    originalSelection[kvp.Key] = kvp.Value;
+                }
             }
 
             // Initialize with existing pins if provided
@@ -937,9 +1002,14 @@ namespace CharacterSelectPlugin.Windows
             {
                 WindowName = contextTitle;
             }
-            
-            uiStyles.PushMainWindowStyle();
-            
+
+            // Boutique form style for inputs/buttons inside. WindowBg itself
+            // is pushed in PreDraw (must commit before Begin).
+            CharacterSelectPlugin.Windows.Styles.Boutique.PushFormStyle();
+            // Outer ChildBg transparent so the window's Surface0 bg shows
+            // through, matches every other boutique surface in the plugin.
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, Vector4.Zero);
+
             try
             {
                 if (isLoading)
@@ -947,17 +1017,17 @@ namespace CharacterSelectPlugin.Windows
                     DrawLoadingState();
                     return;
                 }
-                
+
                 DrawHeader();
                 DrawMainContent();
                 DrawBottomButtons();
-                
-                // Draw mod options popup if open
+
                 DrawModOptionsPopup();
             }
             finally
             {
-                uiStyles.PopMainWindowStyle();
+                ImGui.PopStyleColor();
+                CharacterSelectPlugin.Windows.Styles.Boutique.PopFormStyle();
             }
         }
         
@@ -968,79 +1038,142 @@ namespace CharacterSelectPlugin.Windows
         
         private void DrawLoadingState()
         {
-            // Update loading animations and messages
             UpdateLoadingAnimations();
-            
-            var contentSize = ImGui.GetContentRegionAvail();
-            var centerX = contentSize.X / 2;
-            var centerY = contentSize.Y / 2;
-            
-            // Center the loading display
-            var loadingWidth = 450f;
-            var loadingHeight = 180f;
-            ImGui.SetCursorPos(new Vector2(centerX - loadingWidth / 2, centerY - loadingHeight / 2));
-            
-            // Enhanced panel styling
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 8f);
-            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(25, 20));
-            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.1f, 0.15f, 0.95f));
-            ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.3f, 0.5f, 0.8f, 0.6f));
-            
-            ImGui.BeginChild("LoadingPanel", new Vector2(loadingWidth, loadingHeight), true, ImGuiWindowFlags.NoScrollbar);
-            
-            // Title
-            var title = "Loading Mod Information";
-            var titleSize = ImGui.CalcTextSize(title);
-            ImGui.SetCursorPosX((loadingWidth - titleSize.X) / 2 - 25);
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 1.0f, 1.0f));
-            ImGui.Text(title);
-            ImGui.PopStyleColor();
-            
-            ImGui.Spacing();
-            
-            // Standard progress bar with enhanced styling
-            ImGui.PushStyleColor(ImGuiCol.PlotHistogram, new Vector4(0.2f, 0.6f, 1.0f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));
-            ImGui.ProgressBar(loadingProgress, new Vector2(loadingWidth - 50, 20), $"{modsLoaded}/{totalModsToLoad}");
-            ImGui.PopStyleColor(2);
-            
-            ImGui.Spacing();
-            
-            // Witty loading message
+
+            float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
+            scale = MathF.Max(0.85f, MathF.Min(scale, 2.0f));
+
+            var dl = ImGui.GetWindowDrawList();
+            var origin = ImGui.GetCursorScreenPos();
+            var availSize = ImGui.GetContentRegionAvail();
+            float t = (float)ImGui.GetTime();
+
+            // Pre-measure the percent + count text block so we can centre the
+            // readout inside the ring properly. The percent uses OswaldSemiTitle
+            // (bigger than SemiBig, fills the disc more dominantly) and the
+            // count uses OswaldMed13 (small secondary line below the ring).
+            string pctStr = $"{(int)(Math.Clamp(loadingProgress, 0f, 1f) * 100f)}%";
+            string countStr = $"{modsLoaded}/{totalModsToLoad}";
+            Vector2 pctSz, cSz;
+            float pctFontSize;
+            using (Plugin.Instance?.OswaldSemiTitle?.Push())
+            {
+                pctSz = ImGui.CalcTextSize(pctStr);
+                pctFontSize = ImGui.GetFontSize();
+            }
+            using (Plugin.Instance?.OswaldMed13?.Push()) cSz = ImGui.CalcTextSize(countStr);
+
+            // Pre-measure the title + message block sizes.
+            Vector2 titleSz, msgSz;
+            using (Plugin.Instance?.OswaldSemiSmall?.Push())
+                titleSz = ImGui.CalcTextSize("LOADING MOD INFORMATION");
+            using (Plugin.Instance?.OutfitMed13?.Push())
+                msgSz = string.IsNullOrEmpty(currentLoadingMessage)
+                    ? Vector2.Zero
+                    : ImGui.CalcTextSize(currentLoadingMessage);
+
+            // Total content height = ring diameter + below-ring stack
+            float ringRadius = 100f * scale;
+            float ringThickness = 19f * scale;
+            float ringDiameter = ringRadius * 2f;
+            float ringToTitle = 44f * scale;
+            float titleToMsg = string.IsNullOrEmpty(currentLoadingMessage) ? 0f : 16f * scale;
+            float msgToBtn = 36f * scale;
+            float btnH = 30f * scale;
+            float totalH = ringDiameter + ringToTitle + titleSz.Y
+                         + (string.IsNullOrEmpty(currentLoadingMessage) ? 0f : titleToMsg + msgSz.Y)
+                         + msgToBtn + btnH;
+
+            // Vertically centre the entire block in the available space.
+            float startY = origin.Y + MathF.Max(0f, (availSize.Y - totalH) * 0.5f);
+            var centre = new Vector2(
+                origin.X + availSize.X * 0.5f,
+                startY + ringRadius);
+
+            // Glitch flair plays for the entire load, not just a 1.5s wind-up.
+            // fillProgress is tied to loadingProgress so chromatic ghost arcs
+            // + dropout bars + glitch specks keep playing while data is
+            // streaming, and only settle to clean gold once the load reaches
+            // 100%.
+            float displayedRatio = Math.Clamp(loadingProgress, 0f, 1f);
+            float fillProgress = displayedRatio; // < 1 while loading, 1 at completion
+            int fillSeed = unchecked(((int)(loadingStartTime.Ticks & 0x7FFFFFFF)) ^ 0xBEEF);
+
+            // Use the shared helper, same call path the achievement vault
+            // uses for its ring (bloom + halo + chromatic flair + inner disc
+            // are all painted inside DrawProgressRing).
+            CharacterSelectPlugin.Windows.Styles.Boutique.DrawProgressRing(
+                dl, centre, scale, ringRadius, ringThickness,
+                displayedRatio: displayedRatio,
+                fillProgress: fillProgress,
+                fillSeed: fillSeed,
+                time: t);
+
+            // Centred readout inside the disc. Tiny right bias because "%"'s
+            // wide arms shift the visible mass off geometric centre.
+            using (Plugin.Instance?.OswaldSemiTitle?.Push())
+            {
+                float pctY = centre.Y - pctSz.Y * 0.5f;
+                float pctX = centre.X - pctSz.X * 0.5f + pctSz.X * 0.02f;
+                dl.AddText(
+                    new Vector2(pctX, pctY),
+                    ImGui.ColorConvertFloat4ToU32(Boutique.GoldWarm),
+                    pctStr);
+            }
+
+            // ── Below the ring: tracked-caps title + witty message ──
+            float belowY = centre.Y + ringRadius + ringToTitle;
+            using (Plugin.Instance?.OswaldSemiSmall?.Push())
+            {
+                string title = "LOADING MOD INFORMATION";
+                float trackPx = ImGui.GetFontSize() * 0.32f;
+                float titleW = CharacterSelectPlugin.Windows.Styles.Boutique
+                    .MeasureTrackedText(title, trackPx);
+                CharacterSelectPlugin.Windows.Styles.Boutique.DrawTrackedText(
+                    dl, new Vector2(centre.X - titleW * 0.5f, belowY),
+                    title, ImGui.ColorConvertFloat4ToU32(Boutique.Text), trackPx);
+            }
+            // Mods-loaded count (X / Y) sits just under the title, was inside
+            // the ring next to the %, but that competed with the % for the
+            // ring centre. Now the % owns the disc by itself.
+            using (Plugin.Instance?.OswaldMed13?.Push())
+            {
+                float cY = belowY + titleSz.Y + 4f * scale;
+                dl.AddText(
+                    new Vector2(centre.X - cSz.X * 0.5f, cY),
+                    ImGui.ColorConvertFloat4ToU32(Boutique.TextDim),
+                    countStr);
+            }
+            float msgY = belowY + titleSz.Y + 4f * scale + cSz.Y + titleToMsg;
             if (!string.IsNullOrEmpty(currentLoadingMessage))
             {
-                var messageSize = ImGui.CalcTextSize(currentLoadingMessage);
-                ImGui.SetCursorPosX((loadingWidth - messageSize.X) / 2 - 25);
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.9f, 1.0f));
-                ImGui.Text(currentLoadingMessage);
-                ImGui.PopStyleColor();
+                using (Plugin.Instance?.OutfitMed13?.Push())
+                {
+                    dl.AddText(
+                        new Vector2(centre.X - msgSz.X * 0.5f, msgY),
+                        ImGui.ColorConvertFloat4ToU32(Boutique.TextDim),
+                        currentLoadingMessage);
+                }
             }
-            
-            ImGui.Spacing();
-            ImGui.Spacing();
-            
-            // Cancel button
-            var cancelText = "Cancel";
-            var cancelButtonSize = new Vector2(80, 28);
-            ImGui.SetCursorPosX((loadingWidth - cancelButtonSize.X) / 2 - 25);
-            
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.7f, 0.3f, 0.3f, 1.0f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.8f, 0.4f, 0.4f, 1.0f));
-            
-            if (ImGui.Button(cancelText, cancelButtonSize))
+
+            // ── Cancel button ──
+            float btnW = 100f * scale;
+            float btnY = (string.IsNullOrEmpty(currentLoadingMessage)
+                ? belowY + titleSz.Y
+                : msgY + msgSz.Y) + msgToBtn;
+            ImGui.SetCursorScreenPos(new Vector2(centre.X - btnW * 0.5f, btnY));
+            if (CharacterSelectPlugin.Windows.Styles.Boutique.DrawCancelBtn(
+                    dl,
+                    new Vector2(centre.X - btnW * 0.5f, btnY),
+                    new Vector2(centre.X + btnW * 0.5f, btnY + btnH),
+                    "CANCEL", 1.6f * scale, scale, "modmgr_loading_cancel"))
             {
                 loadingCancellation?.Cancel();
                 IsOpen = false;
             }
-            
-            ImGui.PopStyleColor(3);
-            
-            ImGui.EndChild();
-            
-            // Pop all styles
-            ImGui.PopStyleColor(2);
-            ImGui.PopStyleVar(2);
+
+            // No Dummy(availSize), that was forcing the content to span the
+            // full region and triggering a phantom scrollbar.
         }
         
         private void UpdateLoadingAnimations()
@@ -1114,89 +1247,540 @@ namespace CharacterSelectPlugin.Windows
         
         private void DrawHeader()
         {
-            // Context header showing which character/design is being edited
-            if (!string.IsNullOrEmpty(editingCharacterName) || editingDesign != null)
-            {
-                ImGui.PushStyleColor(ImGuiCol.Text, ColorSchemes.Dark.AccentBlue);
-                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(ImGui.GetStyle().ItemSpacing.X, 10));
-                
-                var contextText = "";
-                if (!string.IsNullOrEmpty(editingCharacterName) && editingDesign != null)
-                {
-                    var designName = string.IsNullOrEmpty(editingDesign.Name) ? "New Design" : editingDesign.Name;
-                    contextText = $"Configuring mods for: {editingCharacterName} - {designName}";
-                }
-                else if (!string.IsNullOrEmpty(editingCharacterName))
-                {
-                    contextText = $"Configuring mods for: {editingCharacterName}";
-                }
-                else if (editingDesign != null)
-                {
-                    var designName = string.IsNullOrEmpty(editingDesign.Name) ? "New Design" : editingDesign.Name;
-                    contextText = $"Configuring mods for design: {designName}";
-                }
-                
-                // Center the context text
-                var textSize = ImGui.CalcTextSize(contextText);
-                var windowWidth = ImGui.GetWindowContentRegionMax().X;
-                ImGui.SetCursorPosX((windowWidth - textSize.X) / 2);
-                
-                ImGui.Text(contextText);
-                ImGui.PopStyleVar();
-                ImGui.PopStyleColor();
-                ImGui.Separator();
-                ImGui.Spacing();
-            }
-            
-            // Collection selector
+            float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
+            scale = MathF.Max(0.85f, MathF.Min(scale, 2.0f));
+            var dl = ImGui.GetWindowDrawList();
+
+            // ── Meta ribbon (30px): pulsing pip + breadcrumb + right-side version ──
+            // No explicit Dummy gaps between header rows, PushFormStyle's
+            // ItemSpacing.y already provides the natural ~5px gap. Adding
+            // Dummy(0, 4*scale) on top of that doubled the visible gap and
+            // made the toolbar feel awkwardly spaced from the ribbon/search.
+            DrawMetaRibbon(dl, scale);
+
+            // ── Toolbar row 1: collection pill + refresh + context info ──
             if (availableCollections.Any())
             {
-                ImGui.Text("Penumbra Collection:");
-                ImGui.SameLine();
-                
-                var collectionsList = availableCollections.ToList();
-                var collectionNames = collectionsList.Select(kvp => kvp.Value).ToArray();
-                
-                ImGui.SetNextItemWidth(300);
-                if (ImGui.Combo("##CollectionSelect", ref selectedCollectionIndex, collectionNames, collectionNames.Length))
-                {
-                    var selectedKvp = collectionsList[selectedCollectionIndex];
-                    currentCollectionId = selectedKvp.Key;
-                    currentCollectionName = selectedKvp.Value;
-                    userHasSelectedCollection = true;
-                    _ = LoadCurrentMods();
-                }
-                
-                ImGui.SameLine();
-                if (uiStyles.IconButton(FontAwesomeIcon.Sync.ToIconString(), "Refresh mods"))
-                {
-                    _ = LoadCurrentMods();
-                }
+                DrawCollectionPill(scale);
             }
             else
             {
-                ImGui.TextColored(ColorSchemes.Dark.AccentRed, "Warning: No Penumbra collections found");
+                using (Plugin.Instance?.OutfitMed12?.Push())
+                {
+                    ImGui.TextColored(Boutique.Red, "No Penumbra collections found");
+                }
             }
-            
-            ImGui.Separator();
-            
-            // Global search bar (full width)
-            ImGui.Spacing();
-            
-            ImGui.SetNextItemWidth(-1); // Full width
-            if (ImGui.InputTextWithHint("##GlobalSearch", "Global search across all mods...", ref globalSearchFilter, 200))
+
+            // ── Global search pill (full width, boutique style) ──
+            float searchPillH = 30f * scale;
+            var searchPillStart = ImGui.GetCursorScreenPos();
+            float searchPillW = ImGui.GetContentRegionAvail().X;
+            var spMin = searchPillStart;
+            var spMax = new Vector2(spMin.X + searchPillW, spMin.Y + searchPillH);
+
+            dl.AddRectFilled(spMin, spMax,
+                Boutique.U32(new Vector4(0.078f, 0.094f, 0.125f, 0.6f)));
+
+            // Magnifier glyph
+            ImGui.PushFont(UiBuilder.IconFont);
+            string searchGlyph = FontAwesomeIcon.Search.ToIconString();
+            var sgSz = ImGui.CalcTextSize(searchGlyph);
+            ImGui.PopFont();
+            float sgPx = UiBuilder.IconFont.FontSize * 0.65f;
+            float sgScaleR = sgPx / UiBuilder.IconFont.FontSize;
+            dl.AddText(UiBuilder.IconFont, sgPx,
+                new Vector2(spMin.X + 12f * scale,
+                            spMin.Y + (searchPillH - sgSz.Y * sgScaleR) * 0.5f),
+                Boutique.U32(Boutique.TextFaint), searchGlyph);
+
+            float inputX = spMin.X + 12f * scale + sgSz.X * sgScaleR + 8f * scale;
+            float inputW = searchPillW - (inputX - spMin.X) - 12f * scale;
+            float inputPadY = MathF.Max(0f, (searchPillH - ImGui.GetTextLineHeight()) * 0.5f);
+
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(0f, inputPadY));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.Text);
+            ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.TextFaint);
+
+            ImGui.SetCursorScreenPos(new Vector2(inputX, spMin.Y));
+            ImGui.SetNextItemWidth(inputW);
+            if (ImGui.InputTextWithHint("##modmgr_global_search",
+                "Global search across all mods...", ref globalSearchFilter, 200))
             {
-                // Clear category-specific search when using global search
                 if (!string.IsNullOrEmpty(globalSearchFilter))
                 {
                     searchFilter = "";
-                    currentPage = 0; // Reset pagination when searching
+                    currentPage = 0;
                 }
             }
-            
-            ImGui.Spacing();
+            bool searchFocused = ImGui.IsItemActive();
+
+            ImGui.PopStyleColor(5);
+            ImGui.PopStyleVar(2);
+
+            // Border (lifts to GoldDeep on focus)
+            uint searchBorder = Boutique.U32(searchFocused
+                ? Boutique.GoldDeep
+                : Boutique.BorderSoft);
+            dl.AddRect(spMin, spMax, searchBorder, 0f, ImDrawFlags.None, 1f * scale);
+
+            ImGui.SetCursorScreenPos(new Vector2(spMin.X, spMax.Y + 4f * scale));
         }
-        
+
+        // Meta ribbon (30px): pulsing gold pip + "CS+ • MOD MANAGER" + breadcrumb
+        // for character/design context, with "CONFLICT RESOLUTION v2.x" on the right.
+        // Uses the canonical ribbon background (gradient + gold hairlines) from
+        // Boutique.DrawRibbonBackground to match every other window in the plugin.
+        private void DrawMetaRibbon(ImDrawListPtr dl, float scale)
+        {
+            float ribbonH = Boutique.RibbonHeight * scale;
+            var rPos = ImGui.GetCursorScreenPos();
+            float rW = ImGui.GetContentRegionAvail().X;
+            var rMin = rPos;
+            var rMax = new Vector2(rPos.X + rW, rPos.Y + ribbonH);
+
+            Boutique.DrawRibbonBackground(dl, rMin, rMax, scale);
+
+            float padX = 14f * scale;
+            float midY = (rMin.Y + rMax.Y) * 0.5f;
+            double time = ImGui.GetTime();
+
+            // Pulsing gold pip (4-arg Boutique variant, square pip with sin-based pulse)
+            var pipCentre = new Vector2(rMin.X + padX + 3f * scale, midY);
+            Boutique.DrawGoldPip(dl, pipCentre, scale, time);
+
+            float xCursor = rMin.X + padX + 12f * scale;
+
+            // ── Left breadcrumb in tracked-caps Oswald ──
+            using (Boutique.Kicker11?.Push())
+            {
+                float fs = ImGui.GetFontSize();
+                float trackPx = Boutique.Track22(fs);
+                float textY = midY - fs * 0.5f;
+
+                // "CS+ • MOD MANAGER" header (Text)
+                string title = "CS+ · MOD MANAGER";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
+                    title, Boutique.U32(Boutique.Text), trackPx);
+                xCursor += Boutique.MeasureTrackedText(title, trackPx);
+
+                if (!string.IsNullOrEmpty(editingCharacterName))
+                {
+                    string sep = "  /  ";
+                    Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
+                        sep, Boutique.U32(Boutique.TextGhost), trackPx);
+                    xCursor += Boutique.MeasureTrackedText(sep, trackPx);
+
+                    string config = "CONFIGURING ";
+                    Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
+                        config, Boutique.U32(Boutique.TextDim), trackPx);
+                    xCursor += Boutique.MeasureTrackedText(config, trackPx);
+
+                    string charName = editingCharacterName.ToUpperInvariant();
+                    Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
+                        charName, Boutique.U32(Boutique.GoldWarm), trackPx);
+                    xCursor += Boutique.MeasureTrackedText(charName, trackPx);
+                }
+
+                if (editingDesign != null)
+                {
+                    string sep = "  /  ";
+                    Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
+                        sep, Boutique.U32(Boutique.TextGhost), trackPx);
+                    xCursor += Boutique.MeasureTrackedText(sep, trackPx);
+
+                    // Cyan square pip for the design context (matches mockup .ctx::before)
+                    var ctxPipC = new Vector2(xCursor + 3f * scale, midY);
+                    Boutique.DrawSquarePip(dl, ctxPipC, 3f * scale, Boutique.NpCyan);
+                    xCursor += 11f * scale;
+
+                    string designName = string.IsNullOrEmpty(editingDesign.Name)
+                        ? "NEW DESIGN" : editingDesign.Name.ToUpperInvariant();
+                    Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
+                        designName, Boutique.U32(Boutique.NpCyan), trackPx);
+                }
+            }
+
+            // ── Right-side: "CONFLICT RESOLUTION vX.X.X" ──
+            using (Boutique.Kicker10?.Push())
+            {
+                float fs = ImGui.GetFontSize();
+                float trackPx = Boutique.Track22(fs);
+                float textY = midY - fs * 0.5f;
+
+                string version = Plugin.PatchNotesVersion ?? "";
+                string verLabel = string.IsNullOrEmpty(version) ? "" : $"V{version}";
+                string label = "CONFLICT RESOLUTION";
+
+                float verW = Boutique.MeasureTrackedText(verLabel, trackPx);
+                float labelW = Boutique.MeasureTrackedText(label, trackPx);
+                float gap = string.IsNullOrEmpty(verLabel) ? 0f : 6f * scale;
+                float rightPad = padX;
+
+                float rxStart = rMax.X - rightPad - verW;
+                if (!string.IsNullOrEmpty(verLabel))
+                {
+                    Boutique.DrawTrackedText(dl, new Vector2(rxStart, textY),
+                        verLabel, Boutique.U32(Boutique.GoldWarm), trackPx);
+                }
+                Boutique.DrawTrackedText(dl,
+                    new Vector2(rxStart - gap - labelW, textY),
+                    label, Boutique.U32(Boutique.TextFaint), trackPx);
+            }
+
+            ImGui.Dummy(new Vector2(rW, ribbonH));
+        }
+
+        // Wardrobe-style sort pill for the Penumbra collection picker.
+        // [COLLECTION] kicker + value + chevron, opens a popup with all
+        // available collections. Refresh icon button sits to the right.
+        private bool collectionPopupOpen = false;
+        private Vector2 collectionPopupAnchor;
+        private void DrawCollectionPill(float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float pillH = 30f * scale;
+            // Capped narrower so the right-side context info ("X mods affecting
+            // | Y total") has room and the pill doesn't dominate the toolbar.
+            float pillW = MathF.Min(240f * scale, ImGui.GetContentRegionAvail().X - 40f * scale);
+            float btnSide = 28f * scale;
+            float gap = 6f * scale;
+
+            var pillStart = ImGui.GetCursorScreenPos();
+            var pillMin = pillStart;
+            var pillMax = pillMin + new Vector2(pillW, pillH);
+
+            ImGui.SetCursorScreenPos(pillMin);
+            bool pillClicked = ImGui.InvisibleButton("##modmgr_coll_pill", new Vector2(pillW, pillH));
+            bool pillHovered = ImGui.IsItemHovered();
+            if (pillClicked)
+            {
+                collectionPopupOpen = true;
+                collectionPopupAnchor = new Vector2(pillMin.X, pillMax.Y + 4f * scale);
+                ImGui.OpenPopup("##modmgr_coll_popup");
+            }
+
+            dl.AddRectFilled(pillMin, pillMax,
+                Boutique.U32(new Vector4(8f / 255f, 10f / 255f, 14f / 255f, 0.85f)));
+            Vector4 pillBorderC = collectionPopupOpen
+                ? Boutique.Gold
+                : (pillHovered ? Boutique.GoldDeep : Boutique.BorderSoft);
+            dl.AddRect(pillMin, pillMax, Boutique.U32(pillBorderC), 0f, ImDrawFlags.None, 1f * scale);
+
+            float padX = 12f * scale;
+            // Kicker COLLECTION
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                float kY = (pillMin.Y + pillMax.Y) * 0.5f - ImGui.GetFontSize() * 0.5f;
+                Boutique.DrawTrackedText(dl,
+                    new Vector2(pillMin.X + padX, kY),
+                    "COLLECTION", Boutique.U32(Boutique.TextDim), 2.5f * scale);
+            }
+            // Value (right-aligned before chevron)
+            string val = (currentCollectionName ?? availableCollections.FirstOrDefault().Value ?? "")
+                .ToUpperInvariant();
+            using (Plugin.Instance?.OswaldMed11?.Push())
+            {
+                float vY = (pillMin.Y + pillMax.Y) * 0.5f - ImGui.GetFontSize() * 0.5f;
+                float trackPx = 1.8f * scale;
+                float chevW = 14f * scale;
+                float maxValW = pillW - padX - 90f * scale - chevW; // room for kicker + chev
+                string display = val;
+                float vW = Boutique.MeasureTrackedText(display, trackPx);
+                if (vW > maxValW && display.Length > 1)
+                {
+                    const string ell = "...";
+                    float ellW = Boutique.MeasureTrackedText(ell, trackPx);
+                    for (int k = display.Length - 1; k > 0; k--)
+                    {
+                        var trunc = display.Substring(0, k);
+                        if (Boutique.MeasureTrackedText(trunc, trackPx) + ellW <= maxValW)
+                        {
+                            display = trunc + ell;
+                            vW = Boutique.MeasureTrackedText(display, trackPx);
+                            break;
+                        }
+                    }
+                }
+                Boutique.DrawTrackedText(dl,
+                    new Vector2(pillMax.X - padX - chevW - vW, vY),
+                    display, Boutique.U32(Boutique.GoldWarm), trackPx);
+            }
+            // Chevron
+            float chR = 4f * scale;
+            var chC = new Vector2(pillMax.X - padX - chR, (pillMin.Y + pillMax.Y) * 0.5f);
+            dl.AddTriangleFilled(
+                chC + new Vector2(-chR, -chR * 0.5f),
+                chC + new Vector2( chR, -chR * 0.5f),
+                chC + new Vector2(0f, chR),
+                Boutique.U32(Boutique.GoldDeep));
+
+            // Refresh icon button (right of pill)
+            float refreshX = pillMax.X + gap;
+            float refreshY = pillMin.Y + (pillH - btnSide) * 0.5f;
+            ImGui.SetCursorScreenPos(new Vector2(refreshX, refreshY));
+            bool refreshClicked = ImGui.InvisibleButton("##modmgr_refresh", new Vector2(btnSide, btnSide));
+            bool refreshHovered = ImGui.IsItemHovered();
+            uint refreshBg = Boutique.U32(refreshHovered ? Boutique.Surface2
+                : new Vector4(0.078f, 0.094f, 0.125f, 0.6f));
+            uint refreshBorder = Boutique.U32(refreshHovered ? Boutique.GoldDeep : Boutique.BorderSoft);
+            var rfMin = new Vector2(refreshX, refreshY);
+            var rfMax = rfMin + new Vector2(btnSide, btnSide);
+            dl.AddRectFilled(rfMin, rfMax, refreshBg);
+            dl.AddRect(rfMin, rfMax, refreshBorder, 0f, ImDrawFlags.None, 1f * scale);
+            string rfGlyph = FontAwesomeIcon.SyncAlt.ToIconString();
+            var rfFont = UiBuilder.IconFont;
+            float rfPx = rfFont.FontSize * 0.60f;
+            float rfScaleR = rfPx / rfFont.FontSize;
+            ImGui.PushFont(rfFont);
+            var rfSz = ImGui.CalcTextSize(rfGlyph);
+            ImGui.PopFont();
+            dl.AddText(rfFont, rfPx,
+                new Vector2(refreshX + (btnSide - rfSz.X * rfScaleR) * 0.5f,
+                            refreshY + (btnSide - rfSz.Y * rfScaleR) * 0.5f),
+                Boutique.U32(refreshHovered ? Boutique.GoldWarm : Boutique.TextDim),
+                rfGlyph);
+            if (refreshHovered)
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Refresh mods");
+            if (refreshClicked) _ = LoadCurrentMods();
+
+            // ── Popup (Wardrobe-style) ──
+            ImGui.SetNextWindowPos(collectionPopupAnchor);
+            ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(6f / 255f, 7f / 255f, 9f / 255f, 0.97f));
+            ImGui.PushStyleColor(ImGuiCol.Border, Boutique.WithAlpha(Boutique.GoldDeep, 0.85f));
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.Text);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(0, 4f * scale));
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(0, 1f * scale));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f * scale);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
+            if (ImGui.BeginPopup("##modmgr_coll_popup"))
+            {
+                float itemH = 26f * scale;
+                float itemPadX = 14f * scale;
+                float itemW = pillW;
+                var popupFont = Plugin.Instance?.OswaldMed11;
+
+                var collectionsList = availableCollections.ToList();
+                // Cap the popup to ~10 rows tall so it never grows off-screen
+                // when the user has many collections; anything beyond that
+                // scrolls inside the child.
+                float maxPopupH = 10f * itemH;
+                float childH = MathF.Min(collectionsList.Count * itemH, maxPopupH);
+                ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, Vector4.Zero);
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, Boutique.WithAlpha(Boutique.GoldDeep, 0.55f));
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, Boutique.GoldDeep);
+                ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, Boutique.Gold);
+                ImGui.BeginChild("##modmgr_coll_popup_scroll", new Vector2(itemW, childH), false,
+                    ImGuiWindowFlags.AlwaysUseWindowPadding);
+                for (int i = 0; i < collectionsList.Count; i++)
+                {
+                    var kvp = collectionsList[i];
+                    bool isSel = i == selectedCollectionIndex;
+                    var rowMn = ImGui.GetCursorScreenPos();
+                    var rowMx = new Vector2(rowMn.X + itemW, rowMn.Y + itemH);
+                    ImGui.InvisibleButton($"##modmgr_coll_item_{i}", new Vector2(itemW, itemH));
+                    bool itemHov = ImGui.IsItemHovered();
+                    bool itemClk = ImGui.IsItemClicked();
+                    if (itemClk)
+                    {
+                        selectedCollectionIndex = i;
+                        currentCollectionId = kvp.Key;
+                        currentCollectionName = kvp.Value;
+                        userHasSelectedCollection = true;
+                        _ = LoadCurrentMods();
+                        collectionPopupOpen = false;
+                        ImGui.CloseCurrentPopup();
+                    }
+
+                    var pdl = ImGui.GetWindowDrawList();
+                    if (isSel)
+                    {
+                        pdl.AddRectFilled(rowMn, rowMx,
+                            Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.18f)));
+                        pdl.AddRectFilled(rowMn,
+                            new Vector2(rowMn.X + 2f * scale, rowMx.Y),
+                            Boutique.U32(Boutique.Gold));
+                    }
+                    else if (itemHov)
+                    {
+                        pdl.AddRectFilled(rowMn, rowMx,
+                            Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.10f)));
+                    }
+
+                    if (popupFont != null)
+                    {
+                        using (popupFont.Push())
+                        {
+                            float fontH = ImGui.GetFontSize();
+                            float trackPx = fontH * 0.18f;
+                            string itemLabel = kvp.Value.ToUpperInvariant();
+                            Vector4 col = isSel ? Boutique.GoldWarm
+                                : (itemHov ? Boutique.GoldBright : Boutique.Text);
+                            Boutique.DrawTrackedText(pdl,
+                                new Vector2(rowMn.X + itemPadX, rowMn.Y + (itemH - fontH) * 0.5f),
+                                itemLabel, Boutique.U32(col), trackPx);
+                        }
+                    }
+                }
+                ImGui.EndChild();
+                ImGui.PopStyleColor(4);
+                ImGui.PopStyleVar();
+                ImGui.EndPopup();
+            }
+            else if (collectionPopupOpen)
+            {
+                collectionPopupOpen = false;
+            }
+            ImGui.PopStyleVar(4);
+            ImGui.PopStyleColor(3);
+
+            // ── Toolbar context info on the right: "X MODS AFFECTING YOU NOW | Y MODS TOTAL" ──
+            int affectingCount = availableMods.Count(m => m.IsCurrentlyAffecting);
+            int totalCount = availableMods.Count;
+            float ctxRowRight = pillStart.X + ImGui.GetContentRegionAvail().X;
+            float ctxMidY = (pillMin.Y + pillMax.Y) * 0.5f;
+
+            using (Boutique.Kicker11?.Push())
+            {
+                float fs = ImGui.GetFontSize();
+                float trackPx = Boutique.Track22(fs);
+                float ctxY = ctxMidY - fs * 0.5f;
+
+                string totalNum = totalCount.ToString();
+                string totalTail = " MODS TOTAL";
+                string pipe = "  |  ";
+                string affNum = affectingCount.ToString();
+                string affTail = " MODS AFFECTING YOU NOW";
+
+                float wTotalNum = Boutique.MeasureTrackedText(totalNum, trackPx);
+                float wTotalTail = Boutique.MeasureTrackedText(totalTail, trackPx);
+                float wPipe = Boutique.MeasureTrackedText(pipe, trackPx);
+                float wAffNum = Boutique.MeasureTrackedText(affNum, trackPx);
+                float wAffTail = Boutique.MeasureTrackedText(affTail, trackPx);
+
+                // Pulsing green dot for the "affecting now" caption
+                float dotR = 3f * scale;
+                float dotW = dotR * 2f + 6f * scale;
+                float clusterW = dotW + wAffNum + wAffTail + wPipe + wTotalNum + wTotalTail;
+                float ctxX = ctxRowRight - clusterW;
+
+                // Green dot (live indicator)
+                double t = ImGui.GetTime();
+                float pulse = 0.65f + 0.35f * (float)Math.Sin(t * 2.4);
+                var dotC = new Vector2(ctxX + dotR, ctxMidY);
+                dl.AddCircleFilled(dotC, dotR + 2f * scale,
+                    Boutique.U32(Boutique.WithAlpha(Boutique.Green, 0.30f * pulse)), 16);
+                dl.AddCircleFilled(dotC, dotR, Boutique.U32(Boutique.Green), 12);
+                ctxX += dotW;
+
+                // "<N>" affecting count in gold-warm. Tail text bumped to
+                // TextDim (was TextFaint, barely readable on the dark bg).
+                Boutique.DrawTrackedText(dl, new Vector2(ctxX, ctxY), affNum,
+                    Boutique.U32(Boutique.GoldWarm), trackPx);
+                ctxX += wAffNum;
+                Boutique.DrawTrackedText(dl, new Vector2(ctxX, ctxY), affTail,
+                    Boutique.U32(Boutique.TextDim), trackPx);
+                ctxX += wAffTail;
+                Boutique.DrawTrackedText(dl, new Vector2(ctxX, ctxY), pipe,
+                    Boutique.U32(Boutique.TextFaint), trackPx);
+                ctxX += wPipe;
+                Boutique.DrawTrackedText(dl, new Vector2(ctxX, ctxY), totalNum,
+                    Boutique.U32(Boutique.GoldWarm), trackPx);
+                ctxX += wTotalNum;
+                Boutique.DrawTrackedText(dl, new Vector2(ctxX, ctxY), totalTail,
+                    Boutique.U32(Boutique.TextDim), trackPx);
+            }
+
+            // Reserve the pill row's vertical space from its TOP, not its BOTTOM
+            ImGui.SetCursorScreenPos(pillStart);
+            ImGui.Dummy(new Vector2(pillW + gap + btnSide, pillH));
+        }
+
+        // Sidebar column header, tracked-caps GoldWarm + bottom hairline
+        private void DrawSidebarColumnHead(string label, float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            var pos = ImGui.GetCursorScreenPos();
+            float w = ImGui.GetContentRegionAvail().X;
+            float h = 30f * scale;
+            var max = pos + new Vector2(w, h);
+
+            dl.AddRectFilled(pos, max, Boutique.U32(new Vector4(0f, 0f, 0f, 0.30f)));
+            dl.AddLine(new Vector2(pos.X, max.Y - 1f * scale),
+                       new Vector2(max.X, max.Y - 1f * scale),
+                       Boutique.U32(Boutique.BorderSoft), 1f * scale);
+
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                float trackPx = ImGui.GetFontSize() * 0.32f;
+                float labelY = pos.Y + (h - ImGui.GetFontSize()) * 0.5f;
+                CharacterSelectPlugin.Windows.Styles.Boutique.DrawTrackedText(
+                    dl, new Vector2(pos.X + 12f * scale, labelY),
+                    label, Boutique.U32(Boutique.GoldWarm), trackPx);
+            }
+            ImGui.Dummy(new Vector2(w, h));
+        }
+
+        // Single category row, icon + name + count, gold gradient + 2px gold
+        // left bar on selected. Returns true on click.
+        private bool DrawSidebarCategoryRow(string name, int count, bool isActive,
+            string id, float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float w = ImGui.GetContentRegionAvail().X;
+            float h = 28f * scale;
+            var pos = ImGui.GetCursorScreenPos();
+            var max = pos + new Vector2(w, h);
+
+            ImGui.SetCursorScreenPos(pos);
+            bool clicked = ImGui.InvisibleButton(id, new Vector2(w, h));
+            bool hovered = ImGui.IsItemHovered();
+
+            if (isActive)
+            {
+                uint l = Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.10f));
+                uint r = Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0f));
+                dl.AddRectFilledMultiColor(pos, max, l, r, r, l);
+                dl.AddRectFilled(new Vector2(pos.X, pos.Y + 4f * scale),
+                                 new Vector2(pos.X + 2f * scale, max.Y - 4f * scale),
+                                 Boutique.U32(Boutique.Gold));
+            }
+            else if (hovered)
+            {
+                dl.AddRectFilled(pos, max,
+                    Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.05f)));
+            }
+
+            // Name (Outfit Med 12)
+            using (Plugin.Instance?.OutfitMed12?.Push())
+            {
+                float labelY = pos.Y + (h - ImGui.GetFontSize()) * 0.5f;
+                Vector4 nameCol = isActive ? Boutique.GoldWarm : Boutique.Text;
+                dl.AddText(new Vector2(pos.X + 14f * scale, labelY),
+                    Boutique.U32(nameCol), name);
+            }
+
+            // Count (right-aligned, OswaldSemi11 tracked-caps in TextDim)
+            string countStr = count.ToString();
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                float trackPx = ImGui.GetFontSize() * 0.20f;
+                float countW = CharacterSelectPlugin.Windows.Styles.Boutique
+                    .MeasureTrackedText(countStr, trackPx);
+                float countY = pos.Y + (h - ImGui.GetFontSize()) * 0.5f;
+                CharacterSelectPlugin.Windows.Styles.Boutique.DrawTrackedText(
+                    dl, new Vector2(max.X - 14f * scale - countW, countY),
+                    countStr, Boutique.U32(isActive ? Boutique.GoldWarm : Boutique.TextDim),
+                    trackPx);
+            }
+
+            return clicked;
+        }
+
         private void DrawMainContent()
         {
             // Check if no mods available
@@ -1217,25 +1801,27 @@ namespace CharacterSelectPlugin.Windows
                 return;
             }
             
-            // Sidebar for categories
-            ImGui.BeginChild("CategorySidebar", new Vector2(200, -40), true);
-            
-            ImGui.Text("Categories");
-            ImGui.Separator();
-            
+            float scaleSb = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
+            scaleSb = MathF.Max(0.85f, MathF.Min(scaleSb, 2.0f));
+
+            // ── Boutique sidebar (220px), quick-access entry style ──
+            float sidebarW = 220f * scaleSb;
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.04f, 0.05f, 0.08f, 0.55f));
+            ImGui.BeginChild("CategorySidebar", new Vector2(sidebarW, -72 * scaleSb), false);
+
+            // Column header strip (CATEGORIES, tracked-caps, GoldWarm)
+            DrawSidebarColumnHead("CATEGORIES", scaleSb);
+            ImGui.Dummy(new Vector2(0, 6f * scaleSb));
+
             for (int i = 0; i < categoryNames.Length; i++)
             {
                 var modCount = GetModCountForCategory(i);
-                var categoryText = $"{categoryNames[i]} ({modCount})";
-                
-                // Highlight selected category
                 bool isSelected = selectedCategory == i;
-                if (isSelected)
-                {
-                    ImGui.PushStyleColor(ImGuiCol.Text, ColorSchemes.Dark.AccentBlue);
-                }
-                
-                if (ImGui.Selectable(categoryText, isSelected))
+                bool clickedCat = DrawSidebarCategoryRow(categoryNames[i], modCount, isSelected,
+                    $"##modmgr_cat_{i}", scaleSb);
+                if (clickedCat)
                 {
                     selectedCategory = i;
                     // Reset to first page when switching categories
@@ -1246,40 +1832,28 @@ namespace CharacterSelectPlugin.Windows
                     // Clear global search when switching categories
                     globalSearchFilter = "";
                 }
-                
-                if (isSelected)
-                {
-                    ImGui.PopStyleColor();
-                }
             }
-            
+
             ImGui.EndChild();
-            
-            // Main mod list area
+            ImGui.PopStyleColor();
+            ImGui.PopStyleVar(2);
+
+            // Main mod list area, transparent so the window's Surface0
+            // bg shows through; matches the other boutique surfaces.
             ImGui.SameLine();
-            ImGui.BeginChild("ModListArea", new Vector2(-1, -40), true);
-            
-            // Sticky search bar in header
-            var searchBarHeight = ImGui.GetTextLineHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y * 2;
-            ImGui.BeginChild("SearchHeader", new Vector2(-1, searchBarHeight), true, ImGuiWindowFlags.NoScrollbar);
-            
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.InputTextWithHint("##Search", "Search mods...", ref searchFilter, 100))
-            {
-                // Clear global search when using category search
-                if (!string.IsNullOrEmpty(searchFilter))
-                {
-                    globalSearchFilter = "";
-                    currentPage = 0; // Reset pagination when searching
-                }
-            }
-            
-            ImGui.EndChild();
-            
-            ImGui.Separator();
-            
-            // Scrollable mod list with pagination
-            ImGui.BeginChild("ModList", new Vector2(-1, -30), true);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(8f * scaleSb, 8f * scaleSb));
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, Vector4.Zero);
+            ImGui.BeginChild("ModListArea", new Vector2(-1, -72 * scaleSb), false);
+
+            // Sticky boutique search pill at the top of the list
+            DrawCategorySearchPill(scaleSb);
+            ImGui.Dummy(new Vector2(0, 4f * scaleSb));
+
+
+            // Scrollable mod list with pagination. Reserve enough vertical
+            // space at the bottom for the boutique pagination row (32px) plus
+            // a small gap, so the page-btns aren't clipped.
+            ImGui.BeginChild("ModList", new Vector2(-1, -36 * scaleSb), false);
             
             // Get filtered mods and handle pagination
             var categoryMods = GetFilteredModsForSelectedCategory();
@@ -1300,17 +1874,63 @@ namespace CharacterSelectPlugin.Windows
                 .Take(ModsPerPage)
                 .ToList();
             
-            // Show search result count if searching
+            // Boutique tracked-caps caption when searching.
             if (!string.IsNullOrWhiteSpace(searchFilter))
             {
-                ImGui.TextColored(ColorSchemes.Dark.AccentGreen, $"Found {totalMods} matches");
-                ImGui.Separator();
+                Boutique.DrawFoundNCaption(totalMods, "matches", scaleSb);
             }
-            
+
+            // "Select All" for Currently Affecting You tab, chamfered mini-btn
+            // that toggles every Gear/Hair mod currently affecting the character.
+            // Does not touch the Ctrl+click-restricted section (Eyes/Tattoos/etc).
+            if (selectedCategory == 0)
+            {
+                var gearHairMods = categoryMods
+                    .Where(m => m.ModType == ModType.Gear || m.ModType == ModType.Hair)
+                    .ToList();
+
+                if (gearHairMods.Count > 0)
+                {
+                    int alreadySelected = gearHairMods.Count(m => selectedMods.TryGetValue(m.Directory, out var v) && v);
+                    bool allSelected = alreadySelected == gearHairMods.Count;
+
+                    string mlabel = allSelected
+                        ? $"DESELECT GEAR/HAIR ({gearHairMods.Count})"
+                        : $"SELECT GEAR/HAIR ({gearHairMods.Count})";
+
+                    var dlMini = ImGui.GetWindowDrawList();
+                    using (Boutique.Kicker9?.Push())
+                    {
+                        float fs = ImGui.GetFontSize();
+                        float trackPx = Boutique.Track26(fs);
+                        var miniSize = Boutique.MeasureMiniBtn(mlabel, trackPx, scaleSb, hasIcon: true);
+                        ImGui.SetCursorPosX(14f * scaleSb);
+                        var miniPos = ImGui.GetCursorScreenPos();
+                        if (Boutique.DrawMiniBtn(dlMini, miniPos, miniSize, mlabel,
+                            trackPx, scaleSb, "modmgr_selectall_gh",
+                            UiBuilder.IconFont, UiBuilder.IconFont.FontSize * 0.55f,
+                            FontAwesomeIcon.CheckSquare.ToIconString()))
+                        {
+                            foreach (var mod in gearHairMods)
+                                selectedMods[mod.Directory] = !allSelected;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            Boutique.TitledTooltip(
+                                allSelected ? "Deselect All" : "Select All",
+                                allSelected
+                                    ? "Deselect every Gear/Hair mod currently affecting you. Does not touch the Ctrl+click-restricted section."
+                                    : "Select every Gear/Hair mod currently affecting you. Does not touch the Ctrl+click-restricted section.");
+                        }
+                        ImGui.Dummy(new Vector2(miniSize.X, miniSize.Y + 4f * scaleSb));
+                    }
+                }
+            }
+
             // Draw mod entries with divider between Gear/Hair and other types for "Currently Affecting You"
             bool hasDrawnDivider = false;
             bool hasPreviousGearHair = false;
-            
+
             foreach (var mod in pagedMods)
             {
                 // Check if we need to draw a divider (only for "Currently Affecting You" tab)
@@ -1318,47 +1938,23 @@ namespace CharacterSelectPlugin.Windows
                 {
                     bool isCurrentGearHair = mod.ModType == ModType.Gear || mod.ModType == ModType.Hair;
                     
-                    // If we transition from Gear/Hair to other types, draw divider
+                    // If we transition from Gear/Hair to other types, draw the
+                    // boutique restricted divider (amber dashed top + tracked-caps copy).
                     if (!isCurrentGearHair)
                     {
-                        ImGui.Spacing();
-                        ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.5f, 0.5f, 0.5f, 0.3f));
-                        ImGui.Separator();
-                        ImGui.PopStyleColor();
-                        
-                        // Add small text label for the divider with warning
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.7f, 0.8f));
-                        ImGui.Text("└─ Other Affecting Mods (Eyes, Tattoos, etc.)");
-                        ImGui.PopStyleColor();
-                        
-                        // Warning icon with tooltip
-                        ImGui.SameLine();
-                        ImGui.PushFont(UiBuilder.IconFont);
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.8f, 0.2f, 0.9f)); // Orange warning color
-                        ImGui.Text("\uf071"); // Warning triangle icon
-                        ImGui.PopStyleColor();
-                        ImGui.PopFont();
-                        
+                        int restrictedRowCount = pagedMods
+                            .Count(m => m.ModType != ModType.Gear && m.ModType != ModType.Hair);
+                        Boutique.DrawRestrictedDivider(
+                            "Hold Ctrl to toggle these design-scoped mods",
+                            restrictedRowCount > 0 ? $"{restrictedRowCount} below" : null,
+                            scaleSb);
                         if (ImGui.IsItemHovered())
                         {
-                            ImGui.BeginTooltip();
-                            ImGui.PushTextWrapPos(350f);
-                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.9f, 0.8f, 1.0f)); // Warm white
-                            ImGui.Text("Design Selection Warning");
-                            ImGui.PopStyleColor();
-                            ImGui.Separator();
-                            ImGui.TextUnformatted("Selecting these mods will tie them to this specific design:");
-                            ImGui.Bullet(); ImGui.SameLine(); ImGui.TextUnformatted("They will be DISABLED when switching to other designs");
-                            ImGui.Bullet(); ImGui.SameLine(); ImGui.TextUnformatted("They will be ENABLED when switching back to this design");
-                            ImGui.Spacing();
-                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 1.0f, 0.9f, 1.0f)); // Light green
-                            ImGui.TextUnformatted("Tip: Only select mods that should be specific to this character/outfit. Leave general customization mods (like ears/tails or tattoos) unselected so they stay active across all designs.");
-                            ImGui.PopStyleColor();
-                            ImGui.PopTextWrapPos();
-                            ImGui.EndTooltip();
+                            Boutique.TitledTooltip(
+                                "Design Selection Warning",
+                                "Selecting these mods ties them to this specific design, they get DISABLED when switching to other designs and ENABLED when switching back. Leave general customisation mods (ears/tails, tattoos) unselected so they stay active across designs.",
+                                360f);
                         }
-                        
-                        ImGui.Spacing();
                         hasDrawnDivider = true;
                     }
                 }
@@ -1376,38 +1972,220 @@ namespace CharacterSelectPlugin.Windows
                         hasPreviousGearHair = true;
                 }
             }
-            
+
             ImGui.EndChild();
-            
+
             // Pagination controls
             DrawPaginationControls(totalPages, totalMods);
-            
+
             ImGui.EndChild();
+            ImGui.PopStyleColor();
+            ImGui.PopStyleVar();
         }
-        
+
+        // Boutique search pill matching the global search style at the top of
+        // the mod list area. 30px tall, magnifier icon, dark velvet bg, gold
+        // border on focus.
+        private void DrawCategorySearchPill(float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float pillH = 30f * scale;
+            var pos = ImGui.GetCursorScreenPos();
+            float w = ImGui.GetContentRegionAvail().X;
+            var min = pos;
+            var max = new Vector2(min.X + w, min.Y + pillH);
+
+            dl.AddRectFilled(min, max,
+                Boutique.U32(new Vector4(0.078f, 0.094f, 0.125f, 0.6f)));
+
+            ImGui.PushFont(UiBuilder.IconFont);
+            string sg = FontAwesomeIcon.Search.ToIconString();
+            var sgSz = ImGui.CalcTextSize(sg);
+            ImGui.PopFont();
+            float sgPx = UiBuilder.IconFont.FontSize * 0.65f;
+            float sgScaleR = sgPx / UiBuilder.IconFont.FontSize;
+            dl.AddText(UiBuilder.IconFont, sgPx,
+                new Vector2(min.X + 12f * scale,
+                            min.Y + (pillH - sgSz.Y * sgScaleR) * 0.5f),
+                Boutique.U32(Boutique.TextFaint), sg);
+
+            float inputX = min.X + 12f * scale + sgSz.X * sgScaleR + 8f * scale;
+            float inputW = w - (inputX - min.X) - 12f * scale;
+            float inputPadY = MathF.Max(0f, (pillH - ImGui.GetTextLineHeight()) * 0.5f);
+
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(0f, inputPadY));
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, Vector4.Zero);
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.Text);
+            ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.TextFaint);
+
+            ImGui.SetCursorScreenPos(new Vector2(inputX, min.Y));
+            ImGui.SetNextItemWidth(inputW);
+            if (ImGui.InputTextWithHint("##modmgr_cat_search",
+                "Search mods...", ref searchFilter, 100))
+            {
+                if (!string.IsNullOrEmpty(searchFilter))
+                {
+                    globalSearchFilter = "";
+                    currentPage = 0;
+                }
+            }
+            bool focused = ImGui.IsItemActive();
+
+            ImGui.PopStyleColor(5);
+            ImGui.PopStyleVar(2);
+
+            uint borderC = Boutique.U32(focused
+                ? Boutique.GoldDeep
+                : Boutique.BorderSoft);
+            dl.AddRect(min, max, borderC, 0f, ImDrawFlags.None, 1f * scale);
+
+            ImGui.SetCursorScreenPos(new Vector2(min.X, max.Y));
+        }
+
         private void DrawBottomButtons()
         {
-            ImGui.Separator();
-            
-            var selectedCount = selectedMods.Count(kvp => kvp.Value);
-            ImGui.Text($"Selected: {selectedCount} mods");
-            
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetContentRegionMax().X - 185);
-            
-            uiStyles.PushDarkButtonStyle();
-            if (ImGui.Button("Apply", new Vector2(100, 0)))
+            float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
+            scale = MathF.Max(0.85f, MathF.Min(scale, 2.0f));
+            var dl = ImGui.GetWindowDrawList();
+
+            // Top hairline separator + extra breathing room above and below
+            // the buttons. Without enough vertical pad the cancel/apply pills
+            // sat right against the window's bottom edge.
+            ImGui.Dummy(new Vector2(0, 4f * scale));
+            var sepStart = ImGui.GetCursorScreenPos();
+            float sepW = ImGui.GetContentRegionAvail().X;
+            dl.AddLine(sepStart, new Vector2(sepStart.X + sepW, sepStart.Y),
+                Boutique.U32(Boutique.BorderSoft), 1f * scale);
+            ImGui.Dummy(new Vector2(0, 10f * scale));
+
+            // Selection counts and delta vs the snapshot taken at Open() time.
+            int selectedCount = selectedMods.Count(kvp => kvp.Value);
+            int enabledDelta = 0;  // Newly enabled (was off/missing, now on)
+            int disabledDelta = 0; // Newly disabled (was on, now off/missing)
+            foreach (var kvp in selectedMods)
+            {
+                bool wasOn = originalSelection.TryGetValue(kvp.Key, out var prev) && prev;
+                if (kvp.Value && !wasOn) enabledDelta++;
+                else if (!kvp.Value && wasOn) disabledDelta++;
+            }
+            // Also count mods that were ON in the original but are missing entirely now
+            foreach (var kvp in originalSelection)
+            {
+                if (kvp.Value && !selectedMods.ContainsKey(kvp.Key))
+                    disabledDelta++;
+            }
+
+            float btnH = 30f * scale;
+            float cancelW = 96f * scale;
+            float applyW = 130f * scale;
+            float gap = 8f * scale;
+            float footPadX = 14f * scale;
+
+            var rowStart = ImGui.GetCursorScreenPos();
+            float rowRight = rowStart.X + sepW;
+            float midY = rowStart.Y + btnH * 0.5f;
+
+            // ── Big gold numeral + "SELECTED" label + pipe + delta ──
+            float xCursor = rowStart.X + footPadX;
+            using (Plugin.Instance?.OswaldSemiMidSmall?.Push())
+            {
+                string numStr = selectedCount.ToString();
+                var numSz = ImGui.CalcTextSize(numStr);
+                float numY = midY - numSz.Y * 0.5f;
+                Vector4 numCol = selectedCount > 0 ? Boutique.Gold : Boutique.TextFaint;
+                dl.AddText(new Vector2(xCursor, numY), Boutique.U32(numCol), numStr);
+                xCursor += numSz.X + 8f * scale;
+            }
+            // Footer text bumped from TextFaint to TextDim, TextFaint was
+            // unreadable against the dark bg in the bottom-right cluster.
+            using (Boutique.Kicker11?.Push())
+            {
+                float fs = ImGui.GetFontSize();
+                float trackPx = Boutique.Track32(fs);
+                float lblY = midY - fs * 0.5f;
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, lblY),
+                    "SELECTED", Boutique.U32(Boutique.TextDim), trackPx);
+                xCursor += Boutique.MeasureTrackedText("SELECTED", trackPx) + 12f * scale;
+            }
+            // Pipe
+            dl.AddRectFilled(
+                new Vector2(xCursor, midY - 9f * scale),
+                new Vector2(xCursor + 1f * scale, midY + 9f * scale),
+                Boutique.U32(Boutique.BorderSoft));
+            xCursor += 12f * scale;
+
+            // Delta: "+5 enabled, -2 disabled vs. saved"
+            using (Boutique.Kicker10?.Push())
+            {
+                float fs = ImGui.GetFontSize();
+                float trackPx = Boutique.Track26(fs);
+                float deltaY = midY - fs * 0.5f;
+
+                string posStr = $"+{enabledDelta}";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, deltaY), posStr,
+                    Boutique.U32(enabledDelta > 0 ? Boutique.GreenSoft : Boutique.TextDim),
+                    trackPx);
+                xCursor += Boutique.MeasureTrackedText(posStr, trackPx);
+
+                string mid = " ENABLED, ";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, deltaY), mid,
+                    Boutique.U32(Boutique.TextDim), trackPx);
+                xCursor += Boutique.MeasureTrackedText(mid, trackPx);
+
+                string negStr = $"-{disabledDelta}";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, deltaY), negStr,
+                    Boutique.U32(disabledDelta > 0
+                        ? new Vector4(1f, 0.54f, 0.54f, 1f)
+                        : Boutique.TextDim),
+                    trackPx);
+                xCursor += Boutique.MeasureTrackedText(negStr, trackPx);
+
+                string tail = " DISABLED VS. SAVED";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, deltaY), tail,
+                    Boutique.U32(Boutique.TextDim), trackPx);
+            }
+
+            // CANCEL + APPLY pill on the right edge
+            var applyMin = new Vector2(rowRight - footPadX - applyW, midY - btnH * 0.5f);
+            var applyMax = applyMin + new Vector2(applyW, btnH);
+            var cancelMin = new Vector2(applyMin.X - gap - cancelW, midY - btnH * 0.5f);
+            var cancelMax = cancelMin + new Vector2(cancelW, btnH);
+
+            if (CharacterSelectPlugin.Windows.Styles.Boutique.DrawCancelBtn(
+                    dl, cancelMin, cancelMax, "CANCEL", 1.6f * scale, scale, "modmgr_cancel"))
+            {
+                IsOpen = false;
+            }
+
+            if (CharacterSelectPlugin.Windows.Styles.Boutique.DrawSavePill(
+                    dl, applyMin, applyMax, "APPLY", 1.8f * scale, scale, "modmgr_apply",
+                    false, _modMgrSheen))
             {
                 SaveSelection();
                 IsOpen = false;
             }
-            
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel", new Vector2(75, 0)))
+
+            ImGui.Dummy(new Vector2(0, btnH + 8f * scale));
+        }
+
+        // Static sheen tracker for mod manager Apply pill.
+        private static readonly Dictionary<string, DateTime> _modMgrSheenStarts = new();
+        private const float ModMgrSheenDuration = 0.65f;
+        private static float _modMgrSheen(string id, bool hovered)
+        {
+            if (!hovered)
             {
-                IsOpen = false;
+                _modMgrSheenStarts.Remove(id);
+                return -1f;
             }
-            uiStyles.PopDarkButtonStyle();
+            if (!_modMgrSheenStarts.ContainsKey(id))
+                _modMgrSheenStarts[id] = DateTime.UtcNow;
+            float elapsed = (float)(DateTime.UtcNow - _modMgrSheenStarts[id]).TotalSeconds;
+            if (elapsed >= ModMgrSheenDuration) return -1f;
+            return elapsed / ModMgrSheenDuration;
         }
         
         // Path-based mod type analysis implemented below
@@ -1537,275 +2315,285 @@ namespace CharacterSelectPlugin.Windows
         
         private void DrawModEntry(ModEntry mod, bool requiresCtrlClick = false)
         {
-            // Store the cursor position at the start of the row for context menu
-            var rowStartPos = ImGui.GetCursorScreenPos();
+            float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
+            scale = MathF.Max(0.85f, MathF.Min(scale, 2.0f));
 
-            var isPinned = pinnedMods.Contains(mod.Directory);
+            var dl = ImGui.GetWindowDrawList();
+            float rowW = ImGui.GetContentRegionAvail().X;
+            var (rowMin, rowMax, _) = Boutique.DrawTableRowChassis(dl, rowW, scale, mod.IsCurrentlyAffecting);
 
-            // Determine current state: Enable (0), Disable (1), Inherit (2)
+            // Determine 3-state value: 0=Enable, 1=Disable, 2=Inherit.
             int currentState;
             if (modsToInherit.Contains(mod.Directory))
-                currentState = 2; // Inherit
-            else if (selectedMods.ContainsKey(mod.Directory))
-                currentState = selectedMods[mod.Directory] ? 0 : 1; // Enable or Disable
+                currentState = 2;
+            else if (selectedMods.TryGetValue(mod.Directory, out var sel))
+                currentState = sel ? 0 : 1;
             else
-                currentState = 2; // Not in selectedMods = Inherit by default
-
-            // Track if mod is selected (enabled) for warnings display
+                currentState = 2;
             bool isSelected = currentState == 0;
 
-            // Show dropdown when RespectPenumbraInheritance is ON, otherwise use checkbox
+            bool isPinned = pinnedMods.Contains(mod.Directory);
+            bool hasOptions = ModHasOptionsCache(mod.Directory, mod.Name);
+            bool hasCustomOptions = (editingDesign?.ModOptionSettings?.ContainsKey(mod.Directory) ?? false)
+                                  || (GetEditingCharacter()?.ModOptionSettings?.ContainsKey(mod.Directory) ?? false);
+
+            // Layout per mockup CSS:
+            //   .row-cluster { gap: 4px; margin-left: 2px; }
+            //   .mod-name { margin-left: 4px; }
+            // So: state → 2px → pin → 4px → gear → 4px → name.
+            float padL = 14f * scale;
+            float padR = 12f * scale;
+            float midY = (rowMin.Y + rowMax.Y) * 0.5f;
+            float stateW = Boutique.StateCtrlW * scale;
+            float stateH = Boutique.StateCtrlH * scale;
+            float stateToCluster = 2f * scale;            // .row-cluster margin-left
+            float clusterGap = Boutique.ClusterIconGap * scale;  // 4px between pin and gear
+            float iconSide = Boutique.ClusterIconSide * scale;
+            float nameGap = 4f * scale;                   // .mod-name margin-left
+
+            float xCursor = rowMin.X + padL;
+            var stateMin = new Vector2(xCursor, midY - stateH * 0.5f);
+            var stateMax = stateMin + new Vector2(stateW, stateH);
+
+            // ── State control ───────────────────────────────────────────
             if (plugin.Configuration.RespectPenumbraInheritance)
             {
-                // Three-state dropdown: Enable, Disable, Inherit
-                string[] options = mod.IsInherited
-                    ? new[] { "Enable", "Disable", "Inherit" }
-                    : new[] { "Enable", "Disable" };
-
-                ImGui.SetNextItemWidth(85);
-                if (ImGui.Combo($"##state{mod.Directory}", ref currentState, options, options.Length))
+                // 3-state combo with popup
+                var stateValue = (Boutique.StateValue)currentState;
+                bool isOpen = openStateComboKey == mod.Directory;
+                bool comboClicked = Boutique.DrawStateComboBody(dl, stateMin, stateMax,
+                    stateValue, isOpen, scale, $"sc_{mod.Directory}");
+                if (comboClicked)
                 {
-                    bool allowAction = !requiresCtrlClick || ImGui.GetIO().KeyCtrl;
-
-                    if (allowAction)
+                    if (!requiresCtrlClick || ImGui.GetIO().KeyCtrl)
                     {
-                        // Update state tracking
-                        modsToInherit.Remove(mod.Directory);
+                        openStateComboKey = mod.Directory;
+                        ImGui.OpenPopup($"##scp_{mod.Directory}");
+                    }
+                    else
+                    {
+                        Boutique.Tooltip("Hold Ctrl to toggle this design-scoped mod");
+                    }
+                }
 
-                        if (currentState == 0) // Enable
-                        {
-                            selectedMods[mod.Directory] = true;
-                            RunModAnalysis(mod);
-                        }
-                        else if (currentState == 1) // Disable
-                        {
-                            selectedMods[mod.Directory] = false;
-                            ClearModAnalysis(mod);
-                        }
-                        else // Inherit
+                Boutique.PushBoutiquePopupStyles(scale);
+                ImGui.SetNextWindowPos(new Vector2(stateMin.X, stateMax.Y + 2f * scale));
+                if (ImGui.BeginPopup($"##scp_{mod.Directory}"))
+                {
+                    float popupW = 184f * scale;
+                    if (Boutique.DrawStatePopupItem(dl, popupW, scale,
+                        Boutique.StateValue.Enable, stateValue == Boutique.StateValue.Enable, $"e_{mod.Directory}"))
+                    {
+                        selectedMods[mod.Directory] = true;
+                        modsToInherit.Remove(mod.Directory);
+                        RunModAnalysis(mod);
+                        ImGui.CloseCurrentPopup();
+                        openStateComboKey = null;
+                    }
+                    if (Boutique.DrawStatePopupItem(dl, popupW, scale,
+                        Boutique.StateValue.Disable, stateValue == Boutique.StateValue.Disable, $"d_{mod.Directory}"))
+                    {
+                        selectedMods[mod.Directory] = false;
+                        modsToInherit.Remove(mod.Directory);
+                        ClearModAnalysis(mod);
+                        ImGui.CloseCurrentPopup();
+                        openStateComboKey = null;
+                    }
+                    if (mod.IsInherited)
+                    {
+                        if (Boutique.DrawStatePopupItem(dl, popupW, scale,
+                            Boutique.StateValue.Inherit, stateValue == Boutique.StateValue.Inherit, $"i_{mod.Directory}"))
                         {
                             selectedMods.Remove(mod.Directory);
                             modsToInherit.Add(mod.Directory);
                             ClearModAnalysis(mod);
+                            ImGui.CloseCurrentPopup();
+                            openStateComboKey = null;
                         }
                     }
+                    ImGui.EndPopup();
                 }
-
-                // Tooltip for inherited mods
-                if (ImGui.IsItemHovered() && mod.IsInherited)
+                else if (isOpen)
                 {
-                    ImGui.SetTooltip("This mod is inherited from a parent collection.\nSelect 'Inherit' to let Penumbra manage it.");
+                    openStateComboKey = null;
                 }
+                Boutique.PopBoutiquePopupStyles();
             }
             else
             {
-                // Original checkbox behaviour
-                isSelected = selectedMods.ContainsKey(mod.Directory) ? selectedMods[mod.Directory] : false;
-
-                bool checkboxClicked = ImGui.Checkbox($"##sel{mod.Directory}", ref isSelected);
-
+                // Checkbox mode (binary On/Off). No "ON"/"OFF" text, the
+                // check glyph alone communicates state, and the cluster sits
+                // closer to the checkbox without the label slot reserved.
+                bool isOn = currentState == 0;
+                bool checkboxClicked = Boutique.DrawBoutiqueCheckbox(dl, stateMin, scale, isOn,
+                    $"chk_{mod.Directory}", label: null,
+                    wrapperWidth: 0f);
                 if (checkboxClicked)
                 {
-                    bool allowAction = !requiresCtrlClick || ImGui.GetIO().KeyCtrl;
-
-                    if (!allowAction)
+                    if (!requiresCtrlClick || ImGui.GetIO().KeyCtrl)
                     {
-                        isSelected = !isSelected; // Revert
+                        bool newOn = !isOn;
+                        selectedMods[mod.Directory] = newOn;
+                        if (newOn) RunModAnalysis(mod);
+                        else ClearModAnalysis(mod);
                     }
                     else
                     {
-                        selectedMods[mod.Directory] = isSelected;
-
-                        if (isSelected)
-                            RunModAnalysis(mod);
-                        else
-                            ClearModAnalysis(mod);
+                        Boutique.Tooltip("Hold Ctrl to toggle this design-scoped mod");
                     }
                 }
-
-                if (requiresCtrlClick && ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("Hold Ctrl while clicking to select this mod");
-                }
             }
+            // In combo mode the state control is StateCtrlW wide. In checkbox
+            // mode (no label, no wrapper) the box is just 14 px wide; the
+            // cluster sits flush to its right edge with the standard cluster
+            // gap.
+            float stateActualW = plugin.Configuration.RespectPenumbraInheritance
+                ? stateW
+                : Boutique.CheckboxSide * scale;
+            xCursor = stateMin.X + stateActualW + stateToCluster;
 
-            ImGui.SameLine();
-            
-            // Pin button
-            ImGui.PushFont(UiBuilder.IconFont);
-            var pinIcon = isPinned ? FontAwesomeIcon.Thumbtack.ToIconString() : FontAwesomeIcon.MapPin.ToIconString();
-            var pinColor = isPinned ? ColorSchemes.Dark.AccentYellow : ColorSchemes.Dark.TextMuted;
-            
-            ImGui.PushStyleColor(ImGuiCol.Text, pinColor);
-            ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
-            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(2, 2)); // Reduce padding to help centering
-            if (ImGui.Button($"{pinIcon}##pin{mod.Directory}", new Vector2(20, 20)))
+            // ── Pin + Gear cluster ──────────────────────────────────────
+            float iconFs = UiBuilder.IconFont.FontSize * 0.65f;
+
+            var pinMin = new Vector2(xCursor, midY - iconSide * 0.5f);
+            // Both states use a pin glyph (the unpinned state was a bookmark
+            // before, which read as a different concept). Pinned state uses
+            // the filled thumbtack to imply "stuck in place"; unpinned uses
+            // the unfilled map-pin outline to imply "available to pin".
+            string pinGlyph = isPinned
+                ? FontAwesomeIcon.Thumbtack.ToIconString()
+                : FontAwesomeIcon.MapPin.ToIconString();
+            // Idle bumped from TextGhost to TextDim so the unpinned pin is
+            // visibly readable; hover lifts to gold.
+            Vector4 pinIdle = isPinned ? Boutique.Gold : Boutique.TextDim;
+            Vector4 pinHover = isPinned ? Boutique.GoldBright : Boutique.GoldWarm;
+            string pinTooltip = isPinned
+                ? "Unpin (mod will get auto-disabled when switching)"
+                : "Pin (mod will never get auto-disabled)";
+            if (Boutique.DrawClusterIcon(dl, pinMin, scale, $"pin_{mod.Directory}",
+                UiBuilder.IconFont, iconFs, pinGlyph, pinIdle, pinHover, pinTooltip))
             {
                 if (isPinned)
                 {
-                    Plugin.Log.Information($"[PIN DEBUG] Unpinning mod: {mod.Directory}");
                     pinnedMods.Remove(mod.Directory);
                 }
                 else
                 {
-                    Plugin.Log.Information($"[PIN DEBUG] Pinning mod: {mod.Directory}");
                     pinnedMods.Add(mod.Directory);
-                    // Automatically check the mod when pinning it
                     selectedMods[mod.Directory] = true;
                 }
-                Plugin.Log.Information($"[PIN DEBUG] Current pinned mods: {string.Join(", ", pinnedMods)}");
             }
-            ImGui.PopStyleVar(2); // Pop both FramePadding and ButtonTextAlign
-            ImGui.PopStyleColor();
-            ImGui.PopFont();
-            
-            if (ImGui.IsItemHovered())
+            xCursor += iconSide + clusterGap;
+
+            // Gear always renders so the cluster geometry is constant. Color
+            // varies by state: TextGhost when the mod has no configurable
+            // options, dim cyan-soft when it has options but none customised,
+            // bright cyan-soft when the user has custom options for this
+            // character/design.
+            var gearMin = new Vector2(xCursor, midY - iconSide * 0.5f);
+            Vector4 gearIdle, gearHover;
+            string gearTooltip;
+            if (!hasOptions)
             {
-                ImGui.SetTooltip(isPinned ? "Unpin mod (will be disabled when switching)" : "Pin mod (never gets disabled)");
+                // Brighter than TextGhost so the gear is readable when no
+                // options exist; hover stays the same colour (no interaction).
+                gearIdle = Boutique.TextDim;
+                gearHover = Boutique.TextDim;
+                gearTooltip = "No configuration options";
             }
-            
-            ImGui.SameLine();
-            
-            // Edit icon for configurable mods only
-            var hasOptions = ModHasOptionsCache(mod.Directory, mod.Name);
-            var hasCustomOptions = editingDesign?.ModOptionSettings?.ContainsKey(mod.Directory) ?? false;
-            
-            if (hasOptions)
+            else if (hasCustomOptions)
             {
-                ImGui.PushFont(UiBuilder.IconFont);
-                var iconColor = hasCustomOptions ? ColorSchemes.Dark.AccentBlue : ColorSchemes.Dark.AccentYellow;
-                ImGui.PushStyleColor(ImGuiCol.Text, iconColor);
-                ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));
-                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(2, 2));
-                
-                if (ImGui.Button($"{FontAwesomeIcon.Edit.ToIconString()}##edit{mod.Directory}", new Vector2(20, 20)))
-                {
-                    OpenModOptionsPanel(mod);
-                }
-                
-                ImGui.PopStyleVar(2);
-                ImGui.PopStyleColor();
-                ImGui.PopFont();
-                
-                if (ImGui.IsItemHovered())
-                {
-                    var tooltip = hasCustomOptions 
-                        ? "Edit mod configuration options" 
-                        : "Configure mod options";
-                    ImGui.SetTooltip(tooltip);
-                }
+                gearIdle = Boutique.WithAlpha(Boutique.CyanSoft, 0.95f);
+                gearHover = Boutique.Cyan;
+                gearTooltip = "Edit mod configuration options";
             }
             else
             {
-                // Empty space to maintain alignment
-                ImGui.Dummy(new Vector2(20, 20));
+                gearIdle = Boutique.WithAlpha(Boutique.CyanSoft, 0.75f);
+                gearHover = Boutique.CyanSoft;
+                gearTooltip = "Configure mod options";
             }
-            
-            ImGui.SameLine();
-            
-            // Mod name and status
-            ImGui.Text(mod.Name);
-            
-            if (mod.IsCurrentlyAffecting)
+            if (Boutique.DrawClusterIcon(dl, gearMin, scale, $"gear_{mod.Directory}",
+                UiBuilder.IconFont, iconFs, FontAwesomeIcon.Cog.ToIconString(),
+                gearIdle, gearHover, gearTooltip))
             {
-                ImGui.SameLine();
-                ImGui.TextColored(ColorSchemes.Dark.AccentGreen, $"★ Priority {mod.Priority}");
+                if (hasOptions) OpenModOptionsPanel(mod);
             }
-            else if (mod.IsEnabled)
+            xCursor += iconSide + nameGap;
+
+            // ── Mod name (truncates with ...) ───────────────────────────
+            float nameMaxX = rowMax.X - padR;
+            using (Boutique.Body13?.Push())
             {
-                ImGui.SameLine();
-                ImGui.TextColored(ColorSchemes.Dark.AccentYellow, $"Enabled");
+                float fh = ImGui.GetFontSize();
+                float nameAvail = nameMaxX - xCursor;
+                string displayName = Boutique.TruncateToWidth(mod.Name, nameAvail);
+                Vector4 nameColor;
+                if (currentState == 0) nameColor = Boutique.Text;
+                else if (currentState == 1) nameColor = Boutique.TextDim;
+                else nameColor = Boutique.TextDim; // Inherit also dims
+                dl.AddText(new Vector2(xCursor, midY - fh * 0.5f),
+                    Boutique.U32(nameColor), displayName);
             }
-            
-            // Show dependency indicators
-            if (mod.Dependencies.Any())
+
+            // Invisible button over name area for tooltip + right-click context menu
+            ImGui.SetCursorScreenPos(new Vector2(xCursor, rowMin.Y));
+            float nameAreaW = nameMaxX - xCursor;
+            float nameAreaH = rowMax.Y - rowMin.Y;
+            if (nameAreaW > 4f * scale && nameAreaH > 0f)
             {
-                ImGui.SameLine();
-                
-                // Check if all dependencies are met
-                var unmetDependencies = mod.Dependencies.Where(d => !d.IsFound || 
-                    !selectedMods.ContainsKey(d.RequiredModPath) || 
-                    !selectedMods[d.RequiredModPath]).ToList();
-                
-                if (unmetDependencies.Any())
+                ImGui.InvisibleButton($"##ModRow_{mod.Directory}", new Vector2(nameAreaW, nameAreaH));
+                bool nameHovered = ImGui.IsItemHovered();
+                DrawModCategoryContextMenu(mod);
+
+                if (nameHovered)
                 {
-                    ImGui.TextColored(ColorSchemes.Dark.AccentRed, $"⚠ Missing {unmetDependencies.Count} dependencies");
-                }
-                else
-                {
-                    ImGui.TextColored(ColorSchemes.Dark.AccentGreen, "✓ Dependencies met");
+                    DrawModRowTooltip(mod, requiresCtrlClick);
                 }
             }
-            
-            // Show dependency warnings for incomplete gear mods only
-            if (mod.ModType == ModType.Gear)
-            {
-                if (mod.HasOnlyModels)
-                {
-                    ImGui.SameLine();
-                    ImGui.TextColored(ColorSchemes.Dark.AccentYellow, "⚠ Needs texture mod");
-                }
-                else if (mod.HasOnlyTextures)
-                {
-                    ImGui.SameLine();
-                    ImGui.TextColored(ColorSchemes.Dark.AccentYellow, "⚠ Needs model mod");
-                }
-            }
-            
-            // Tooltip with categories and dependencies
-            if (ImGui.IsItemHovered())
-            {
-                var tooltipLines = new List<string>();
-                
-                if (mod.Categories.Any())
-                {
-                    tooltipLines.Add($"Categories: {string.Join(", ", mod.Categories)}");
-                }
-                
-                if (mod.Dependencies.Any())
-                {
-                    tooltipLines.Add("");
-                    tooltipLines.Add("Dependencies:");
-                    foreach (var dep in mod.Dependencies)
-                    {
-                        var status = dep.IsFound ? 
-                            (selectedMods.ContainsKey(dep.RequiredModPath) && selectedMods[dep.RequiredModPath] ? "✓" : "✗") : 
-                            "⚠ Not found";
-                        tooltipLines.Add($"  {status} {dep.RequiredModName}");
-                    }
-                }
-                
-                if (mod.HasOnlyModels)
-                {
-                    tooltipLines.Add("");
-                    tooltipLines.Add("This mod contains only models and requires texture dependencies.");
-                }
-                else if (mod.HasOnlyTextures)
-                {
-                    tooltipLines.Add("");
-                    tooltipLines.Add("This mod contains only textures/materials and requires model dependencies.");
-                }
-                
-                if (tooltipLines.Any())
-                {
-                    ImGui.SetTooltip(string.Join("\n", tooltipLines));
-                }
-            }
-            
-            // Show contextual warnings for selected mods
+
+            // Advance cursor to row end. Contextual warning (if any) renders below.
+            ImGui.SetCursorScreenPos(new Vector2(rowMin.X, rowMax.Y));
+
+            // Show contextual warnings for selected mods (existing behaviour)
             if (isSelected && mod.Analysis != null && !dismissedWarnings.Contains(mod.Directory))
             {
                 DrawContextualWarning(mod);
             }
-            
-            // Right-click context menu for manual categorization - draw invisible button over entire row
-            var rowEndPos = ImGui.GetCursorScreenPos();
-            var rowSize = new Vector2(ImGui.GetContentRegionAvail().X, rowEndPos.Y - rowStartPos.Y);
-            
-            ImGui.SetCursorScreenPos(rowStartPos);
-            ImGui.InvisibleButton($"##ModRow_{mod.Directory}", rowSize);
-            
-            DrawModCategoryContextMenu(mod);
+        }
+
+        // Boutique tooltip for the mod row name area: full mod name, categories,
+        // dependencies (with met/unmet status), and a hint about the design-scoped
+        // gating when applicable.
+        private void DrawModRowTooltip(ModEntry mod, bool requiresCtrlClick)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(mod.Name);
+            if (mod.Categories.Any())
+            {
+                sb.Append("\nCategories: ");
+                sb.Append(string.Join(", ", mod.Categories));
+            }
+            if (mod.Dependencies.Any())
+            {
+                sb.Append("\n\nDependencies:");
+                foreach (var dep in mod.Dependencies)
+                {
+                    string status = dep.IsFound
+                        ? (selectedMods.TryGetValue(dep.RequiredModPath, out var v) && v ? "[OK]" : "[MISSING]")
+                        : "[NOT FOUND]";
+                    sb.Append($"\n  {status} {dep.RequiredModName}");
+                }
+            }
+            if (mod.HasOnlyModels)
+                sb.Append("\n\nOnly contains models, needs a texture mod to look right.");
+            else if (mod.HasOnlyTextures)
+                sb.Append("\n\nOnly contains textures/materials, needs a model mod.");
+            if (requiresCtrlClick)
+                sb.Append("\n\nHold Ctrl to toggle this design-scoped mod.");
+
+            // Wider wrap than default so dependency lists stay readable
+            Boutique.Tooltip(sb.ToString(), 320f);
         }
 
         private void RunModAnalysis(ModEntry mod)
@@ -2991,67 +3779,188 @@ namespace CharacterSelectPlugin.Windows
         }
 
         /// <summary>
-        /// Draw pagination controls at the bottom of the mod list
+        /// Boutique pagination row: "Showing X to Y of Z mods" caption on the
+        /// left, chamfered page-btn cluster on the right (First/Prev arrows,
+        /// up to 7 numbered pages with the current one in gold border, then
+        /// Next/Last arrows). Sits above the footer.
         /// </summary>
         private void DrawPaginationControls(int totalPages, int totalMods)
         {
             if (totalPages <= 1) return;
-            
-            ImGui.Separator();
-            
-            var buttonWidth = 30f;
-            var pageText = $"Page {currentPage + 1} of {totalPages} ({totalMods} mods)";
-            var textSize = ImGui.CalcTextSize(pageText);
-            
-            // Center the pagination controls
-            var totalWidth = buttonWidth * 4 + textSize.X + ImGui.GetStyle().ItemSpacing.X * 4;
-            var startX = (ImGui.GetContentRegionAvail().X - totalWidth) / 2;
-            
-            ImGui.SetCursorPosX(startX);
-            
-            // First page button
-            ImGui.BeginDisabled(currentPage == 0);
-            if (ImGui.Button("<<", new Vector2(buttonWidth, 0)))
+
+            float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
+            scale = MathF.Max(0.85f, MathF.Min(scale, 2.0f));
+            var dl = ImGui.GetWindowDrawList();
+
+            float availW = ImGui.GetContentRegionAvail().X;
+            float rowH = 32f * scale;
+            var rowStart = ImGui.GetCursorScreenPos();
+            var rowMin = rowStart;
+            var rowMax = new Vector2(rowMin.X + availW, rowMin.Y + rowH);
+
+            // Top hairline (gold-deep fade) above the row
+            dl.AddLine(rowMin, new Vector2(rowMax.X, rowMin.Y),
+                Boutique.U32(Boutique.BorderSoft), 1f * scale);
+
+            float padX = 14f * scale;
+            float midY = (rowMin.Y + rowMax.Y) * 0.5f;
+
+            // ── Left caption: "Showing X to Y of Z mods" ────────────────
+            // Bumped to Kicker12 + TextDim filler so the caption is readable
+            // (was Kicker11 + TextFaint, "almost invisible" against the dark bg).
+            int firstIdx = currentPage * ModsPerPage + 1;
+            int lastIdx = Math.Min(firstIdx + ModsPerPage - 1, totalMods);
+            using (Boutique.Kicker12?.Push())
             {
-                currentPage = 0;
-                categoryPageNumbers[selectedCategory] = currentPage;
+                float fs = ImGui.GetFontSize();
+                float trackPx = Boutique.Track26(fs);
+                float captionY = midY - fs * 0.5f;
+                float xCursor = rowMin.X + padX;
+
+                string p1 = "SHOWING ";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, captionY), p1,
+                    Boutique.U32(Boutique.TextDim), trackPx);
+                xCursor += Boutique.MeasureTrackedText(p1, trackPx);
+
+                string range = $"{firstIdx} TO {lastIdx}";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, captionY), range,
+                    Boutique.U32(Boutique.Text), trackPx);
+                xCursor += Boutique.MeasureTrackedText(range, trackPx);
+
+                string p2 = " OF ";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, captionY), p2,
+                    Boutique.U32(Boutique.TextDim), trackPx);
+                xCursor += Boutique.MeasureTrackedText(p2, trackPx);
+
+                string total = totalMods.ToString();
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, captionY), total,
+                    Boutique.U32(Boutique.GoldWarm), trackPx);
+                xCursor += Boutique.MeasureTrackedText(total, trackPx);
+
+                string p3 = " MODS";
+                Boutique.DrawTrackedText(dl, new Vector2(xCursor, captionY), p3,
+                    Boutique.U32(Boutique.TextDim), trackPx);
             }
-            ImGui.EndDisabled();
-            
-            ImGui.SameLine();
-            
-            // Previous page button
-            ImGui.BeginDisabled(currentPage == 0);
-            if (ImGui.Button("<", new Vector2(buttonWidth, 0)))
+
+            // ── Right page-btn cluster ──────────────────────────────────
+            float btnSide = Boutique.PageBtnSide * scale;
+            float btnGap = 5f * scale;
+            float btnY = midY - btnSide * 0.5f;
+
+            // Compute window of numbered pages to show (max 7, current centred when possible)
+            int maxNumbered = 7;
+            int firstPage = Math.Max(0, currentPage - 3);
+            int lastPage = Math.Min(totalPages - 1, firstPage + maxNumbered - 1);
+            if (lastPage - firstPage + 1 < maxNumbered)
+                firstPage = Math.Max(0, lastPage - maxNumbered + 1);
+            int numberedCount = lastPage - firstPage + 1;
+
+            // Total cluster width: 2 arrow groups (First+Prev, Next+Last) + numbered pages
+            int totalBtns = 2 + numberedCount + 2;
+            float clusterW = totalBtns * btnSide + (totalBtns - 1) * btnGap;
+            float clusterX = rowMax.X - padX - clusterW;
+
+            // Wardrobe-style transition: new current fades IN (currentT 0→1),
+            // outgoing previous fades OUT (1 - currentT) over PageTransitionDur.
+            float pageT = PageTransitionT;
+            bool isTrans = IsPageTransitioning;
+            float fadeIn = pageT;
+            float fadeOut = isTrans ? (1f - pageT) : 0f;
+
+            // First page (angles-left icon)
+            bool firstDisabled = currentPage == 0;
+            if (Boutique.DrawPageBtnIcon(dl, new Vector2(clusterX, btnY), scale, "first",
+                UiBuilder.IconFont, UiBuilder.IconFont.FontSize * 0.55f,
+                FontAwesomeIcon.AngleDoubleLeft.ToIconString(),
+                current: false, disabled: firstDisabled))
             {
-                currentPage--;
-                categoryPageNumbers[selectedCategory] = currentPage;
+                TriggerPageChange(0);
             }
-            ImGui.EndDisabled();
-            
-            ImGui.SameLine();
-            ImGui.Text(pageText);
-            ImGui.SameLine();
-            
-            // Next page button
-            ImGui.BeginDisabled(currentPage >= totalPages - 1);
-            if (ImGui.Button(">", new Vector2(buttonWidth, 0)))
+            clusterX += btnSide + btnGap;
+
+            // Prev page
+            bool prevDisabled = currentPage == 0;
+            if (Boutique.DrawPageBtnIcon(dl, new Vector2(clusterX, btnY), scale, "prev",
+                UiBuilder.IconFont, UiBuilder.IconFont.FontSize * 0.55f,
+                FontAwesomeIcon.AngleLeft.ToIconString(),
+                current: false, disabled: prevDisabled))
             {
-                currentPage++;
-                categoryPageNumbers[selectedCategory] = currentPage;
+                TriggerPageChange(currentPage - 1);
             }
-            ImGui.EndDisabled();
-            
-            ImGui.SameLine();
-            
-            // Last page button
-            ImGui.BeginDisabled(currentPage >= totalPages - 1);
-            if (ImGui.Button(">>", new Vector2(buttonWidth, 0)))
+            clusterX += btnSide + btnGap;
+
+            // Numbered pages, current fades in, previous fades out. Track
+            // each numbered button's X position so we can draw a sliding
+            // gold indicator that lerps from the previous current to the new
+            // current during the transition (matches the wardrobe pager
+            // dot-position lerp).
+            float numberedStart = clusterX;
+            for (int p = firstPage; p <= lastPage; p++)
             {
-                currentPage = totalPages - 1;
-                categoryPageNumbers[selectedCategory] = currentPage;
+                bool isCurrent = p == currentPage;
+                bool isOutgoing = isTrans && p == pagePrevIdx;
+                if (Boutique.DrawPageBtn(dl, new Vector2(clusterX, btnY), scale,
+                    $"pg{p}", (p + 1).ToString(),
+                    current: isCurrent, disabled: false,
+                    currentT: isCurrent ? fadeIn : 1f,
+                    outgoingT: isOutgoing ? fadeOut : 0f))
+                {
+                    TriggerPageChange(p);
+                }
+                clusterX += btnSide + btnGap;
             }
-            ImGui.EndDisabled();
+
+            // Sliding gold indicator: a 2px gold underline + soft glow that
+            // lerps between the previous and new current button while a
+            // transition is in flight. Static on the current button at rest.
+            // Mirrors the wardrobe pager dot's "active position lerp".
+            float SlotX(int pageIdx)
+            {
+                int rel = pageIdx - firstPage;
+                return numberedStart + rel * (btnSide + btnGap);
+            }
+            int prevVisible = (pagePrevIdx >= firstPage && pagePrevIdx <= lastPage)
+                ? pagePrevIdx : currentPage;
+            int curVisible = currentPage;
+            float fromX = SlotX(prevVisible);
+            float toX = SlotX(curVisible);
+            float indicatorX = isTrans ? (fromX + (toX - fromX) * pageT) : toX;
+            float underY = btnY + btnSide + 1f * scale;
+            var indMin = new Vector2(indicatorX + 3f * scale, underY);
+            var indMax = new Vector2(indicatorX + btnSide - 3f * scale, underY + 2f * scale);
+            // Soft glow stack
+            for (int g = 3; g > 0; g--)
+            {
+                float r = g * 2f * scale;
+                dl.AddRectFilled(
+                    new Vector2(indMin.X - r, indMin.Y - r),
+                    new Vector2(indMax.X + r, indMax.Y + r),
+                    Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.16f / g)));
+            }
+            dl.AddRectFilled(indMin, indMax, Boutique.U32(Boutique.Gold));
+
+            // Next page
+            bool nextDisabled = currentPage >= totalPages - 1;
+            if (Boutique.DrawPageBtnIcon(dl, new Vector2(clusterX, btnY), scale, "next",
+                UiBuilder.IconFont, UiBuilder.IconFont.FontSize * 0.55f,
+                FontAwesomeIcon.AngleRight.ToIconString(),
+                current: false, disabled: nextDisabled))
+            {
+                TriggerPageChange(currentPage + 1);
+            }
+            clusterX += btnSide + btnGap;
+
+            // Last page
+            bool lastDisabled = currentPage >= totalPages - 1;
+            if (Boutique.DrawPageBtnIcon(dl, new Vector2(clusterX, btnY), scale, "last",
+                UiBuilder.IconFont, UiBuilder.IconFont.FontSize * 0.55f,
+                FontAwesomeIcon.AngleDoubleRight.ToIconString(),
+                current: false, disabled: lastDisabled))
+            {
+                TriggerPageChange(totalPages - 1);
+            }
+
+            ImGui.Dummy(new Vector2(availW, rowH));
         }
         
         /// <summary>
@@ -3134,30 +4043,41 @@ namespace CharacterSelectPlugin.Windows
         /// <summary>
         /// Open the mod options configuration panel
         /// </summary>
+        /// <summary>Helper to get the character being edited (if any).</summary>
+        private Character? GetEditingCharacter()
+        {
+            if (editingCharacterIndex.HasValue && editingCharacterIndex.Value >= 0 &&
+                editingCharacterIndex.Value < plugin.Characters.Count)
+                return plugin.Characters[editingCharacterIndex.Value];
+            return null;
+        }
+
         private void OpenModOptionsPanel(ModEntry mod)
         {
-            // Allow opening options panel even without a design being edited
-            // In this case, we'll just show current settings without saving to a design
-            
             optionsEditingMod = mod;
-            
+
             // Get available options from Penumbra
             availableModOptions = plugin.PenumbraIntegration.GetModOptions(mod.Directory, mod.Name);
             optionGroupTypes = new Dictionary<string, int>();
-            
-            // Parse group types from Penumbra API - the int in the tuple is the group type
+
+            // Parse group types from Penumbra API
             // 0 = Single-select, 1 = Multi-select
             var rawOptions = plugin.PenumbraIntegration.GetModOptionsRaw(mod.Directory, mod.Name);
             foreach (var (groupName, (optionNames, groupType)) in rawOptions)
             {
                 optionGroupTypes[groupName] = groupType;
             }
-            
-            // Load current settings for this mod
+
+            // Load current settings for this mod - check design first, then character
             if (editingDesign?.ModOptionSettings?.ContainsKey(mod.Directory) ?? false)
             {
                 // Use design's saved options
                 currentModOptions = new Dictionary<string, List<string>>(editingDesign.ModOptionSettings[mod.Directory]);
+            }
+            else if (GetEditingCharacter()?.ModOptionSettings?.ContainsKey(mod.Directory) ?? false)
+            {
+                // Use character's saved options
+                currentModOptions = new Dictionary<string, List<string>>(GetEditingCharacter()!.ModOptionSettings![mod.Directory]);
             }
             else if (currentCollectionId != Guid.Empty)
             {
@@ -3223,6 +4143,38 @@ namespace CharacterSelectPlugin.Windows
         /// <summary>
         /// Draw the mod options configuration popup
         /// </summary>
+        // Boutique mod-option group header: small gold-deep accent bar on the
+        // left + tracked-caps Oswald label. Used for combo / radio / checkbox
+        // group headers inside the options popup so they read consistently.
+        private void DrawModOptionGroupHeader(string groupName)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            var pos = ImGui.GetCursorScreenPos();
+            float fontSize = 0f;
+            float trackPx = 0f;
+            float labelW = 0f;
+            string label = groupName.ToUpperInvariant();
+            using (Boutique.Kicker11?.Push())
+            {
+                fontSize = ImGui.GetFontSize();
+                trackPx = Boutique.Track28(fontSize);
+                labelW = Boutique.MeasureTrackedText(label, trackPx);
+            }
+            float h = MathF.Max(fontSize, 16f);
+            // Gold-deep accent bar on the left
+            dl.AddRectFilled(
+                new Vector2(pos.X, pos.Y + 2f),
+                new Vector2(pos.X + 2f, pos.Y + h - 2f),
+                Boutique.U32(Boutique.GoldDeep));
+            using (Boutique.Kicker11?.Push())
+            {
+                Boutique.DrawTrackedText(dl,
+                    new Vector2(pos.X + 10f, pos.Y),
+                    label, Boutique.U32(Boutique.Text), trackPx);
+            }
+            ImGui.Dummy(new Vector2(0, h + 4f));
+        }
+
         private void DrawModOptionsPopup()
         {
             if (optionsEditingMod == null)
@@ -3253,36 +4205,116 @@ namespace CharacterSelectPlugin.Windows
                 isOptionsPopupOpen = true;
             }
             
-            ImGui.SetNextWindowSize(new Vector2(500, 600), ImGuiCond.FirstUseEver);
-            
-            if (ImGui.BeginPopupModal(popupId, ref isOptionsPopupOpen))
+            ImGui.SetNextWindowSize(new Vector2(560, 600), ImGuiCond.Always);
+            // Boutique styling: dark velvet bg + gold border. NoScrollbar on
+            // the popup itself so the OptionsArea child handles all scrolling
+            //, otherwise the parent popup auto-scrolls and clips the footer.
+            ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.04f, 0.05f, 0.08f, 0.97f));
+            ImGui.PushStyleColor(ImGuiCol.Border, Boutique.WithAlpha(Boutique.Gold, 0.55f));
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(16f, 14f));
+
+            const ImGuiWindowFlags popupFlags =
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse |
+                ImGuiWindowFlags.NoResize;
+
+            if (ImGui.BeginPopupModal(popupId, ref isOptionsPopupOpen, popupFlags))
             {
-                // Title
-                ImGui.Text($"Configure: {optionsEditingMod.Name}");
-                ImGui.Separator();
-                
-                // Show status based on whether we're editing a design
-                var hasCustomOptions = false;
-                if (editingDesign != null)
+                Boutique.PushFormStyle();
+
+                // ── Boutique title row ──
+                // Layout: "CONFIGURE" kicker + diamond divider + mod name,
+                // all on the same vertical baseline. Bottom gold-fade rule.
+                float titleW = ImGui.GetContentRegionAvail().X;
+                float titleRowH = 28f;
                 {
-                    hasCustomOptions = editingDesign.ModOptionSettings?.ContainsKey(optionsEditingMod.Directory) ?? false;
-                    if (hasCustomOptions)
+                    var dl2 = ImGui.GetWindowDrawList();
+                    var titlePos = ImGui.GetCursorScreenPos();
+                    float titleMidY = titlePos.Y + titleRowH * 0.5f;
+
+                    // Pre-measure kicker so we don't nest Push blocks.
+                    float kickerTrackPx, kickerW;
+                    using (Boutique.Kicker11?.Push())
                     {
-                        ImGui.TextColored(ColorSchemes.Dark.AccentBlue, "✓ Custom options configured for this design");
+                        kickerTrackPx = Boutique.Track32(ImGui.GetFontSize());
+                        kickerW = Boutique.MeasureTrackedText("CONFIGURE", kickerTrackPx);
+                    }
+
+                    using (Boutique.Kicker11?.Push())
+                    {
+                        float fs = ImGui.GetFontSize();
+                        Boutique.DrawTrackedText(dl2,
+                            new Vector2(titlePos.X, titleMidY - fs * 0.5f),
+                            "CONFIGURE", Boutique.U32(Boutique.GoldDeep), kickerTrackPx);
+                    }
+
+                    // Diamond divider
+                    var diaC = new Vector2(titlePos.X + kickerW + 14f, titleMidY);
+                    dl2.AddTriangleFilled(
+                        diaC + new Vector2(0, -3f), diaC + new Vector2(3f, 0), diaC + new Vector2(0, 3f),
+                        Boutique.U32(Boutique.GoldDeep));
+                    dl2.AddTriangleFilled(
+                        diaC + new Vector2(0, -3f), diaC + new Vector2(0, 3f), diaC + new Vector2(-3f, 0),
+                        Boutique.U32(Boutique.GoldDeep));
+
+                    // Mod name (Outfit Med 13)
+                    using (Boutique.Body13?.Push())
+                    {
+                        float fs = ImGui.GetFontSize();
+                        float nameX = titlePos.X + kickerW + 28f;
+                        float nameY = titleMidY - fs * 0.5f;
+                        // Truncate if it would exceed available width
+                        float nameAvail = titlePos.X + titleW - nameX;
+                        string display = Boutique.TruncateToWidth(optionsEditingMod.Name, nameAvail);
+                        dl2.AddText(new Vector2(nameX, nameY),
+                            Boutique.U32(Boutique.Text), display);
+                    }
+
+                    // Bottom hairline (gold-fade)
+                    Boutique.DrawGoldFadeRule(dl2,
+                        new Vector2(titlePos.X, titlePos.Y + titleRowH + 4f),
+                        titleW, 1f);
+
+                    ImGui.Dummy(new Vector2(titleW, titleRowH + 12f));
+                }
+
+                // ── Status caption ──
+                var hasCustomOptions = false;
+                {
+                    string statusText;
+                    Vector4 statusCol;
+                    if (editingDesign != null)
+                    {
+                        hasCustomOptions = editingDesign.ModOptionSettings?.ContainsKey(optionsEditingMod.Directory) ?? false;
+                        statusText = hasCustomOptions
+                            ? "Custom options configured for this design"
+                            : "Using current Penumbra settings";
+                        statusCol = hasCustomOptions ? Boutique.CyanSoft : Boutique.NpAmber;
                     }
                     else
                     {
-                        ImGui.TextColored(ColorSchemes.Dark.AccentYellow, "⚠ Using current Penumbra settings");
+                        var editChar = GetEditingCharacter();
+                        hasCustomOptions = editChar?.ModOptionSettings?.ContainsKey(optionsEditingMod.Directory) ?? false;
+                        statusText = hasCustomOptions
+                            ? "Custom options configured for this character"
+                            : "Using current Penumbra settings";
+                        statusCol = hasCustomOptions ? Boutique.CyanSoft : Boutique.NpAmber;
                     }
+                    using (Boutique.Body13?.Push())
+                    {
+                        ImGui.TextColored(statusCol, statusText);
+                    }
+                    ImGui.Dummy(new Vector2(0, 4f));
                 }
-                else
-                {
-                    ImGui.TextColored(ColorSchemes.Dark.AccentGreen, "Editing current Penumbra settings");
-                }
-                ImGui.Separator();
-                
-                // Scrollable area for options
-                if (ImGui.BeginChild("OptionsArea", new Vector2(0, 450)))
+
+                // Scrollable options area. Reserve 56 px for the footer below.
+                // Stronger frame border so combos/checkboxes are legible on
+                // the dark popup bg; tighter padding so glyphs aren't bloated.
+                ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
+                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(5f, 2f));
+                ImGui.PushStyleColor(ImGuiCol.Border, Boutique.WithAlpha(Boutique.Gold, 0.45f));
+                if (ImGui.BeginChild("OptionsArea", new Vector2(0, -56f), false,
+                    ImGuiWindowFlags.AlwaysUseWindowPadding))
                 {
                     // Filter and organize options by type to match Penumbra's layout
                     var filteredOptions = availableModOptions
@@ -3335,57 +4367,46 @@ namespace CharacterSelectPlugin.Windows
                         var currentIndex = Array.IndexOf(optionNames, currentSelection);
                         if (currentIndex < 0) currentIndex = 0;
                         
-                        ImGui.PushStyleColor(ImGuiCol.Text, ColorSchemes.Dark.AccentBlue);
-                        ImGui.Text(groupName);
-                        ImGui.PopStyleColor();
-                        
-                        ImGui.SetNextItemWidth(400);
+                        DrawModOptionGroupHeader(groupName);
+
+                        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 12f);
                         if (ImGui.Combo($"##{groupName}_combo", ref currentIndex, optionNames, optionNames.Length))
                         {
                             currentModOptions[groupName] = new List<string> { optionNames[currentIndex] };
                         }
-                        
-                        ImGui.Spacing();
+
+                        ImGui.Dummy(new Vector2(0, 6f));
                     }
-                    
+
                     // Draw radio button groups second (single-choice, ≤2 options)
                     foreach (var (groupName, optionNames) in radioGroups)
                     {
-                        // Simple section header with no child window - same style as checkboxes
-                        ImGui.PushStyleColor(ImGuiCol.Text, ColorSchemes.Dark.AccentBlue);
-                        ImGui.Text(groupName);
-                        ImGui.PopStyleColor();
-                        
+                        DrawModOptionGroupHeader(groupName);
+
                         var currentSelection = currentModOptions.ContainsKey(groupName) && currentModOptions[groupName].Any()
                             ? currentModOptions[groupName].First()
                             : optionNames.First();
-                        
-                        // Draw radio buttons inline
-                        ImGui.SameLine();
-                        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 20); // Small indent
-                        
+
+                        // Indent radios under the section header
+                        ImGui.Indent(12f);
                         for (int i = 0; i < optionNames.Length; i++)
                         {
                             if (i > 0) ImGui.SameLine();
-                            
                             if (ImGui.RadioButton($"{optionNames[i]}##{groupName}", currentSelection == optionNames[i]))
                             {
                                 currentModOptions[groupName] = new List<string> { optionNames[i] };
                             }
                         }
-                        
-                        ImGui.Spacing();
+                        ImGui.Unindent(12f);
+
+                        ImGui.Dummy(new Vector2(0, 6f));
                     }
-                    
+
                     // Draw checkbox groups last (multi-choice, Type 1/2)
                     foreach (var (groupName, optionNames) in checkboxGroups)
                     {
-                        // Simple section header with no child window
-                        ImGui.PushStyleColor(ImGuiCol.Text, ColorSchemes.Dark.AccentBlue);
-                        ImGui.Text(groupName);
-                        ImGui.PopStyleColor();
-                        
-                        ImGui.Spacing();
+                        DrawModOptionGroupHeader(groupName);
+                        ImGui.Indent(12f);
                         
                         var currentSelections = currentModOptions.ContainsKey(groupName) 
                             ? currentModOptions[groupName] 
@@ -3408,40 +4429,83 @@ namespace CharacterSelectPlugin.Windows
                                 currentModOptions[groupName] = new List<string>(currentSelections);
                             }
                         }
-                        
-                        ImGui.Spacing();
-                        ImGui.Separator();
-                        ImGui.Spacing();
+                        ImGui.Unindent(12f);
+
+                        ImGui.Dummy(new Vector2(0, 8f));
                     }
                 }
                 ImGui.EndChild();
-                
+                ImGui.PopStyleColor();
+                ImGui.PopStyleVar(2);
+
                 ImGui.Separator();
-                
-                // Buttons
-                if (ImGui.Button("Save to Design", new Vector2(120, 0)))
+                ImGui.Dummy(new Vector2(0, 6f));
+
+                // Boutique footer: chamfered cancel + (optional) chamfered
+                // clear + gold-pill save. Layout walks RIGHT-TO-LEFT from the
+                // row's right edge, so cancel sits flush next to save when
+                // the clear button isn't shown, no phantom slot reserved.
                 {
-                    SaveModOptionsToDesign();
-                    ImGui.CloseCurrentPopup();
+                    var fdl = ImGui.GetWindowDrawList();
+                    float btnH = 30f;
+                    float saveW = 88f;
+                    float clearW = 80f;
+                    float cancelW = 80f;
+                    float gap = 6f;
+                    var rowStart = ImGui.GetCursorScreenPos();
+                    float rowMidY = rowStart.Y + btnH * 0.5f;
+                    float rowRight = rowStart.X + ImGui.GetContentRegionAvail().X;
+
+                    // SAVE on the far right
+                    var saveMin = new Vector2(rowRight - saveW, rowMidY - btnH * 0.5f);
+                    var saveMax = saveMin + new Vector2(saveW, btnH);
+
+                    // CLEAR (optional) immediately to the left of SAVE
+                    Vector2 clearMin = default, clearMax = default;
+                    float leftOfSaveX = saveMin.X;
+                    if (hasCustomOptions)
+                    {
+                        clearMin = new Vector2(saveMin.X - gap - clearW, rowMidY - btnH * 0.5f);
+                        clearMax = clearMin + new Vector2(clearW, btnH);
+                        leftOfSaveX = clearMin.X;
+                    }
+
+                    // CANCEL adjacent to whichever button is to its right
+                    var cancelMin = new Vector2(leftOfSaveX - gap - cancelW, rowMidY - btnH * 0.5f);
+                    var cancelMax = cancelMin + new Vector2(cancelW, btnH);
+
+                    if (Boutique.DrawCancelBtn(fdl, cancelMin, cancelMax,
+                            "CANCEL", 1.4f, 1f, "modopts_cancel"))
+                    {
+                        ImGui.CloseCurrentPopup();
+                    }
+
+                    if (hasCustomOptions)
+                    {
+                        if (Boutique.DrawCancelBtn(fdl, clearMin, clearMax,
+                                "CLEAR", 1.4f, 1f, "modopts_clear"))
+                        {
+                            ClearModOptions();
+                            ImGui.CloseCurrentPopup();
+                        }
+                    }
+
+                    if (Boutique.DrawSavePill(fdl, saveMin, saveMax,
+                            "SAVE", 1.6f, 1f, "modopts_save",
+                            disabled: false, sheenProvider: _modMgrSheen))
+                    {
+                        SaveModOptions();
+                        ImGui.CloseCurrentPopup();
+                    }
+
+                    ImGui.Dummy(new Vector2(0, btnH + 4f));
                 }
-                
-                ImGui.SameLine();
-                
-                if (hasCustomOptions && ImGui.Button("Clear Design Options", new Vector2(150, 0)))
-                {
-                    ClearModOptionsFromDesign();
-                    ImGui.CloseCurrentPopup();
-                }
-                
-                ImGui.SameLine();
-                
-                if (ImGui.Button("Cancel", new Vector2(80, 0)))
-                {
-                    ImGui.CloseCurrentPopup();
-                }
-                
+
+                Boutique.PopFormStyle();
                 ImGui.EndPopup();
             }
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(2);
             
             // Only clean up when popup is actually closed
             if (!ImGui.IsPopupOpen(popupId) && !shouldOpenOptionsPopup)
@@ -3455,24 +4519,29 @@ namespace CharacterSelectPlugin.Windows
             }
         }
         
-        /// <summary>
-        /// Save the current mod options to the design
-        /// </summary>
-        private void SaveModOptionsToDesign()
+        /// <summary>Save the current mod options to the design or character.</summary>
+        private void SaveModOptions()
         {
             if (optionsEditingMod == null || currentModOptions == null)
                 return;
-            
-            // If editing a design, save to design
+
+            // Save to design if we have one, otherwise save to character
             if (editingDesign != null)
             {
-                // Initialize the design's mod options if needed
                 editingDesign.ModOptionSettings ??= new Dictionary<string, Dictionary<string, List<string>>>();
-                
-                // Save the current options
                 editingDesign.ModOptionSettings[optionsEditingMod.Directory] = new Dictionary<string, List<string>>(currentModOptions);
             }
-            
+            else
+            {
+                var character = GetEditingCharacter();
+                if (character != null)
+                {
+                    character.ModOptionSettings ??= new Dictionary<string, Dictionary<string, List<string>>>();
+                    character.ModOptionSettings[optionsEditingMod.Directory] = new Dictionary<string, List<string>>(currentModOptions);
+                    plugin.SaveConfiguration();
+                }
+            }
+
             // Apply the options immediately to Penumbra if we have a collection
             if (currentCollectionId != Guid.Empty)
             {
@@ -3481,26 +4550,31 @@ namespace CharacterSelectPlugin.Windows
                     foreach (var (groupName, options) in currentModOptions)
                     {
                         plugin.PenumbraIntegration.TrySetModSettings(currentCollectionId, optionsEditingMod.Directory, optionsEditingMod.Name, groupName, options);
-                        await Task.Delay(10); // Small delay to avoid overwhelming Penumbra
+                        await Task.Delay(10);
                     }
                 });
             }
-            
-            // Saved mod options to design (log removed to prevent spam)
         }
         
-        /// <summary>
-        /// Clear the mod options from the design (use Penumbra defaults)
-        /// </summary>
-        private void ClearModOptionsFromDesign()
+        /// <summary>Clear custom mod options (revert to Penumbra defaults).</summary>
+        private void ClearModOptions()
         {
-            if (optionsEditingMod == null || editingDesign == null)
+            if (optionsEditingMod == null)
                 return;
-                
-            // Remove from design settings
-            editingDesign.ModOptionSettings?.Remove(optionsEditingMod.Directory);
-            
-            // Cleared mod options from design (log removed to prevent spam)
+
+            if (editingDesign != null)
+            {
+                editingDesign.ModOptionSettings?.Remove(optionsEditingMod.Directory);
+            }
+            else
+            {
+                var character = GetEditingCharacter();
+                if (character != null)
+                {
+                    character.ModOptionSettings?.Remove(optionsEditingMod.Directory);
+                    plugin.SaveConfiguration();
+                }
+            }
         }
         
         /// <summary>
@@ -3553,10 +4627,7 @@ namespace CharacterSelectPlugin.Windows
         // Static cache for mod type determination to avoid creating windows
         private static SecretModeModWindow? _staticInstance = null;
         
-        /// <summary>
-        /// Public static method to determine mod type using the sophisticated path analysis.
-        /// This allows other parts of the plugin to use the same categorization logic as the UI.
-        /// </summary>
+        /// <summary>Determines a mod's type via path analysis. Shared with non-UI callers so categorisation matches what the UI shows.</summary>
         public static ModType DetermineModType(string modDir, string modName, Plugin plugin)
         {
             // Create a cached instance to avoid expensive window creation on every call

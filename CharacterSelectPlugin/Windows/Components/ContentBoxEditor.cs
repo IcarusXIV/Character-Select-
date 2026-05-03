@@ -920,15 +920,25 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var pairs = new List<KeyValuePairData>();
 
-            if (string.IsNullOrEmpty(keys) || string.IsNullOrEmpty(values))
+            // Nothing stored at all - return empty
+            if (string.IsNullOrEmpty(keys) && string.IsNullOrEmpty(values))
                 return pairs;
 
-            var keyArray = keys.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            var valueArray = values.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            // Split without RemoveEmptyEntries so a pair with an empty Key or Value
+            // keeps its position during editing. The old code used RemoveEmptyEntries
+            // and bailed early on empty values, so clearing either field of a pair
+            // collapsed the arrays and made the pair visually disappear mid-edit.
+            var keyArray = keys?.Split('\n') ?? Array.Empty<string>();
+            var valueArray = values?.Split('\n') ?? Array.Empty<string>();
 
-            for (int i = 0; i < Math.Min(keyArray.Length, valueArray.Length); i++)
+            int count = Math.Max(keyArray.Length, valueArray.Length);
+            for (int i = 0; i < count; i++)
             {
-                pairs.Add(new KeyValuePairData { Key = keyArray[i], Value = valueArray[i] });
+                pairs.Add(new KeyValuePairData
+                {
+                    Key = i < keyArray.Length ? keyArray[i] : "",
+                    Value = i < valueArray.Length ? valueArray[i] : ""
+                });
             }
 
             return pairs;
@@ -1152,6 +1162,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     IsOwnCharacter = false
                 });
                 modified = true;
+                Plugin.Instance?.AchievementTracker?.OnConnectionAdded();
             }
 
             if (modified)

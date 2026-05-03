@@ -214,7 +214,7 @@ namespace CharacterSelectPlugin.Windows
 
             string? currentPlayerName = null;
             string? currentWorldName = null;
-            var currentPlayer = Plugin.ClientState.LocalPlayer;
+            var currentPlayer = Plugin.ObjectTable.LocalPlayer;
             if (currentPlayer?.HomeWorld.IsValid == true)
             {
                 currentPlayerName = currentPlayer.Name.TextValue;
@@ -278,6 +278,17 @@ namespace CharacterSelectPlugin.Windows
                 int index = availableBackgrounds.IndexOf(rp.BackgroundImage);
                 if (index > 0) selectedBackgroundIndex = index;
             }
+        }
+
+        private int _chromeColorCount = 0;
+        public override void PreDraw()
+        {
+            _chromeColorCount = CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+        }
+        public override void PostDraw()
+        {
+            CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+            _chromeColorCount = 0;
         }
 
         public override void Draw()
@@ -710,7 +721,7 @@ namespace CharacterSelectPlugin.Windows
 
                 // Use Alias if set, otherwise fall back to Name
                 var displayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
-                ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), $"{displayName} – Profile Info");
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), $"{displayName} - Profile Info");
                 ImGui.Separator();
 
                 ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.16f, 0.16f, 0.16f, 0.9f));
@@ -885,11 +896,12 @@ namespace CharacterSelectPlugin.Windows
                     profile.CharacterName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
                     profile.NameplateColor = character.NameplateColor;
 
+                    plugin.AchievementTracker?.OnProfileUpdated(character);
                     plugin.SaveConfiguration();
 
                     if (!string.IsNullOrWhiteSpace(character.LastInGameName))
                     {
-                        if (Plugin.ClientState.LocalPlayer is { } player && player.HomeWorld.IsValid)
+                        if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
                         {
                             string localName = player.Name.TextValue;
                             string worldName = player.HomeWorld.Value.Name.ToString();

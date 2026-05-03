@@ -57,20 +57,33 @@ namespace CharacterSelectPlugin.Windows.Styles
                 "Outer window frame/edge area behind panels"
             ),
             new ColorOption(
-                "color.childBg",
-                "Content Area",
-                "Backgrounds",
-                new Vector4(0.08f, 0.08f, 0.08f, 0.95f),
-                ImGuiCol.ChildBg,
-                "Main content area where characters are displayed"
-            ),
-            new ColorOption(
                 "color.popupBg",
                 "Popup/Tooltip",
                 "Backgrounds",
                 new Vector4(0.06f, 0.06f, 0.06f, 0.98f),
                 ImGuiCol.PopupBg,
                 "Background for popups, dropdowns, and tooltips"
+            ),
+            // Hidden but kept in the slot count so PushCustomThemeColors stays
+            // in lock-step with the seasonal/default theme branches (each of
+            // which pushes 21 colours). These slots are mostly inert in the
+            // boutique UI because every visible surface paints itself, but
+            // removing them entirely would unbalance the colour stack pop.
+            new ColorOption(
+                "color.childBg",
+                "Sub-panel Background",
+                "Backgrounds",
+                new Vector4(0.08f, 0.08f, 0.08f, 0.95f),
+                ImGuiCol.ChildBg,
+                "Inner sub-panel background. Mostly inert: the boutique UI paints custom backgrounds over BeginChild surfaces."
+            ),
+            new ColorOption(
+                "color.menuBarBg",
+                "Menu Bar",
+                "Title Bar",
+                new Vector4(0.06f, 0.06f, 0.06f, 0.98f),
+                ImGuiCol.MenuBarBg,
+                "Background for menu bar areas. Mostly inert: most boutique windows have no menu bar."
             ),
             new ColorOption(
                 "color.frameBg",
@@ -111,14 +124,6 @@ namespace CharacterSelectPlugin.Windows.Styles
                 new Vector4(0.06f, 0.06f, 0.06f, 1.0f),
                 ImGuiCol.TitleBgActive,
                 "Window title bar when focused"
-            ),
-            new ColorOption(
-                "color.menuBarBg",
-                "Tab/Menu Bar",
-                "Title Bar",
-                new Vector4(0.06f, 0.06f, 0.06f, 0.98f),
-                ImGuiCol.MenuBarBg,
-                "Background for tab bar and menu areas"
             ),
 
             // === TEXT ===
@@ -211,30 +216,119 @@ namespace CharacterSelectPlugin.Windows.Styles
         };
 
         /// <summary>
-        /// Custom plugin-specific colors (not ImGui colors).
+        /// Custom plugin-specific colors (not ImGui colors). Per-element keys
+        /// for things that don't map cleanly onto an ImGui slot. Slot-driven
+        /// recolouring (window frame, popup, input fields, buttons, separators,
+        /// scrollbar, text) is handled via the ColorOptions array above.
         /// </summary>
         public static readonly CustomColorOption[] CustomColorOptions = new[]
         {
+            // === BACKGROUNDS (specifics that don't ride on an ImGui slot) ===
+            new CustomColorOption(
+                "custom.designPanelBg",
+                "Design Panel",
+                "Backgrounds",
+                new Vector4(0.08f, 0.08f, 0.10f, 0.98f),
+                "Background of the entire Design Panel on the right side of the main window."
+            ),
+
+            // === TEXT (third tier, richer than Primary/Secondary) ===
+            new CustomColorOption(
+                "custom.text.subtle",
+                "Subtle Text",
+                "Text",
+                new Vector4(141f / 255f, 147f / 255f, 162f / 255f, 1f),
+                "Smaller descriptive text under labels (kickers, captions, the second line on rows)."
+            ),
+            new CustomColorOption(
+                "custom.text.faint",
+                "Faint Text",
+                "Text",
+                new Vector4(91f / 255f, 97f / 255f, 116f / 255f, 1f),
+                "Faint third-tier text (meta info, hints, ghosted labels)."
+            ),
+
+            // === BUTTONS (icon + label inside primary buttons) ===
+            new CustomColorOption(
+                "custom.button.icon",
+                "Button Icon",
+                "Buttons",
+                new Vector4(26f / 255f, 21f / 255f, 0f, 1f),
+                "Icon glyph colour inside primary buttons (e.g. the + on Add Character / New Design, the disk on Save)."
+            ),
+            new CustomColorOption(
+                "custom.button.text",
+                "Button Label",
+                "Buttons",
+                new Vector4(26f / 255f, 21f / 255f, 0f, 1f),
+                "Label text colour inside primary buttons (e.g. ADD CHARACTER, SAVE, APPLY)."
+            ),
+
+            // === ACCENTS ===
+            new CustomColorOption(
+                "custom.accent.primary",
+                "Accent",
+                "Accents",
+                new Vector4(1f, 214f / 255f, 0f, 1f),
+                "The primary accent colour, used for active states, section heads, gold pills, and highlights."
+            ),
             new CustomColorOption(
                 "custom.favoriteIcon",
-                "Favorite Star",
+                "Favourite Star",
                 "Accents",
                 new Vector4(1.0f, 0.85f, 0.0f, 1.0f),
-                "Color of the favorite star icon when active"
+                "Colour of the favourite star icon when active."
             ),
             new CustomColorOption(
                 "custom.cardGlow",
                 "Character Card Glow",
                 "Accents",
                 new Vector4(0.4f, 0.6f, 1.0f, 0.6f),
-                "Glow effect around selected/hovered character cards"
+                "Glow effect around selected/hovered character cards."
             ),
             new CustomColorOption(
-                "custom.designPanelBg",
-                "Design Panel Background",
-                "Backgrounds",
-                new Vector4(0.08f, 0.08f, 0.10f, 0.98f),
-                "Background colour of the Design Panel on the right side"
+                "custom.pageButtonActive",
+                "Active Page Button",
+                "Accents",
+                new Vector4(0.4f, 0.6f, 1.0f, 0.8f),
+                "Highlight colour for the currently selected page button in the main grid."
+            ),
+
+            // === WARDROBE ===
+            new CustomColorOption(
+                "custom.wardrobeBg",
+                "Background",
+                "Wardrobe",
+                new Vector4(0.05f, 0.05f, 0.09f, 0.98f),
+                "Wardrobe window background colour"
+            ),
+            new CustomColorOption(
+                "custom.wardrobeCardBg",
+                "Card Background",
+                "Wardrobe",
+                new Vector4(0.09f, 0.09f, 0.15f, 0.98f),
+                "Background fill for design cards (visible behind images without preview)"
+            ),
+            new CustomColorOption(
+                "custom.wardrobeCardBorder",
+                "Card Border",
+                "Wardrobe",
+                new Vector4(0.35f, 0.30f, 0.20f, 0.35f),
+                "Border around each design card"
+            ),
+            new CustomColorOption(
+                "custom.wardrobeAccent",
+                "Rail & Accent",
+                "Wardrobe",
+                new Vector4(0.83f, 0.69f, 0.22f, 1f),
+                "Colour for the hanger rail, hangers, sparkle particles, perimeter streak, and page buttons"
+            ),
+            new CustomColorOption(
+                "custom.wardrobeNameText",
+                "Name Text",
+                "Wardrobe",
+                new Vector4(1f, 1f, 1f, 0.88f),
+                "Design name text colour below cards"
             ),
         };
 

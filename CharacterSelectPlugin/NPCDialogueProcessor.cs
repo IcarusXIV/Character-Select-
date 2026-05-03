@@ -31,7 +31,6 @@ namespace CharacterSelectPlugin
         private readonly IClientState clientState;
         private readonly IPluginLog log;
         private readonly ICondition condition;
-        private static int debugLogCount = 0;
         private const bool ENABLE_FLAG_DISCOVERY_LOGGING = false;
 
         // Lua hooks
@@ -82,7 +81,7 @@ namespace CharacterSelectPlugin
                         var flagInfo = ExtractFlagWords(data, pos);
                         if (flagInfo != null)
                         {
-                            // Reject false positives — real gender flags always have words of 2+ chars
+                            // Reject false positives - real gender flags always have words of 2+ chars
                             if (flagInfo.FemaleWord.Length < 2 || flagInfo.MaleWord.Length < 2)
                             {
                                 log.Info($"[FLAG] Skipping false positive at {pos}: '{flagInfo.FemaleWord}' / '{flagInfo.MaleWord}'");
@@ -381,7 +380,6 @@ namespace CharacterSelectPlugin
 
 
         private readonly HashSet<string> discoveredFlags = new HashSet<string>();
-        private bool testFileCreated = false;
         private readonly Dictionary<byte, DateTime> lastFlagProcessTime = new Dictionary<byte, DateTime>();
         private readonly TimeSpan flagProcessCooldown = TimeSpan.FromMilliseconds(100);
 
@@ -1936,7 +1934,7 @@ namespace CharacterSelectPlugin
         {
             try
             {
-                var playerName = clientState.LocalPlayer?.Name.TextValue;
+                var playerName = Plugin.ObjectTable.LocalPlayer?.Name.TextValue;
                 if (string.IsNullOrEmpty(playerName)) return;
 
                 var textSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);

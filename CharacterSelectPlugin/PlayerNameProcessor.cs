@@ -3,11 +3,15 @@ using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Gui.NamePlate;
+using Dalamud.Game.Chat;
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
+using Dalamud.Hooking;
+using Dalamud.Memory;
 using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Party;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
@@ -64,6 +68,11 @@ namespace CharacterSelectPlugin
         // Track which physical names we've replaced on nameplates (to properly reset them)
         private readonly HashSet<string> replacedNameplateNames = new();
 
+        // Native hook on the game's nameplate update so the wave-glow stays
+        // animated for self when no game event drives a refresh
+        private Hook<RaptureAtkModule.Delegates.UpdateBattleCharaNameplates>? updateNameplateHook;
+        private const string UpdateNameplateSig = "40 53 55 57 41 56 48 81 EC ?? ?? ?? ?? 48 8B 84 24";
+
         public PlayerNameProcessor(
             Plugin plugin,
             INamePlateGui namePlateGui,
@@ -91,6 +100,91 @@ namespace CharacterSelectPlugin
 
             // Party list updates
             addonLifecycle.RegisterListener(AddonEvent.PreDraw, "_PartyList", OnPartyListUpdate);
+
+            // Native nameplate-update hook (drives wave glow for self).
+            try { InitializeNativeHook(); }
+            catch (Exception ex) { log.Warning($"[NamePlate] Native hook init failed: {ex.Message}"); }
+        }
+
+        private static bool ByteArraysEqual(byte[]? a, byte[]? b)
+        {
+            if (a == null || b == null) return a == b;
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+                if (a[i] != b[i]) return false;
+            return true;
+        }
+
+        private unsafe void InitializeNativeHook()
+        {
+            var ptr = Plugin.SigScanner.ScanText(UpdateNameplateSig);
+            updateNameplateHook = Plugin.GameInteropProvider
+                .HookFromAddress<RaptureAtkModule.Delegates.UpdateBattleCharaNameplates>(ptr, UpdateNameplateDetour);
+            updateNameplateHook.Enable();
+        }
+
+        // Detour that rebuilds the local player's wave-glow each frame, but
+        // only reassigns + sets IsDirty when bytes actually change (avoids strobe)
+        private unsafe int UpdateNameplateDetour(
+            RaptureAtkModule* raptureAtkModule,
+            RaptureAtkModule.NamePlateInfo* namePlateInfo,
+            NumberArrayData* numArray,
+            StringArrayData* stringArray,
+            BattleChara* battleChara,
+            int numArrayIndex,
+            int stringArrayIndex)
+        {
+            var ret = updateNameplateHook!.Original(
+                raptureAtkModule, namePlateInfo, numArray, stringArray,
+                battleChara, numArrayIndex, stringArrayIndex);
+
+            try
+            {
+                // Bail in PvP / between areas / cutscenes (mirrors Honorific)
+                if (Plugin.ClientState.IsPvPExcludingDen) return ret;
+                if (Plugin.Condition[ConditionFlag.BetweenAreas]) return ret;
+                if (Plugin.Condition[ConditionFlag.WatchingCutscene]) return ret;
+
+                // Local player only, other players' nameplates flow through
+                // the managed OnNamePlateUpdate path (shared replacement).
+                var localPlayer = Plugin.ObjectTable.LocalPlayer;
+                if (localPlayer == null) return ret;
+                if (battleChara == null) return ret;
+                if (battleChara->Character.GameObject.GetGameObjectId().ObjectId != localPlayer.GameObjectId) return ret;
+
+                // Replacement gates, same conditions as the managed self path
+                if (!plugin.Configuration.EnableNameReplacement) return ret;
+                if (!plugin.Configuration.NameReplacementNameplate) return ret;
+                if (plugin.Configuration.UseSimpleNameplateGlow) return ret;     // no animation needed
+                if (IsRevealKeybindHeld()) return ret;
+
+                var activeChar = plugin.GetActiveCharacter();
+                if (activeChar == null) return ret;
+                if (activeChar.ExcludeFromNameSync) return ret;
+
+                var displayName = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
+                if (string.IsNullOrEmpty(displayName)) return ret;
+
+                // Build wave SeString at the CURRENT animation phase
+                var fresh = CreateColoredName(displayName, activeChar.NameplateColor, forPartyList: false);
+                var encoded = fresh.Encode();
+                if (encoded == null || encoded.Length == 0) return ret;
+
+                // Byte-compare against the current Name field; only assign +
+                // mark dirty when bytes actually changed.
+                var currentBytes = MemoryHelper.ReadRawNullTerminated((nint)namePlateInfo->Name.StringPtr.Value);
+                if (!ByteArraysEqual(currentBytes, encoded))
+                {
+                    namePlateInfo->Name.SetString(encoded);
+                    namePlateInfo->IsDirty = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                log.Warning($"[NamePlate] Native detour: {ex.Message}");
+            }
+
+            return ret;
         }
 
         /// <summary>Checks if name is a full match (not substring of another word).</summary>
@@ -161,6 +255,7 @@ namespace CharacterSelectPlugin
 
             return targetColor * intensity;
         }
+
 
         // Virtual key codes for modifier keys
         private const int VK_MENU = 0x12;    // Alt
@@ -421,7 +516,7 @@ namespace CharacterSelectPlugin
             INamePlateUpdateContext context,
             IReadOnlyList<INamePlateUpdateHandler> handlers)
         {
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -459,8 +554,7 @@ namespace CharacterSelectPlugin
                     var displayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
                     if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(displayName) && !revealActualNames)
                     {
-                        // Apply CS+ name (using alias if set)
-                        handler.NameParts.Text = CreateColoredName(displayName, activeChar.NameplateColor);
+                        handler.NameParts.Text = CreateColoredName(displayName, activeChar.NameplateColor, forPartyList: false);
 
                         // Hide FC tag
                         if (plugin.Configuration.HideFCTagInNameplate)
@@ -470,8 +564,8 @@ namespace CharacterSelectPlugin
                     }
                     else if (selfReplacementEnabled)
                     {
-                        // Reset to original name when: reveal keybind held, excluded from sync, or no active character
-                        // This ensures nameplate reverts when switching to excluded character
+                        // Reset to original name: reveal keybind held, excluded from sync, or no active character.
+                        // Also covers reverting when switching to an excluded character.
                         handler.NameParts.Text = new SeString(new TextPayload(localPlayer.Name.TextValue));
                     }
                 }
@@ -528,14 +622,9 @@ namespace CharacterSelectPlugin
             }
         }
 
-        private void OnChatMessage(
-            XivChatType type,
-            int timestamp,
-            ref SeString sender,
-            ref SeString message,
-            ref bool isHandled)
+        private void OnChatMessage(IHandleableChatMessage chatMessage)
         {
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -552,7 +641,7 @@ namespace CharacterSelectPlugin
                 return;
 
             var localName = localPlayer.Name.TextValue;
-            var senderText = sender.TextValue;
+            var senderText = chatMessage.Sender.TextValue;
 
             // Self replacement
             if (selfReplacementEnabled && senderText.Contains(localName))
@@ -562,7 +651,7 @@ namespace CharacterSelectPlugin
                 var chatDisplayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
                 if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(chatDisplayName))
                 {
-                    sender = ReplaceSenderName(sender, localName, chatDisplayName, activeChar.NameplateColor);
+                    chatMessage.Sender = ReplaceSenderName(chatMessage.Sender, localName, chatDisplayName, activeChar.NameplateColor);
                     return;
                 }
             }
@@ -575,7 +664,7 @@ namespace CharacterSelectPlugin
                 if (match.HasValue)
                 {
                     var (sharedEntry, originalName) = match.Value;
-                    sender = ReplaceSenderName(sender, originalName, sharedEntry.CSName, sharedEntry.NameplateColor);
+                    chatMessage.Sender = ReplaceSenderName(chatMessage.Sender, originalName, sharedEntry.CSName, sharedEntry.NameplateColor);
                 }
             }
         }
@@ -633,7 +722,7 @@ namespace CharacterSelectPlugin
         /// </summary>
         private unsafe void OnTargetAddonUpdate(AddonEvent type, AddonArgs args)
         {
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -804,7 +893,7 @@ namespace CharacterSelectPlugin
             if (addon == null || !addon->AtkUnitBase.IsVisible)
                 return;
 
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             if (localPlayer == null)
                 return;
 
@@ -1178,7 +1267,7 @@ namespace CharacterSelectPlugin
                 return;
 
             // Get local player name to exclude from shared replacement
-            var localPlayer = clientState.LocalPlayer;
+            var localPlayer = Plugin.ObjectTable.LocalPlayer;
             var localName = localPlayer?.Name.TextValue;
 
             var nodeList = addon->UldManager.NodeList;
@@ -1236,6 +1325,9 @@ namespace CharacterSelectPlugin
             chatGui.ChatMessage -= OnChatMessage;
             addonLifecycle.UnregisterListener(OnTargetAddonUpdate);
             addonLifecycle.UnregisterListener(OnPartyListUpdate);
+            updateNameplateHook?.Disable();
+            updateNameplateHook?.Dispose();
+            updateNameplateHook = null;
         }
     }
 }

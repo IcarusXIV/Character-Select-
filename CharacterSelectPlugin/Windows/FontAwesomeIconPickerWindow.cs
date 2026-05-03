@@ -5,6 +5,7 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Windowing;
+using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -196,7 +197,70 @@ namespace CharacterSelectPlugin.Windows
             _configuration.Save();
         }
 
+        // PreDraw runs BEFORE Dalamud calls ImGui.Begin for the window, so
+        // pushes here actually colour the window frame / border / padding gap.
+        // Pushing inside Draw() only colours the content area and lets the
+        // outer Dalamud-managed strip stay grey.
+        private int _chromeColorCount = 0;
+        public override void PreDraw()
+        {
+            // Chrome (WindowBg / TitleBg / TitleBgActive / MenuBarBg) follows
+            // the active theme. Border + scrollbar accents stay gold.
+            var cfg = Plugin.Instance?.Configuration;
+            _chromeColorCount = cfg != null
+                ? CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(cfg)
+                : 0;
+            ImGui.PushStyleColor(ImGuiCol.Border, Boutique.BorderSoft);
+            ImGui.PushStyleColor(ImGuiCol.TitleBgCollapsed, Boutique.Velvet);
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, Boutique.WithAlpha(Boutique.Gold, 0.25f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, Boutique.WithAlpha(Boutique.Gold, 0.45f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, Boutique.WithAlpha(Boutique.Gold, 0.65f));
+            ImGui.PushStyleColor(ImGuiCol.ResizeGrip, Boutique.WithAlpha(Boutique.Gold, 0.20f));
+            ImGui.PushStyleColor(ImGuiCol.ResizeGripHovered, Boutique.WithAlpha(Boutique.Gold, 0.45f));
+            ImGui.PushStyleColor(ImGuiCol.ResizeGripActive, Boutique.WithAlpha(Boutique.Gold, 0.70f));
+            ImGui.PushStyleColor(ImGuiCol.PopupBg, Boutique.RibbonBot);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f);
+            ImGui.PushStyleVar(ImGuiStyleVar.ScrollbarRounding, 0f);
+        }
+
+        public override void PostDraw()
+        {
+            ImGui.PopStyleVar(3);
+            ImGui.PopStyleColor(10);
+            CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+            _chromeColorCount = 0;
+        }
+
         public override void Draw()
+        {
+            // Inner content colours (frames, buttons, separators, text).
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.65f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.85f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0x10 / 255f, 0x12 / 255f, 0x18 / 255f, 0.95f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0x14 / 255f, 0x16 / 255f, 0x1C / 255f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0x10 / 255f, 0x10 / 255f, 0x12 / 255f, 0.90f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Boutique.WithAlpha(Boutique.Gold, 0.15f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, Boutique.WithAlpha(Boutique.Gold, 0.25f));
+            ImGui.PushStyleColor(ImGuiCol.Separator, Boutique.WithAlpha(Boutique.Gold, 0.25f));
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.Text);
+            ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.TextFaint);
+            ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
+            ImGui.PushStyleVar(ImGuiStyleVar.GrabRounding, 0f);
+
+            try
+            {
+                DrawBoutiqueContent();
+            }
+            finally
+            {
+                ImGui.PopStyleVar(2);
+                ImGui.PopStyleColor(10);
+            }
+        }
+
+        private void DrawBoutiqueContent()
         {
             var windowSize = ImGui.GetWindowSize();
             var buttonHeight = 30f;
@@ -205,8 +269,8 @@ namespace CharacterSelectPlugin.Windows
 
             if (ImGui.BeginChild("Categories", new Vector2(sidebarWidth, -buttonHeight - padding * 2), true))
             {
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.9f, 1.0f));
-                ImGui.Text("Categories");
+                ImGui.PushStyleColor(ImGuiCol.Text, Boutique.GoldWarm);
+                ImGui.Text("CATEGORIES");
                 ImGui.PopStyleColor();
                 ImGui.Separator();
 
@@ -217,15 +281,9 @@ namespace CharacterSelectPlugin.Windows
 
                     var isSelected = category == _selectedCategory;
                     if (isSelected)
-                        ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetColorU32(ImGuiCol.ButtonActive));
-
-                    var displayName = category;
-                    if (category == "Favorites")
                     {
-                        ImGui.PushFont(UiBuilder.IconFont);
-                        var starIcon = FontAwesomeIcon.Star.ToIconString();
-                        ImGui.PopFont();
-                        displayName = $"{starIcon} Favorites";
+                        ImGui.PushStyleColor(ImGuiCol.Button, Boutique.WithAlpha(Boutique.Gold, 0.18f));
+                        ImGui.PushStyleColor(ImGuiCol.Text, Boutique.GoldWarm);
                     }
 
                     if (ImGui.Button(category == "Favorites" ? "Favorites" : category, new Vector2(-1, 0)))
@@ -241,12 +299,12 @@ namespace CharacterSelectPlugin.Windows
                         ImGui.PopFont();
                         drawList.AddText(UiBuilder.IconFont, 12f,
                             buttonMin + new Vector2(4, (ImGui.GetItemRectSize().Y - starSize.Y) / 2 + 1),
-                            ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.85f, 0f, 1f)),
+                            ImGui.ColorConvertFloat4ToU32(Boutique.GoldWarm),
                             starStr);
                     }
 
                     if (isSelected)
-                        ImGui.PopStyleColor();
+                        ImGui.PopStyleColor(2);
                 }
             }
             ImGui.EndChild();
@@ -255,7 +313,9 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.BeginGroup();
 
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.TextDim);
             ImGui.Text("Search:");
+            ImGui.PopStyleColor();
             ImGui.SameLine();
             ImGui.SetNextItemWidth(-1);
             ImGui.InputTextWithHint("##search", "Type to filter icons...", ref _searchFilter, 50);
@@ -274,26 +334,46 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Separator();
 
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.TextDim);
             ImGui.Text("Selected:");
+            ImGui.PopStyleColor();
             ImGui.SameLine();
             if (SelectedIcon.HasValue)
             {
                 ImGui.PushFont(UiBuilder.IconFont);
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.85f, 0.0f, 1.0f));
+                ImGui.PushStyleColor(ImGuiCol.Text, Boutique.GoldWarm);
                 ImGui.Text(SelectedIcon.Value.ToIconString());
                 ImGui.PopStyleColor();
                 ImGui.PopFont();
                 ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Text, Boutique.TextDim);
                 ImGui.Text($"({SelectedIcon.Value})");
+                ImGui.PopStyleColor();
             }
             else
             {
+                ImGui.PushStyleColor(ImGuiCol.Text, Boutique.TextFaint);
                 ImGui.Text("None");
+                ImGui.PopStyleColor();
             }
 
-            ImGui.SameLine(windowSize.X - 160);
+            // Right-aligned action buttons (Cancel ghost + Confirm primary).
+            // Use SetCursorPosX with a generous fixed estimate for the button
+            // pair so Confirm always lands inside the visible content region.
+            // Previous attempt measured text without the boutique font pushed,
+            // which under-counted the buttons and pushed Confirm off-screen.
+            float scale = 1f;
+            float gap = 10f;
+            float rightPad = 4f;
+            const float estimatedButtonsW = 200f; // tightened: ~85 + 10 + 105
+            ImGui.SameLine();
+            float maxX = ImGui.GetContentRegionMax().X;
+            float curX = ImGui.GetCursorPosX();
+            float targetX = maxX - estimatedButtonsW - rightPad;
+            if (targetX > curX)
+                ImGui.SetCursorPosX(targetX);
 
-            if (ImGui.Button("Cancel", new Vector2(70, 0)))
+            if (Boutique.GhostButton("iconpicker.cancel", "CANCEL", scale))
             {
                 SelectedIcon = _initialIcon;
                 if (_initialIcon.HasValue)
@@ -302,17 +382,13 @@ namespace CharacterSelectPlugin.Windows
                 IsOpen = false;
             }
 
-            ImGui.SameLine();
+            ImGui.SameLine(0, gap);
 
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.3f, 0.5f, 0.3f, 0.8f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.6f, 0.4f, 0.9f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.5f, 0.7f, 0.5f, 1.0f));
-            if (ImGui.Button("Confirm", new Vector2(70, 0)))
+            if (Boutique.PrimaryButton("iconpicker.confirm", "CONFIRM", scale))
             {
                 Confirmed = true;
                 IsOpen = false;
             }
-            ImGui.PopStyleColor(3);
         }
 
         private void DrawIconGrid()
@@ -371,27 +447,26 @@ namespace CharacterSelectPlugin.Windows
                 bool leftClicked = isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left);
                 bool rightClicked = isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Right);
 
+                // Boutique gold accents instead of the previous blue selection.
                 var bgColor = isSelected
-                    ? new Vector4(0.3f, 0.5f, 0.7f, 0.8f)
+                    ? Boutique.WithAlpha(Boutique.Gold, 0.18f)
                     : isHovered
-                        ? new Vector4(0.3f, 0.3f, 0.4f, 0.6f)
-                        : new Vector4(0.15f, 0.15f, 0.2f, 0.4f);
+                        ? Boutique.WithAlpha(Boutique.Gold, 0.10f)
+                        : new Vector4(0.04f, 0.05f, 0.07f, 0.55f);
 
-                drawList.AddRectFilled(cellMin, cellMax, ImGui.ColorConvertFloat4ToU32(bgColor), 4f);
+                drawList.AddRectFilled(cellMin, cellMax, ImGui.ColorConvertFloat4ToU32(bgColor), 0f);
 
                 if (isSelected || isHovered)
                 {
-                    var borderColor = isSelected
-                        ? new Vector4(0.5f, 0.7f, 1.0f, 1.0f)
-                        : new Vector4(0.5f, 0.5f, 0.6f, 0.8f);
-                    drawList.AddRect(cellMin, cellMax, ImGui.ColorConvertFloat4ToU32(borderColor), 4f, ImDrawFlags.None, 1.5f);
+                    var borderColor = isSelected ? Boutique.Gold : Boutique.GoldDeep;
+                    drawList.AddRect(cellMin, cellMax, ImGui.ColorConvertFloat4ToU32(borderColor), 0f, ImDrawFlags.None, 1.5f);
                 }
 
                 if (isFavorite)
                 {
                     var starPos = cellMin + new Vector2(iconSize - 10, 2);
                     drawList.AddText(UiBuilder.IconFont, 10f, starPos,
-                        ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 0.85f, 0f, 0.9f)),
+                        ImGui.ColorConvertFloat4ToU32(Boutique.GoldWarm),
                         FontAwesomeIcon.Star.ToIconString());
                 }
 
@@ -401,8 +476,8 @@ namespace CharacterSelectPlugin.Windows
                 var textPos = cellMin + new Vector2((iconSize - textSize.X) / 2, (iconSize - textSize.Y) / 2);
 
                 var iconColor = isSelected
-                    ? new Vector4(1.0f, 0.9f, 0.5f, 1.0f)
-                    : new Vector4(0.9f, 0.9f, 0.9f, 1.0f);
+                    ? Boutique.GoldBright
+                    : Boutique.Text;
                 drawList.AddText(textPos, ImGui.ColorConvertFloat4ToU32(iconColor), iconStr);
                 ImGui.PopFont();
 
@@ -425,14 +500,31 @@ namespace CharacterSelectPlugin.Windows
 
                 if (isHovered)
                 {
+                    // Boutique-themed tooltip: dark velvet bg, gold-deep
+                    // border, near-zero rounding, tight padding.
+                    ImGui.PushStyleColor(ImGuiCol.PopupBg, Boutique.RibbonBot);
+                    ImGui.PushStyleColor(ImGuiCol.Border, Boutique.GoldDeep);
+                    ImGui.PushStyleVar(ImGuiStyleVar.PopupBorderSize, 1f);
+                    ImGui.PushStyleVar(ImGuiStyleVar.PopupRounding, 0f);
+                    ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(10, 8));
                     ImGui.BeginTooltip();
+                    ImGui.PushStyleColor(ImGuiCol.Text, Boutique.GoldWarm);
                     ImGui.Text(icon.ToString());
-                    ImGui.TextDisabled("Left-click to select, double-click to confirm");
+                    ImGui.PopStyleColor();
+                    ImGui.PushStyleColor(ImGuiCol.Text, Boutique.TextDim);
+                    ImGui.Text("Left-click to select, double-click to confirm");
+                    ImGui.PopStyleColor();
                     if (isFavorite)
-                        ImGui.TextColored(new Vector4(1f, 0.85f, 0f, 1f), "Right-click to remove from favorites");
+                        ImGui.TextColored(Boutique.GoldWarm, "Right-click to remove from favourites");
                     else
-                        ImGui.TextDisabled("Right-click to add to favorites");
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Text, Boutique.TextFaint);
+                        ImGui.Text("Right-click to add to favourites");
+                        ImGui.PopStyleColor();
+                    }
                     ImGui.EndTooltip();
+                    ImGui.PopStyleVar(3);
+                    ImGui.PopStyleColor(2);
                 }
             }
 

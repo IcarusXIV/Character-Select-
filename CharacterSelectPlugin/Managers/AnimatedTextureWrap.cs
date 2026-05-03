@@ -1,0 +1,162 @@
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Textures;
+using Dalamud.Interface.Textures.TextureWraps;
+using Dalamud.Plugin.Services;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Gif;
+using SixLabors.ImageSharp.Formats.Webp;
+using SixLabors.ImageSharp.PixelFormats;
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace CharacterSelectPlugin.Managers
+{
+    /// <summary>Animated texture wrap for GIF / WebP images.
+    /// Frames advance only while IsHovered is true; un-hovering resets to frame 0
+    /// so the next hover replays the animation from the start.</summary>
+    public sealed class AnimatedTextureWrap : IDalamudTextureWrap
+    {
+        private readonly Image image;
+        private readonly IDalamudTextureWrap empty;
+        private readonly IDalamudTextureWrap?[] frames;
+        private readonly int[] frameDelaysMs;
+        private readonly int totalFrames;
+        private readonly Stopwatch frameTimer = new();
+        private readonly CancellationTokenSource cts = new();
+        private int currentFrame;
+        private bool disposed;
+
+        // Renderer sets this each frame.  True = advance; false = pause + reset.
+        public bool IsHovered { get; set; }
+
+        public int Width { get; }
+        public int Height { get; }
+
+        public ImTextureID Handle
+        {
+            get
+            {
+                if (disposed) return empty.Handle;
+
+                // Static image (single-frame GIF, non-animated WebP, etc.)
+                if (totalFrames <= 1)
+                    return frames[0]?.Handle ?? empty.Handle;
+
+                if (IsHovered)
+                {
+                    if (!frameTimer.IsRunning) frameTimer.Restart();
+                    if (frameTimer.ElapsedMilliseconds >= frameDelaysMs[currentFrame])
+                    {
+                        currentFrame = (currentFrame + 1) % totalFrames;
+                        frameTimer.Restart();
+                    }
+                }
+                else
+                {
+                    // Reset to frame 0 so the next hover replays from the start
+                    currentFrame = 0;
+                    frameTimer.Reset();
+                }
+
+                return frames[currentFrame]?.Handle
+                    ?? frames[0]?.Handle
+                    ?? empty.Handle;
+            }
+        }
+
+        public AnimatedTextureWrap(ITextureProvider textureProvider, string filePath)
+        {
+            // Synchronous load: typical character GIFs are a few MB; this is fast.
+            image = Image.Load(filePath);
+            Width = image.Width;
+            Height = image.Height;
+            totalFrames = Math.Max(1, image.Frames.Count);
+            frames = new IDalamudTextureWrap?[totalFrames];
+            frameDelaysMs = new int[totalFrames];
+            empty = textureProvider.CreateEmpty(
+                RawImageSpecification.Rgba32(Width, Height),
+                false, false);
+
+            ResolveFrameDelays(filePath);
+
+            // Decode all frames on a background task so the first hover doesn't hitch.
+            Task.Run(() => DecodeFramesAsync(textureProvider, cts.Token));
+        }
+
+        private void ResolveFrameDelays(string filePath)
+        {
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            for (int i = 0; i < totalFrames; i++)
+            {
+                int delayMs = 100;
+                try
+                {
+                    if (ext == ".gif")
+                    {
+                        // GIF FrameDelay is in 1/100ths of a second
+                        var meta = image.Frames[i].Metadata.GetGifMetadata();
+                        delayMs = meta.FrameDelay * 10;
+                    }
+                    else if (ext == ".webp")
+                    {
+                        var meta = image.Frames[i].Metadata.GetWebpMetadata();
+                        delayMs = (int)meta.FrameDelay;
+                    }
+                }
+                catch { /* fall through to default */ }
+
+                // Some GIFs ship FrameDelay = 0; browsers clamp to ~100ms.  Match that.
+                frameDelaysMs[i] = delayMs <= 0 ? 100 : Math.Max(20, delayMs);
+            }
+        }
+
+        private async Task DecodeFramesAsync(ITextureProvider textureProvider, CancellationToken token)
+        {
+            for (int i = 0; i < totalFrames; i++)
+            {
+                if (token.IsCancellationRequested) return;
+                try
+                {
+                    using var frameImage = new Image<Rgba32>(Width, Height);
+                    frameImage.Frames.AddFrame(image.Frames[i]);
+                    frameImage.Frames.RemoveFrame(0);
+
+                    using var ms = new MemoryStream();
+                    await frameImage.SaveAsPngAsync(ms, token).ConfigureAwait(false);
+
+                    var bytes = new ReadOnlyMemory<byte>(ms.ToArray());
+                    var wrap = await textureProvider.CreateFromImageAsync(bytes, null, token).ConfigureAwait(false);
+                    if (token.IsCancellationRequested)
+                    {
+                        wrap?.Dispose();
+                        return;
+                    }
+                    frames[i] = wrap;
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Warning($"[AnimatedTextureWrap] Frame {i} decode failed: {ex.Message}");
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            try { cts.Cancel(); } catch { }
+            try { image.Dispose(); } catch { }
+            for (int i = 0; i < frames.Length; i++)
+            {
+                try { frames[i]?.Dispose(); } catch { }
+                frames[i] = null;
+            }
+            try { empty.Dispose(); } catch { }
+            try { cts.Dispose(); } catch { }
+        }
+    }
+}

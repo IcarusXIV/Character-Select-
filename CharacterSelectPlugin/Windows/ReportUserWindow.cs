@@ -52,6 +52,17 @@ public class ReportUserWindow : Window, IDisposable
         IsOpen = true;
     }
 
+    private int _chromeColorCount = 0;
+    public override void PreDraw()
+    {
+        _chromeColorCount = ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+    }
+    public override void PostDraw()
+    {
+        ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+        _chromeColorCount = 0;
+    }
+
     public override void Draw()
     {
         var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
@@ -215,7 +226,7 @@ public class ReportUserWindow : Window, IDisposable
 
     private string GetReporterName()
     {
-        var localPlayer = Plugin.ClientState?.LocalPlayer;
+        var localPlayer = Plugin.ObjectTable?.LocalPlayer;
         if (localPlayer != null)
         {
             var name = localPlayer.Name.TextValue;

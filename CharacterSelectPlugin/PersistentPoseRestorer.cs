@@ -18,19 +18,28 @@ public unsafe class PoseRestorer
         this.plugin = plugin;
     }
 
-    public void RestorePosesFor(Character character)
+    /// <summary>
+    /// Restores saved poses; pass false on a flag to skip that pose (e.g. when
+    /// a design macro already sets it explicitly).
+    /// </summary>
+    public void RestorePosesFor(
+        Character character,
+        bool applyIdle = true,
+        bool applySit = true,
+        bool applyGroundSit = true,
+        bool applyDoze = true)
     {
-        if (clientState.LocalPlayer == null) return;
+        if (Plugin.ObjectTable.LocalPlayer == null) return;
 
         Plugin.Framework.RunOnTick(() =>
         {
-            ApplyPose(character);
+            ApplyPose(character, applyIdle, applySit, applyGroundSit, applyDoze);
         }, delayTicks: 30);
     }
 
-    private void ApplyPose(Character character)
+    private void ApplyPose(Character character, bool applyIdle, bool applySit, bool applyGroundSit, bool applyDoze)
     {
-        var local = clientState.LocalPlayer;
+        var local = Plugin.ObjectTable.LocalPlayer;
         if (local == null || local.Address == IntPtr.Zero)
             return;
 
@@ -40,10 +49,10 @@ public unsafe class PoseRestorer
         if (charPtr->GameObject.ObjectIndex == 0xFFFF)
             return;
 
-        TrySetPose(EmoteController.PoseType.Idle, character.IdlePoseIndex, charPtr);
-        TrySetPose(EmoteController.PoseType.Sit, character.SitPoseIndex, charPtr);
-        TrySetPose(EmoteController.PoseType.GroundSit, character.GroundSitPoseIndex, charPtr);
-        TrySetPose(EmoteController.PoseType.Doze, character.DozePoseIndex, charPtr);
+        if (applyIdle)      TrySetPose(EmoteController.PoseType.Idle,      character.IdlePoseIndex,      charPtr);
+        if (applySit)       TrySetPose(EmoteController.PoseType.Sit,       character.SitPoseIndex,       charPtr);
+        if (applyGroundSit) TrySetPose(EmoteController.PoseType.GroundSit, character.GroundSitPoseIndex, charPtr);
+        if (applyDoze)      TrySetPose(EmoteController.PoseType.Doze,      character.DozePoseIndex,      charPtr);
     }
 
     private void TrySetPose(EmoteController.PoseType type, byte desired, FFXIVClientStructs.FFXIV.Client.Game.Character.Character* charPtr)

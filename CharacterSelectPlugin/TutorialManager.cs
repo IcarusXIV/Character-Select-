@@ -70,6 +70,7 @@ namespace CharacterSelectPlugin
             plugin.Configuration.TutorialActive = false;
             plugin.Configuration.HasSeenTutorial = true;
             plugin.Configuration.Save();
+            plugin.AchievementTracker?.OnTutorialCompleted();
             Plugin.Log.Info("[Tutorial] Tutorial ended");
         }
 

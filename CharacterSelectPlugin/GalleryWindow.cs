@@ -104,6 +104,10 @@ namespace CharacterSelectPlugin.Windows
         private List<GalleryProfile> allProfiles = new();
         private List<GalleryProfile> filteredProfiles = new();
         private bool isLoading = false;
+        // ETag from the last successful /gallery fetch. Sent as If-None-Match so the server can
+        // short-circuit with 304 Not Modified when the gallery cache hasn't changed - huge egress
+        // savings on the every-30s auto-refresh loop, since the cache only rebuilds every 30 min.
+        private string? galleryEtag = null;
         private string searchFilter = "";
         private List<string> popularTags = new();
         private GallerySortType sortType = GallerySortType.Popular;
@@ -121,7 +125,6 @@ namespace CharacterSelectPlugin.Windows
         private List<string> friendsInGallery = new();
         private DateTime lastFriendsUpdate = DateTime.MinValue;
         private readonly TimeSpan friendsUpdateInterval = TimeSpan.FromMinutes(1);
-        private bool showAddedFriends = false;
         private GalleryTab lastActiveTab = GalleryTab.Gallery;
         private readonly Dictionary<string, IDalamudTextureWrap?> textureCache = new();
         private DateTime lastTextureCacheCleanup = DateTime.MinValue;
@@ -165,12 +168,10 @@ namespace CharacterSelectPlugin.Windows
         private DateTime lastMutualFriendsUpdate = DateTime.MinValue;
         private readonly TimeSpan mutualFriendsUpdateInterval = TimeSpan.FromMinutes(2);
 
-        private float scrollPosition = 0f;
         private Dictionary<string, bool> likedProfiles = new();
         private Dictionary<string, RPProfile> downloadedProfiles = new();
         private Character? lastActiveCharacter = null;
         private HashSet<string> currentFavoritedProfiles = new();
-        private bool pendingStateUpdate = false;
         private Dictionary<string, bool> frozenLikedProfiles = new();
         private HashSet<string> frozenFavoritedProfiles = new();
         private bool useStateFreeze = false;
@@ -218,6 +219,50 @@ namespace CharacterSelectPlugin.Windows
         private string GetProfileKey(FavoriteSnapshot f)
             => GetProfileKey(f.CharacterId, f.CharacterName, f.Server);
 
+        // Returns true if the gallery profile belongs to one of the user's own CS+ characters.
+        // Used to disable the like button on your own profiles and gate the achievement
+        // trigger so self-likes can't unlock "First Fan" / "Community Star" / etc.
+        private bool IsOwnGalleryProfile(GalleryProfile? profile)
+        {
+            if (profile == null) return false;
+            var profileName = profile.CharacterName ?? "";
+            var profileServer = profile.Server ?? "";
+            if (string.IsNullOrEmpty(profileName)) return false;
+
+            foreach (var c in plugin.Characters)
+            {
+                bool nameMatch =
+                    string.Equals(c.Name, profileName, StringComparison.OrdinalIgnoreCase) ||
+                    (!string.IsNullOrEmpty(c.Alias) && string.Equals(c.Alias, profileName, StringComparison.OrdinalIgnoreCase));
+                if (!nameMatch) continue;
+
+                // If we know the character's physical server, require it to match too.
+                // This avoids a false positive when a different player happens to share
+                // your CS+ character name.
+                if (!string.IsNullOrEmpty(c.LastInGameName) && !string.IsNullOrEmpty(profileServer))
+                {
+                    int at = c.LastInGameName.LastIndexOf('@');
+                    if (at > 0)
+                    {
+                        var charServer = c.LastInGameName.Substring(at + 1);
+                        if (string.Equals(charServer, profileServer, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                        continue;
+                    }
+                }
+                // No physical info to disambiguate - fall back to name-only match
+                return true;
+            }
+            return false;
+        }
+
+        // Overload that resolves a profile by characterId then runs the same check.
+        private bool IsOwnGalleryProfile(string characterId)
+        {
+            var profile = allProfiles.FirstOrDefault(p => GetProfileKey(p) == characterId);
+            return IsOwnGalleryProfile(profile);
+        }
+
         private IDalamudTextureWrap? TryGetDownloadedTexture(string? imageUrl)
         {
             if (string.IsNullOrEmpty(imageUrl))
@@ -252,6 +297,17 @@ namespace CharacterSelectPlugin.Windows
             {
                 likedProfiles[likeKey] = true;
             }
+        }
+
+        private int chromeColorCount = 0;
+        public override void PreDraw()
+        {
+            chromeColorCount = ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+        }
+        public override void PostDraw()
+        {
+            ThemeHelper.PopWindowChromeColors(chromeColorCount);
+            chromeColorCount = 0;
         }
 
         public override void Draw()
@@ -648,7 +704,7 @@ namespace CharacterSelectPlugin.Windows
 
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("This will close the gallery.\nYou can reopen it anytime to accept the terms.");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("This will close the gallery.\nYou can reopen it anytime to accept the terms.");
                 }
 
                 ImGui.PopStyleColor(3);
@@ -998,10 +1054,34 @@ namespace CharacterSelectPlugin.Windows
                 using var http = Plugin.CreateAuthenticatedHttpClient();
                 http.Timeout = TimeSpan.FromSeconds(10);
 
-                var response = await http.GetAsync("https://character-select-profile-server-production.up.railway.app/gallery");
+                // Build request with If-None-Match so the server can short-circuit with 304
+                // when the gallery cache hasn't changed since our last fetch.
+                string nsfwParam = plugin.Configuration.ShowNSFWProfiles ? "?nsfw=true" : "";
+                var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://character-select-profile-server-production.up.railway.app/gallery{nsfwParam}");
+                if (!string.IsNullOrEmpty(galleryEtag))
+                {
+                    request.Headers.TryAddWithoutValidation("If-None-Match", galleryEtag);
+                }
+                var response = await http.SendAsync(request);
+
+                // 304 = gallery cache unchanged since our last fetch, nothing to do
+                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                {
+                    lastAutoRefresh = DateTime.Now;
+                    lastSuccessfulRefresh = DateTime.Now;
+                    Plugin.Log.Debug("[Gallery] Auto-refresh 304 Not Modified (server cache unchanged)");
+                    return;
+                }
 
                 if (response.IsSuccessStatusCode)
                 {
+                    // Capture new ETag for subsequent requests
+                    if (response.Headers.TryGetValues("ETag", out var etagValues))
+                    {
+                        galleryEtag = etagValues.FirstOrDefault();
+                    }
+
                     var json = await response.Content.ReadAsStringAsync();
                     var serverProfiles = JsonConvert.DeserializeObject<List<GalleryProfile>>(json) ?? new();
 
@@ -1214,14 +1294,14 @@ namespace CharacterSelectPlugin.Windows
 
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("Click to preview full image");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Click to preview full image");
                 }
 
                 ImGui.EndChild();
             }
             else
             {
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Loading…");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Loading...");
             }
 
             // Character info
@@ -1270,7 +1350,7 @@ namespace CharacterSelectPlugin.Windows
 
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Remove from favourites");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Remove from favourites");
             }
 
             // Mark for removal, but DO NOT remove inside the loop!
@@ -1347,14 +1427,14 @@ namespace CharacterSelectPlugin.Windows
 
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("Click to preview full image");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Click to preview full image");
                 }
 
                 ImGui.EndChild();
             }
             else
             {
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Downloading…");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Downloading...");
             }
 
             // Right side - Character info
@@ -1403,7 +1483,7 @@ namespace CharacterSelectPlugin.Windows
 
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Remove from favourites");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Remove from favourites");
             }
 
             // Mark for removal, but DO NOT remove inside the loop!
@@ -1483,7 +1563,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.TextWrapped("Choose which physical character represents you in the public gallery. Only this character will appear in the gallery, preventing duplicates.");
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("This determines which physical character name appears in the gallery.\nYour CS+ character profiles can still be applied to any physical character,\nbut only your chosen main will be visible to others in the gallery.");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("This determines which physical character name appears in the gallery.\nYour CS+ character profiles can still be applied to any physical character,\nbut only your chosen main will be visible to others in the gallery.");
                 }
 
                 var currentMain = plugin.Configuration.GalleryMainCharacter;
@@ -1550,7 +1630,7 @@ namespace CharacterSelectPlugin.Windows
                 }
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("When enabled, other players can see when you've used any of your characters recently (green globe).\nWhen disabled, all of your characters always appear offline to others.\nThis setting applies to all your Character Select+ profiles.");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("When enabled, other players can see when you've used any of your characters recently (green globe).\nWhen disabled, all of your characters always appear offline to others.\nThis setting applies to all your Character Select+ profiles.");
                 }
             });
 
@@ -1568,7 +1648,7 @@ namespace CharacterSelectPlugin.Windows
                 }
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("When disabled, profiles marked as NSFW will be hidden from the gallery.");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("When disabled, profiles marked as NSFW will be hidden from the gallery.");
                 }
 
                 if (showNSFW)
@@ -1612,7 +1692,7 @@ namespace CharacterSelectPlugin.Windows
                         ImGui.TextWrapped("Set a custom message for this CS+ character to display in the gallery instead of their bio. Think of it like a quote, lyric, or current mood.");
                         if (ImGui.IsItemHovered())
                         {
-                            ImGui.SetTooltip("This is specific to the CS+ character you currently have selected.\nThis is NOT your online/offline status - it's a custom message that shows in gallery cards.\nLeave empty to show your bio instead.");
+                            CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("This is specific to the CS+ character you currently have selected.\nThis is NOT your online/offline status - it's a custom message that shows in gallery cards.\nLeave empty to show your bio instead.");
                         }
 
                         string currentStatus = activeCharacter.GalleryStatus ?? "";
@@ -1645,7 +1725,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Text($"You have blocked {blockedProfiles.Count} character(s)");
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("Blocked characters won't appear in your gallery view");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Blocked characters won't appear in your gallery view");
                 }
 
                 if (blockedProfiles.Count > 0)
@@ -1662,7 +1742,7 @@ namespace CharacterSelectPlugin.Windows
                     }
                     if (ImGui.IsItemHovered())
                     {
-                        ImGui.SetTooltip($"Unblock all {blockedProfiles.Count} blocked characters");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Unblock all {blockedProfiles.Count} blocked characters");
                     }
 
                     if (ImGui.BeginPopupModal("ConfirmClearBlocks"))
@@ -1695,7 +1775,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Text($"You have {favoriteSnapshots.Count} favourited character(s)");
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("These are snapshots of characters you've starred in the gallery");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("These are snapshots of characters you've starred in the gallery");
                 }
 
                 if (favoriteSnapshots.Count > 0)
@@ -1706,7 +1786,7 @@ namespace CharacterSelectPlugin.Windows
                     }
                     if (ImGui.IsItemHovered())
                     {
-                        ImGui.SetTooltip($"Remove all {favoriteSnapshots.Count} favourited characters");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Remove all {favoriteSnapshots.Count} favourited characters");
                     }
 
                     if (ImGui.BeginPopupModal("ConfirmClearFavourites"))
@@ -1775,10 +1855,10 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
 
-            if (Plugin.ClientState.LocalPlayer?.HomeWorld.IsValid == true)
+            if (Plugin.ObjectTable.LocalPlayer?.HomeWorld.IsValid == true)
             {
-                var currentPhysicalName = Plugin.ClientState.LocalPlayer.Name.TextValue;
-                var currentServer = Plugin.ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                var currentPhysicalName = Plugin.ObjectTable.LocalPlayer.Name.TextValue;
+                var currentServer = Plugin.ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 var currentPhysicalKey = $"{currentPhysicalName}@{currentServer}";
 
                 var hasPublicCharacters = plugin.Characters.Any(c => c.RPProfile?.Sharing == ProfileSharing.ShowcasePublic);
@@ -2032,9 +2112,9 @@ namespace CharacterSelectPlugin.Windows
                 if (ImGui.IsItemHovered())
                 {
                     if (isUsingDefaultImage)
-                        ImGui.SetTooltip("Left click: View Profile\nRight click: Default image (no preview available)");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Left click: View Profile\nRight click: Default image (no preview available)");
                     else
-                        ImGui.SetTooltip("Left click: View Profile\nRight click: Preview Image");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Left click: View Profile\nRight click: Preview Image");
                 }
             }
             else
@@ -2333,16 +2413,25 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.IsItemHovered())
             {
                 if (isRecentlyActive)
-                    ImGui.SetTooltip($"{profile.Server}\n(Recently Active)");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"{profile.Server}\n(Recently Active)");
                 else
-                    ImGui.SetTooltip(profile.Server);
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(profile.Server);
             }
 
             ImGui.SetCursorPos(new Vector2(cardSize.X - (65 * scale), cardSize.Y - (22 * scale)));
 
-            // Like button
+            // Like button - disabled on your own profiles (can't self-like)
+            bool isOwnGalleryProfileForLike = IsOwnGalleryProfile(profile);
             SafeStyleScope(4, 0, () => {
-                if (isLiked)
+                if (isOwnGalleryProfileForLike)
+                {
+                    // Greyed-out, non-interactive heart on your own profiles
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.4f, 0.4f, 0.55f));
+                }
+                else if (isLiked)
                 {
                     ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
                     ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.85f, 0.3f, 0.4f, 0.2f));
@@ -2357,7 +2446,14 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
                 }
 
-                if (ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale)))
+                if (isOwnGalleryProfileForLike)
+                {
+                    // Render the heart but ignore clicks - tooltip explains why
+                    ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale));
+                    if (ImGui.IsItemHovered())
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("This is one of your own profiles - you can't like yourself!");
+                }
+                else if (ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale)))
                 {
                     bool wasLiked = isLiked;
                     ToggleLike(characterKey);
@@ -2437,7 +2533,7 @@ namespace CharacterSelectPlugin.Windows
 
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip(isFavorited ? "Remove from favourites" : "Add to favourites");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(isFavorited ? "Remove from favourites" : "Add to favourites");
             }
 
             // Right-click context menu for blocking
@@ -2503,6 +2599,7 @@ namespace CharacterSelectPlugin.Windows
                             plugin.Configuration.FollowedPlayers.Add(profilePlayerKey);
                             plugin.Configuration.Save();
                             _ = UpdateFriendsOnServer();
+                            plugin.AchievementTracker?.OnGalleryFollow();
                             Plugin.ChatGui.Print($"[Gallery] Added friend!");
                         }
                     }
@@ -2820,6 +2917,14 @@ namespace CharacterSelectPlugin.Windows
             var targetProfile = allProfiles.FirstOrDefault(p => GetProfileKey(p) == characterId);
             string stableLikeTarget = targetProfile?.CharacterName ?? characterId;
 
+            // Self-like guard: refuse to like your own profile. Prevents inflating your own
+            // like count and accidentally unlocking the gallery-likes achievements off self-likes.
+            if (IsOwnGalleryProfile(targetProfile))
+            {
+                Plugin.Log.Info("[Like Debug] Self-like blocked - this profile belongs to one of your own CS+ characters.");
+                return;
+            }
+
             string currentCharacterLikeKey = $"{csCharacterKey}|{stableLikeTarget}";
 
             // Check if ANY of your characters has liked this profile, no like fraud on my watch!
@@ -2870,6 +2975,12 @@ namespace CharacterSelectPlugin.Windows
                     {
                         var responseContent = await response.Content.ReadAsStringAsync();
                         Plugin.Log.Info($"[Like Debug] Response Content: {responseContent}");
+
+                        // Belt-and-suspenders: don't credit "Showing Love" for self-likes either.
+                        // The early return in ToggleLike already prevents reaching this branch
+                        // for self-likes, but check again so future refactors don't regress it.
+                        if (!isCurrentlyLiked && !IsOwnGalleryProfile(characterId))
+                            plugin.AchievementTracker?.OnGalleryLike();
 
                         var result = JsonConvert.DeserializeObject<LikeResponse>(responseContent);
 
@@ -2992,6 +3103,7 @@ namespace CharacterSelectPlugin.Windows
                 };
 
                 favoriteSnapshots.Add(snap);
+                plugin.AchievementTracker?.OnGalleryFavourite();
                 Plugin.Log.Debug($"[Gallery] Added favourite: {SanitizeForLogging(galleryKey)} for {ownerKey}");
 
                 _ = DownloadFavoriteImageAsync(profile.ProfileImageUrl!, localPath)
@@ -3067,7 +3179,7 @@ namespace CharacterSelectPlugin.Windows
 
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip($"Allow {blockedCharacter}'s profiles to appear in the gallery again");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Allow {blockedCharacter}'s profiles to appear in the gallery again");
                 }
 
                 ImGui.EndChild();
@@ -3085,7 +3197,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Text("Gallery Friends");
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Add friends to see all their public Character Select+ profiles");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Add friends to see all their public Character Select+ profiles");
             }
 
             // Apply form styling to friend controls
@@ -3116,6 +3228,7 @@ namespace CharacterSelectPlugin.Windows
                         plugin.Configuration.FollowedPlayers.Add(playerKey);
                         plugin.Configuration.Save();
                         _ = UpdateFriendsOnServer();
+                        plugin.AchievementTracker?.OnGalleryFollow();
 
                         var playerProfiles = GetPlayerProfiles(playerKey);
 
@@ -3147,7 +3260,7 @@ namespace CharacterSelectPlugin.Windows
             }
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Manually check for friend updates and mutual connections");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Manually check for friend updates and mutual connections");
             }
 
             ImGui.PopStyleColor(6);
@@ -3173,7 +3286,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Text($"Friends ({mutualFriendProfiles.Count} characters from {groupedByPlayer.Count} players)");
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("Players who added you back as a friend");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Players who added you back as a friend");
                 }
 
                 ImGui.BeginChild("MutualFriendsContent", new Vector2(0, 0), false, ImGuiWindowFlags.AlwaysVerticalScrollbar);
@@ -3222,7 +3335,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Text("No mutual friends yet.");
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("None of your friends have added you back yet!");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("None of your friends have added you back yet!");
                 }
                 ImGui.Spacing();
             }
@@ -3231,7 +3344,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Text("No friends added yet.");
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("Add friends above to see their characters here!");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Add friends above to see their characters here!");
                 }
                 ImGui.Spacing();
             }
@@ -3377,7 +3490,7 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Left click: View Profile\nRight click: Preview Image");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Left click: View Profile\nRight click: Preview Image");
             }
             else
             {
@@ -3674,15 +3787,23 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.IsItemHovered())
             {
                 if (isRecentlyActive)
-                    ImGui.SetTooltip($"{profile.Server}\n(Recently Active)");
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"{profile.Server}\n(Recently Active)");
                 else
-                    ImGui.SetTooltip(profile.Server);
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(profile.Server);
             }
 
             ImGui.SetCursorPos(new Vector2(cardSize.X - (65 * scale), cardSize.Y - (22 * scale)));
 
-            // Like button
-            if (isLiked)
+            // Like button - disabled on your own profiles (can't self-like)
+            bool isOwnProfile = IsOwnGalleryProfile(profile);
+            if (isOwnProfile)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.4f, 0.4f, 0.55f));
+            }
+            else if (isLiked)
             {
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.0f, 0.0f, 0.0f, 0.0f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.85f, 0.3f, 0.4f, 0.2f));
@@ -3697,7 +3818,13 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));
             }
 
-            if (ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale)))
+            if (isOwnProfile)
+            {
+                ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale));
+                if (ImGui.IsItemHovered())
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("This is one of your own profiles - you can't like yourself!");
+            }
+            else if (ImGui.Button($"♥##{characterKey}_like", new Vector2(16 * scale, 18 * scale)))
             {
                 bool wasLiked = isLiked;
                 ToggleLike(characterKey);
@@ -3777,7 +3904,7 @@ namespace CharacterSelectPlugin.Windows
 
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip(isFavorited ? "Remove from favourites" : "Add to favourites");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(isFavorited ? "Remove from favourites" : "Add to favourites");
             }
 
             // Right-click context menu for friend management
@@ -4023,10 +4150,10 @@ namespace CharacterSelectPlugin.Windows
 
         private string GetCurrentCharacterKey()
         {
-            if (Plugin.ClientState.LocalPlayer?.HomeWorld.IsValid == true)
+            if (Plugin.ObjectTable.LocalPlayer?.HomeWorld.IsValid == true)
             {
-                var name = Plugin.ClientState.LocalPlayer.Name.TextValue;
-                var world = Plugin.ClientState.LocalPlayer.HomeWorld.Value.Name.ToString();
+                var name = Plugin.ObjectTable.LocalPlayer.Name.TextValue;
+                var world = Plugin.ObjectTable.LocalPlayer.HomeWorld.Value.Name.ToString();
                 return $"{name}@{world}";
             }
             return "";
@@ -4051,9 +4178,34 @@ namespace CharacterSelectPlugin.Windows
                 string nsfwParam = plugin.Configuration.ShowNSFWProfiles ? "?nsfw=true" : "";
                 string url = $"https://character-select-profile-server-production.up.railway.app/gallery{nsfwParam}";
 
-                var response = await http.GetAsync(url);
+                // Send If-None-Match so the server can 304 if our cached data is still current
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                if (!string.IsNullOrEmpty(galleryEtag) && allProfiles.Count > 0)
+                {
+                    request.Headers.TryAddWithoutValidation("If-None-Match", galleryEtag);
+                }
+                var response = await http.SendAsync(request);
+
+                // 304 = our cached gallery is still current, skip re-processing
+                if (response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                {
+                    Plugin.Log.Debug("[Gallery] LoadGalleryData 304 Not Modified - keeping cached data");
+                    lastSuccessfulRefresh = DateTime.Now;
+                    lastAutoRefresh = DateTime.Now;
+                    useStateFreeze = false;
+                    frozenLikedProfiles.Clear();
+                    frozenFavoritedProfiles.Clear();
+                    return;
+                }
+
                 if (response.IsSuccessStatusCode)
                 {
+                    // Capture new ETag for subsequent requests
+                    if (response.Headers.TryGetValues("ETag", out var etagValues))
+                    {
+                        galleryEtag = etagValues.FirstOrDefault();
+                    }
+
                     var json = await response.Content.ReadAsStringAsync();
                     var rawProfiles = JsonConvert.DeserializeObject<List<GalleryProfile>>(json) ?? new();
 
@@ -4843,7 +4995,7 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.EndDisabled();
                     if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                     {
-                        ImGui.SetTooltip("Please specify a reason when selecting 'Other'");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Please specify a reason when selecting 'Other'");
                     }
                 }
 

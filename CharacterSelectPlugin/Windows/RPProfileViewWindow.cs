@@ -12,6 +12,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.ManagedFontAtlas;
 using CharacterSelectPlugin.Windows.Components;
+using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows
 {
@@ -25,11 +26,8 @@ namespace CharacterSelectPlugin.Windows
         private bool imageDownloadComplete = false;
         private string? downloadedImagePath = null;
         private IDalamudTextureWrap? cachedTexture;
-        private string? cachedTexturePath;
         private bool bringToFront = false;
         private bool firstOpen = true;
-        private float windowWidth = 420f;
-        private float bioScrollY = 0f;
         private string? imagePreviewUrl = null;
         private bool showImagePreview = false;
         private int currentPreviewIndex = 0;
@@ -259,7 +257,6 @@ namespace CharacterSelectPlugin.Windows
             downloadedImagePath = null;
             cachedTexture?.Dispose();
             cachedTexture = null;
-            cachedTexturePath = null;
         }
 
         public override void OnClose()
@@ -745,7 +742,149 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
             DrawFloatingActionButton(wndPos, wndSize, animationStartY, scale);
+            DrawProfileGlitchOverlay(dl, wndPos, wndSize, scale);
             DrawResizeHandle(wndPos, wndSize, scale);
+        }
+
+        /// <summary>
+        /// Glitch Pack overlay for the RP profile window. Two layers:
+        ///   1. Continuous CRT scanlines across the window content while profile is open.
+        ///   2. Periodic burst with edge slivers and spill specks bleeding past the window
+        ///      perimeter via the foreground draw list (so corruption seeps past the panel).
+        /// Uses cyan/magenta fringes (chassis convention). Gated on character.UseGlitchNameEffect.
+        /// </summary>
+        private void DrawProfileGlitchOverlay(ImDrawListPtr dl, Vector2 wndPos, Vector2 wndSize, float scale)
+        {
+            // External profiles read the pack from the server; self profile reads the
+            // local toggle. The render layer is identical either way.
+            bool packIsGlitch = showingExternal
+                ? CurrentProfile?.AppliedPack == "glitch"
+                : character?.UseGlitchNameEffect == true;
+            if (!packIsGlitch) return;
+
+            float t = (float)ImGui.GetTime();
+            Vector3 npColor = ResolveNameplateColor();
+            int seedHash = NameStylizer.Hash(character?.Name ?? "rp");
+
+            float left   = wndPos.X;
+            float right  = wndPos.X + wndSize.X;
+            float top    = wndPos.Y;
+            float bottom = wndPos.Y + wndSize.Y;
+
+            // Layer 1: CRT scanlines, drifting downward at ~8 px/sec
+            float scanStep  = 3f * scale;
+            float scanDrift = (t * 8f) % scanStep;
+            uint scanU = ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.16f));
+            for (float y = top - scanStep + scanDrift; y < bottom; y += scanStep)
+            {
+                if (y < top || y > bottom) continue;
+                dl.AddRectFilled(new Vector2(left, y), new Vector2(right, y + 1f * scale), scanU);
+            }
+            // Faint nameplate-colour phosphor wash on every other line
+            float tintStep = scanStep * 2f;
+            uint tintU = ImGui.ColorConvertFloat4ToU32(new Vector4(npColor.X, npColor.Y, npColor.Z, 0.05f));
+            for (float y = top - tintStep + (scanDrift * 2f) % tintStep; y < bottom; y += tintStep)
+            {
+                if (y < top || y > bottom) continue;
+                dl.AddRectFilled(new Vector2(left, y + 1f * scale), new Vector2(right, y + 2f * scale), tintU);
+            }
+
+            // Layer 2: Periodic frame-glitch burst. Slower cadence than the card hover
+            // (this window is on screen for a while; constant bursts would be noisy).
+            const float burstPeriod = 6.5f;
+            const float burstWindow = 0.50f;
+            float phaseOffset = (seedHash & 0xFF) / 255f * burstPeriod;
+            float cyclePos = (t + phaseOffset) % burstPeriod;
+            float burstE = cyclePos < burstWindow ? MathF.Sin(cyclePos / burstWindow * MathF.PI) : 0f;
+            // DEBUG: force constant burst for visual testing. Remove this line to restore
+            // the periodic clock.
+            burstE = 1f;
+            if (burstE < 0.05f) return;
+
+            int bucket = (int)(t * 16) ^ seedHash;
+            var rng = new Random(bucket);
+
+            // Palette matches the NAME FX (nameplate + white + black) rather than the
+            // chassis cyan/magenta. Keeps the per-character identity consistent across
+            // the name and the surrounding window glitch.
+            Vector4 shellV = Boutique.Shell;
+            uint shellU = ImGui.ColorConvertFloat4ToU32(new Vector4(shellV.X, shellV.Y, shellV.Z, 1f));
+            uint npU    = ImGui.ColorConvertFloat4ToU32(new Vector4(npColor.X, npColor.Y, npColor.Z, 0.92f * burstE));
+            uint whiteU = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 0.78f * burstE));
+            uint blackU = ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.85f * burstE));
+
+            float maxBite = 11f * scale;
+            int slivers = 12 + (int)(burstE * 14f);
+
+            // Edge slivers cut into the perimeter, filled in shell colour so they look
+            // like missing pieces. Inward fringe alternates nameplate / white per side.
+            for (int i = 0; i < slivers; i++)
+            {
+                int edge = rng.Next(4);
+                float bite = 2f + (float)rng.NextDouble() * (maxBite - 2f);
+
+                if (edge == 0)
+                {
+                    float sw = (8f + (float)rng.NextDouble() * 50f) * scale;
+                    float sx = left + (float)rng.NextDouble() * (wndSize.X - sw);
+                    var mn = new Vector2(sx, top);
+                    var mx = new Vector2(sx + sw, top + bite);
+                    dl.AddRectFilled(mn, mx, shellU);
+                    dl.AddRectFilled(new Vector2(mn.X, mx.Y), new Vector2(mx.X, mx.Y + 1f * scale), npU);
+                }
+                else if (edge == 1)
+                {
+                    float sw = (8f + (float)rng.NextDouble() * 50f) * scale;
+                    float sx = left + (float)rng.NextDouble() * (wndSize.X - sw);
+                    var mn = new Vector2(sx, bottom - bite);
+                    var mx = new Vector2(sx + sw, bottom);
+                    dl.AddRectFilled(mn, mx, shellU);
+                    dl.AddRectFilled(new Vector2(mn.X, mn.Y - 1f * scale), new Vector2(mx.X, mn.Y), whiteU);
+                }
+                else if (edge == 2)
+                {
+                    float sh = (8f + (float)rng.NextDouble() * 40f) * scale;
+                    float sy = top + (float)rng.NextDouble() * (wndSize.Y - sh);
+                    var mn = new Vector2(left, sy);
+                    var mx = new Vector2(left + bite, sy + sh);
+                    dl.AddRectFilled(mn, mx, shellU);
+                    dl.AddRectFilled(new Vector2(mx.X, mn.Y), new Vector2(mx.X + 1f * scale, mx.Y), npU);
+                }
+                else
+                {
+                    float sh = (8f + (float)rng.NextDouble() * 40f) * scale;
+                    float sy = top + (float)rng.NextDouble() * (wndSize.Y - sh);
+                    var mn = new Vector2(right - bite, sy);
+                    var mx = new Vector2(right, sy + sh);
+                    dl.AddRectFilled(mn, mx, shellU);
+                    dl.AddRectFilled(new Vector2(mn.X - 1f * scale, mn.Y), new Vector2(mn.X, mx.Y), whiteU);
+                }
+            }
+
+            // Spill specks bleeding past the window edge via the foreground draw list.
+            // Three variants in the same nameplate / white / black palette as the name FX.
+            var fdl = ImGui.GetForegroundDrawList();
+            int specks = 36;
+            for (int sp = 0; sp < specks; sp++)
+            {
+                int side = rng.Next(4);
+                float sx, sy;
+                switch (side)
+                {
+                    case 0: sx = left + (float)rng.NextDouble() * wndSize.X; sy = top    - (float)rng.NextDouble() * 10f * scale; break;
+                    case 1: sx = left + (float)rng.NextDouble() * wndSize.X; sy = bottom + (float)rng.NextDouble() * 10f * scale; break;
+                    case 2: sx = left  - (float)rng.NextDouble() * 10f * scale; sy = top + (float)rng.NextDouble() * wndSize.Y; break;
+                    default: sx = right + (float)rng.NextDouble() * 10f * scale; sy = top + (float)rng.NextDouble() * wndSize.Y; break;
+                }
+                int variant = rng.Next(3);
+                uint specU = variant switch
+                {
+                    0 => npU,
+                    1 => whiteU,
+                    _ => blackU,
+                };
+                fdl.AddRectFilled(new Vector2(sx, sy), new Vector2(sx + 1f * scale, sy + 1f * scale), specU);
+            }
         }
 
         private void DrawResponsiveBioSection(RPProfile rp, Vector2 windowSize, float scale)
@@ -1374,7 +1513,12 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.Text(truncatedText);
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip(value);
+                    // Wrap long values so the tooltip doesn't stretch across the whole screen
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28f);
+                    ImGui.TextUnformatted(value);
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
                 }
             }
             else
@@ -2803,13 +2947,40 @@ namespace CharacterSelectPlugin.Windows
                 ? (rp.CharacterName ?? "Unknown")
                 : (!string.IsNullOrWhiteSpace(character?.Alias) ? character.Alias : character?.Name ?? rp.CharacterName ?? "Unknown");
 
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.95f, 0.8f, 1f));
-            ImGui.Text(displayName);
-            ImGui.PopStyleColor();
+            // RP profile uses the LARGE glitch font so the name reads as a header.
+            // External profiles read AppliedPack from the server; self profile reads the
+            // local toggle. Either path resolves the same way: render glitch when set.
+            var rpGlitchFont = Plugin.Instance?.GlitchFontLarge;
+            bool packIsGlitch = showingExternal
+                ? rp.AppliedPack == "glitch"
+                : character?.UseGlitchNameEffect == true;
+            bool useGlitch = packIsGlitch
+                && rpGlitchFont != null
+                && rpGlitchFont.Available;
 
-            var nameSize = ImGui.CalcTextSize(displayName);
-            var glowColor = new Vector4(color.X, color.Y, color.Z, 0.3f);
-            dl.AddText(namePos - new Vector2(1 * scale, 1 * scale), ImGui.ColorConvertFloat4ToU32(glowColor), displayName);
+            if (useGlitch)
+            {
+                // Glitch text is rendered uppercase; measure with the SAME string so the
+                // ImGui.Dummy reserve matches rendered metrics and pronouns flow correctly.
+                string glitchText = NameStylizer.Render(displayName);
+                rpGlitchFont!.Push();
+                var stylizedSize = ImGui.CalcTextSize(glitchText);
+                rpGlitchFont.Pop();
+                NameStylizer.Draw(dl, namePos, glitchText, new Vector3(color.X, color.Y, color.Z), 1f,
+                    useGlitch: true, glitchFont: rpGlitchFont,
+                    seedHash: NameStylizer.Hash(displayName));
+                ImGui.Dummy(stylizedSize);
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.95f, 0.8f, 1f));
+                ImGui.Text(displayName);
+                ImGui.PopStyleColor();
+
+                var nameSize = ImGui.CalcTextSize(displayName);
+                var glowColor = new Vector4(color.X, color.Y, color.Z, 0.3f);
+                dl.AddText(namePos - new Vector2(1 * scale, 1 * scale), ImGui.ColorConvertFloat4ToU32(glowColor), displayName);
+            }
 
             if (!string.IsNullOrEmpty(rp.Pronouns))
             {
@@ -3098,8 +3269,10 @@ namespace CharacterSelectPlugin.Windows
 
                         string tagText = string.Join(", ", tags);
 
-                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(color.X * 0.9f, color.Y * 0.9f, color.Z * 0.9f, 0.9f));
-
+                        // Use the standard tooltip text color (already pushed above) so tags stay
+                        // readable regardless of the profile's accent colour. Previously this was
+                        // tinted with the nameplate colour, which could end up unreadable against
+                        // the dark tooltip background for low-luminance profile colours.
                         if (ImGui.CalcTextSize(tagText).X > minTooltipWidth - (20 * scale))
                         {
                             ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + minTooltipWidth - (20 * scale));
@@ -3110,8 +3283,6 @@ namespace CharacterSelectPlugin.Windows
                         {
                             ImGui.Text(tagText);
                         }
-
-                        ImGui.PopStyleColor();
 
                         ImGui.Dummy(new Vector2(0, 2 * scale));
 
@@ -3395,114 +3566,84 @@ namespace CharacterSelectPlugin.Windows
         {
             return Math.Clamp(baseScale, 0.3f, 5.0f); // Prevent extreme scaling
         }
-        
+
         private void DrawExpandButton(float scale)
         {
             var windowPos = ImGui.GetWindowPos();
             var windowSize = ImGui.GetWindowSize();
             var drawList = ImGui.GetWindowDrawList();
-            
+
             // Inset handle on the right edge
             float handleWidth = 14f * scale;
             float handleHeight = 100f * scale;
-            float handleInset = 3f * scale; // How far it's inset from edge
-            
-            // Use the actual biography middle position and center the handlebar on it
+            float handleInset = 3f * scale;
+
             float buttonX = windowPos.X + windowSize.X - handleWidth - handleInset;
-            float buttonY = actualBioPositionY - (handleHeight / 2); // Center handlebar vertically
-            
+            float buttonY = actualBioPositionY - (handleHeight / 2);
+
             var handleMin = new Vector2(buttonX, buttonY);
             var handleMax = new Vector2(buttonX + handleWidth, buttonY + handleHeight);
-            
-            // Check hover
+
             var mousePos = ImGui.GetIO().MousePos;
             bool isHovered = mousePos.X >= handleMin.X && mousePos.X <= windowPos.X + windowSize.X &&
-                            mousePos.Y >= handleMin.Y && mousePos.Y <= handleMax.Y;
-            
-            // Get theme colors
+                             mousePos.Y >= handleMin.Y && mousePos.Y <= handleMax.Y;
+
             var profileColor = ResolveNameplateColor();
-            
-            // Draw inset groove effect with rounded corners
-            drawList.AddRectFilled(
-                handleMin,
-                handleMax,
-                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)),
-                6f * scale // Rounded corners
-            );
-            
+
+            // Outer groove
+            drawList.AddRectFilled(handleMin, handleMax,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)), 6f * scale);
+
             // Inner recessed area
             var innerMin = handleMin + new Vector2(2f * scale, 2f * scale);
             var innerMax = handleMax - new Vector2(2f * scale, 2f * scale);
-            
-            var bgColor = isHovered 
+            var bgColor = isHovered
                 ? new Vector4(profileColor.X * 0.15f, profileColor.Y * 0.15f, profileColor.Z * 0.15f, 0.8f)
                 : new Vector4(0.05f, 0.05f, 0.05f, 0.7f);
-                
-            drawList.AddRectFilled(
-                innerMin,
-                innerMax,
-                ImGui.ColorConvertFloat4ToU32(bgColor),
-                4f * scale
-            );
-            
-            // Vertical grip lines for texture
+            drawList.AddRectFilled(innerMin, innerMax,
+                ImGui.ColorConvertFloat4ToU32(bgColor), 4f * scale);
+
+            // Grip lines
             float lineSpacing = 8f * scale;
             float lineY = innerMin.Y + 20f * scale;
             var gripColor = isHovered
-                ? new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.5f)
-                : new Vector4(0.3f, 0.3f, 0.3f, 0.3f);
-                
+                ? new Vector4(profileColor.X * 0.7f, profileColor.Y * 0.7f, profileColor.Z * 0.7f, 0.6f)
+                : new Vector4(profileColor.X * 0.45f, profileColor.Y * 0.45f, profileColor.Z * 0.45f, 0.5f);
             while (lineY < innerMax.Y - 20f * scale)
             {
                 drawList.AddLine(
                     new Vector2(innerMin.X + 4f * scale, lineY),
                     new Vector2(innerMax.X - 4f * scale, lineY),
-                    ImGui.ColorConvertFloat4ToU32(gripColor),
-                    1f * scale
-                );
+                    ImGui.ColorConvertFloat4ToU32(gripColor), 1f * scale);
                 lineY += lineSpacing;
             }
-            
-            // Small arrow in the center
-            var arrowColor = isHovered 
-                ? new Vector4(profileColor.X * 0.8f, profileColor.Y * 0.8f, profileColor.Z * 0.8f, 0.9f)
-                : new Vector4(0.5f, 0.5f, 0.5f, 0.7f);
-                
+
+            // Centre arrow (>) for "click to expand"
+            var arrowColor = isHovered
+                ? new Vector4(profileColor.X * 0.95f, profileColor.Y * 0.95f, profileColor.Z * 0.95f, 1.0f)
+                : new Vector4(profileColor.X * 0.75f, profileColor.Y * 0.75f, profileColor.Z * 0.75f, 0.85f);
             var arrowCenter = new Vector2(buttonX + handleWidth * 0.5f, buttonY + handleHeight * 0.5f);
-            var arrowSize = 3.5f * scale; // Much smaller arrow
-            
-            // Draw simple > arrow
+            var arrowSize = 5.5f * scale;
             drawList.PathClear();
             drawList.PathLineTo(arrowCenter + new Vector2(-arrowSize, -arrowSize));
             drawList.PathLineTo(arrowCenter + new Vector2(arrowSize * 0.5f, 0));
             drawList.PathLineTo(arrowCenter + new Vector2(-arrowSize, arrowSize));
-            drawList.PathStroke(
-                ImGui.ColorConvertFloat4ToU32(arrowColor), 
-                ImDrawFlags.None, 
-                1.5f * scale // Thinner stroke
-            );
-            
-            // Highlight edge when hovered
+            drawList.PathStroke(ImGui.ColorConvertFloat4ToU32(arrowColor),
+                ImDrawFlags.None, 2.25f * scale);
+
             if (isHovered)
             {
-                drawList.AddRect(
-                    handleMin,
-                    handleMax,
+                drawList.AddRect(handleMin, handleMax,
                     ImGui.ColorConvertFloat4ToU32(new Vector4(profileColor.X * 0.5f, profileColor.Y * 0.5f, profileColor.Z * 0.5f, 0.6f)),
-                    4f * scale,
-                    ImDrawFlags.None,
-                    1f * scale
-                );
+                    4f * scale, ImDrawFlags.None, 1f * scale);
             }
 
-            // Draw NEW badge for Expanded RP Profile feature
+            // NEW badge for first-time discovery
             bool showExpandBadge = !plugin.Configuration.SeenFeatures.Contains(FeatureKeys.ExpandedRPProfile);
             if (showExpandBadge)
             {
-                // Pulsing glow effect around the expand handle
                 float pulse = (float)(Math.Sin(ImGui.GetTime() * 3.0) * 0.5 + 0.5);
-                var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.5f); // Green glow
-
+                var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.5f);
                 for (int i = 3; i >= 1; i--)
                 {
                     var layerPadding = i * 2 * scale;
@@ -3511,19 +3652,13 @@ namespace CharacterSelectPlugin.Windows
                         handleMin - new Vector2(layerPadding, layerPadding),
                         handleMax + new Vector2(layerPadding, layerPadding),
                         ImGui.ColorConvertFloat4ToU32(new Vector4(glowColor.X, glowColor.Y, glowColor.Z, layerAlpha)),
-                        8f * scale,
-                        ImDrawFlags.None,
-                        2f * scale
-                    );
+                        8f * scale, ImDrawFlags.None, 2f * scale);
                 }
             }
 
-            // Handle click
             if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 ToggleExpansion();
-
-                // Mark Expanded RP Profile as seen when user expands
                 if (!plugin.Configuration.SeenFeatures.Contains(FeatureKeys.ExpandedRPProfile))
                 {
                     plugin.Configuration.SeenFeatures.Add(FeatureKeys.ExpandedRPProfile);
@@ -3531,18 +3666,14 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
 
-            // Tooltip
             if (isHovered)
             {
                 string tooltip = "View full profile";
-                if (showExpandBadge)
-                {
-                    tooltip += "\n\nNEW: Expanded profiles with content boxes!";
-                }
+                if (showExpandBadge) tooltip += "\n\nNEW: Expanded profiles with content boxes!";
                 ImGui.SetTooltip(tooltip);
             }
         }
-        
+
         private void DrawExpandedProfile(RPProfile rp, float scale)
         {
             var dl = ImGui.GetWindowDrawList();
@@ -4459,7 +4590,13 @@ namespace CharacterSelectPlugin.Windows
             if (requiredHeight <= maxCardHeight)
             {
                 finalCardHeight = Math.Max(baseCardHeight, requiredHeight);
-                flags = ImGuiWindowFlags.NoScrollbar;
+                // NoScrollbar alone hides the bar but doesn't stop the child from
+                // receiving wheel events. Some layouts (e.g., Quote) calculate content
+                // height slightly under what they actually render, producing a 1-2px
+                // phantom scroll region that silently intercepts the parent profile's
+                // scroll. NoScrollWithMouse prevents that hijack while keeping the
+                // clean non-scrolling look for cards that fit.
+                flags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
             }
             else
             {
@@ -5145,15 +5282,33 @@ namespace CharacterSelectPlugin.Windows
                     labelUpper
                 );
                 
-                // Value - normal size white text
-                var valueSize = ImGui.CalcTextSize(value);
+                // Value - truncate with ellipsis if it overflows the card, show full in tooltip
+                var displayValue = value;
+                float maxValueWidth = cardWidth - 16 * scale;
+                if (ImGui.CalcTextSize(displayValue).X > maxValueWidth)
+                {
+                    while (displayValue.Length > 0 && ImGui.CalcTextSize(displayValue + "...").X > maxValueWidth)
+                        displayValue = displayValue.Substring(0, displayValue.Length - 1);
+                    displayValue += "...";
+                }
+                var valueSize = ImGui.CalcTextSize(displayValue);
                 drawList.AddText(
                     cardPos + new Vector2((cardWidth - valueSize.X) * 0.5f, 40 * scale),
                     ImGui.ColorConvertFloat4ToU32(new Vector4(0.941f, 0.941f, 0.949f, 1.0f)),
-                    value
+                    displayValue
                 );
+
+                // Hover the whole card to see the full value if truncated
+                if (!ReferenceEquals(displayValue, value) && ImGui.IsMouseHoveringRect(cardPos, cardPos + new Vector2(cardWidth, cardHeight)))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28f);
+                    ImGui.TextUnformatted(value);
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
+                }
             }
-            
+
             // Draw only first 4 items in 2x2 grid
             DrawInfoCard("AGE", rp.Age ?? "Unknown", 0, 0);
             DrawInfoCard("RACE", rp.Race ?? "Unknown", cardWidth + spacing, 0);
@@ -5213,15 +5368,32 @@ namespace CharacterSelectPlugin.Windows
                     labelUpper
                 );
                 
-                // Value - normal size
-                var valueSize = ImGui.CalcTextSize(value);
+                // Value - truncate with ellipsis if it overflows the card, show full in tooltip
+                var displayValue = value;
+                float maxValueWidth = cardWidth - 16 * scale;
+                if (ImGui.CalcTextSize(displayValue).X > maxValueWidth)
+                {
+                    while (displayValue.Length > 0 && ImGui.CalcTextSize(displayValue + "...").X > maxValueWidth)
+                        displayValue = displayValue.Substring(0, displayValue.Length - 1);
+                    displayValue += "...";
+                }
+                var valueSize = ImGui.CalcTextSize(displayValue);
                 drawList.AddText(
                     cardPos + new Vector2((cardWidth - valueSize.X) * 0.5f, 40 * scale),
                     ImGui.ColorConvertFloat4ToU32(new Vector4(0.941f, 0.941f, 0.949f, 1.0f)),
-                    value
+                    displayValue
                 );
+
+                if (!ReferenceEquals(displayValue, value) && ImGui.IsMouseHoveringRect(cardPos, cardPos + new Vector2(cardWidth, cardHeight)))
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28f);
+                    ImGui.TextUnformatted(value);
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
+                }
             }
-            
+
             // Collect all items to display
             var items = new List<(string label, string value)>();
 
@@ -5698,113 +5870,84 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SetTooltip("Close");
             }
         }
-        
+
         private void DrawLeftCollapseHandle(float scale)
         {
             var windowPos = ImGui.GetWindowPos();
             var windowSize = ImGui.GetWindowSize();
             var drawList = ImGui.GetWindowDrawList();
-            
+
             // Inset handle on the left edge
             float handleWidth = 14f * scale;
             float handleHeight = 100f * scale;
-            float handleInset = 3f * scale; // How far it's inset from edge
-            
-            // Calculate position to align with content area
+            float handleInset = 3f * scale;
+
+            // Calculate position to align with main content area
             var navHeight = 50f * scale;
             var bannerHeight = 200f * scale;
             var profileAreaHeight = 100f * scale;
             var contentStartY = navHeight + bannerHeight + profileAreaHeight + 20 * scale;
-            
-            // Position aligned with main content section
+
             float buttonX = windowPos.X + handleInset;
             float buttonY = windowPos.Y + contentStartY;
-            
+
             var handleMin = new Vector2(buttonX, buttonY);
             var handleMax = new Vector2(buttonX + handleWidth, buttonY + handleHeight);
-            
-            // Check hover
+
             var mousePos = ImGui.GetIO().MousePos;
             bool isHovered = mousePos.X >= windowPos.X && mousePos.X <= handleMax.X &&
-                            mousePos.Y >= handleMin.Y && mousePos.Y <= handleMax.Y;
-            
-            // Get theme colors
+                             mousePos.Y >= handleMin.Y && mousePos.Y <= handleMax.Y;
+
             var profileColor = ResolveNameplateColor();
-            
-            // Draw inset groove effect with rounded corners
-            drawList.AddRectFilled(
-                handleMin,
-                handleMax,
-                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)),
-                6f * scale // Rounded corners
-            );
-            
+
+            // Outer groove
+            drawList.AddRectFilled(handleMin, handleMax,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.3f)), 6f * scale);
+
             // Inner recessed area
             var innerMin = handleMin + new Vector2(2f * scale, 2f * scale);
             var innerMax = handleMax - new Vector2(2f * scale, 2f * scale);
-            
-            var bgColor = isHovered 
+            var bgColor = isHovered
                 ? new Vector4(profileColor.X * 0.15f, profileColor.Y * 0.15f, profileColor.Z * 0.15f, 0.8f)
                 : new Vector4(0.05f, 0.05f, 0.05f, 0.7f);
-                
-            drawList.AddRectFilled(
-                innerMin,
-                innerMax,
-                ImGui.ColorConvertFloat4ToU32(bgColor),
-                4f * scale
-            );
-            
-            // Vertical grip lines for texture
+            drawList.AddRectFilled(innerMin, innerMax,
+                ImGui.ColorConvertFloat4ToU32(bgColor), 4f * scale);
+
+            // Grip lines
             float lineSpacing = 8f * scale;
             float lineY = innerMin.Y + 20f * scale;
             var gripColor = isHovered
                 ? new Vector4(profileColor.X * 0.6f, profileColor.Y * 0.6f, profileColor.Z * 0.6f, 0.5f)
                 : new Vector4(0.3f, 0.3f, 0.3f, 0.3f);
-                
             while (lineY < innerMax.Y - 20f * scale)
             {
                 drawList.AddLine(
                     new Vector2(innerMin.X + 4f * scale, lineY),
                     new Vector2(innerMax.X - 4f * scale, lineY),
-                    ImGui.ColorConvertFloat4ToU32(gripColor),
-                    1f * scale
-                );
+                    ImGui.ColorConvertFloat4ToU32(gripColor), 1f * scale);
                 lineY += lineSpacing;
             }
-            
-            // Small arrow in the center (pointing left)
-            var arrowColor = isHovered 
+
+            // Centre arrow (<) for "click to collapse back"
+            var arrowColor = isHovered
                 ? new Vector4(profileColor.X * 0.8f, profileColor.Y * 0.8f, profileColor.Z * 0.8f, 0.9f)
                 : new Vector4(0.5f, 0.5f, 0.5f, 0.7f);
-                
-            var handleCenter = new Vector2(
-                handleMin.X + handleWidth * 0.5f,
-                handleMin.Y + handleHeight * 0.5f
-            );
-            
-            // Draw < arrow
+            var handleCenter = new Vector2(handleMin.X + handleWidth * 0.5f, handleMin.Y + handleHeight * 0.5f);
             var arrowSize = 3.5f * scale;
             drawList.AddLine(
                 handleCenter + new Vector2(arrowSize * 0.5f, -arrowSize),
                 handleCenter + new Vector2(-arrowSize * 0.5f, 0),
-                ImGui.ColorConvertFloat4ToU32(arrowColor),
-                2f * scale
-            );
-            
+                ImGui.ColorConvertFloat4ToU32(arrowColor), 2f * scale);
             drawList.AddLine(
                 handleCenter + new Vector2(-arrowSize * 0.5f, 0),
                 handleCenter + new Vector2(arrowSize * 0.5f, arrowSize),
-                ImGui.ColorConvertFloat4ToU32(arrowColor),
-                2f * scale
-            );
-            
-            // Handle click
+                ImGui.ColorConvertFloat4ToU32(arrowColor), 2f * scale);
+
             if (isHovered && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
             {
                 ToggleExpansion();
             }
-            
-            // Tooltip
+
             if (isHovered)
             {
                 ImGui.SetTooltip("Back to compact view");
@@ -6082,7 +6225,7 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.Spacing();
                     ImGui.SetCursorPosX(ImGui.GetCursorPosX() + availableWidth - (100 * scale));
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.7f, 1.0f));
-                    ImGui.Text($"— {box.QuoteAuthor}");
+                    ImGui.Text($"- {box.QuoteAuthor}");
                     ImGui.PopStyleColor();
                 }
             }
@@ -6128,7 +6271,7 @@ namespace CharacterSelectPlugin.Windows
                     if (string.IsNullOrEmpty(trimmedLine)) continue;
                     
                     // Try to parse date/event format
-                    var parts = trimmedLine.Split(new[] { '-', '—', '–' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                    var parts = trimmedLine.Split(new[] { '-', '-', '-' }, 2, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length == 2)
                     {
                         var date = parts[0].Trim();
@@ -6160,7 +6303,7 @@ namespace CharacterSelectPlugin.Windows
             else
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.431f, 0.431f, 0.451f, 1.0f));
-                ImGui.TextWrapped("No timeline events added yet. Format: Date — Event");
+                ImGui.TextWrapped("No timeline events added yet. Format: Date - Event");
                 ImGui.PopStyleColor();
             }
         }

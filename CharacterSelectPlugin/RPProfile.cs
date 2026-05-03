@@ -56,6 +56,13 @@ namespace CharacterSelectPlugin
         public string? BackgroundImage { get; set; } = null;
 
         /// <summary>
+        /// Currently applied cosmetic pack (e.g. "glitch"). Drives cross-user visible
+        /// theme overlays on the RP profile view window. Null or unrecognised values
+        /// fall through to the default profile rendering.
+        /// </summary>
+        public string? AppliedPack { get; set; } = null;
+
+        /// <summary>
         /// URL-based custom background for Expanded RP Profile. Takes priority over BackgroundImage preset.
         /// </summary>
         public string? BackgroundImageUrl { get; set; } = null;

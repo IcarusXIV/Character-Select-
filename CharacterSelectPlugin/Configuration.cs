@@ -194,6 +194,27 @@ namespace CharacterSelectPlugin
         [JsonPropertyName("useSimpleGlowForOthers")]
         public bool UseSimpleGlowForOthers { get; set; } = false;
 
+        // Update Notification - shows a chat message when a new CS+ version is available on GitHub.
+        // Checked every 30 minutes, notifies once per session, opt-out here.
+        public bool ShowUpdateNotification { get; set; } = true;
+
+        // Achievement system - progress data. Points are computed at runtime from the unlocked
+        // list against the hardcoded registry, not stored directly.
+        public Achievements.AchievementData AchievementData { get; set; } = new();
+
+        // Master toggle - when off, the entire achievement system is hidden (trophy button,
+        // notifications, chat messages). Data is preserved so re-enabling restores progress.
+        public bool EnableAchievementSystem { get; set; } = true;
+
+        // Whether to show CS+ toast notifications for unlocked achievements (opt-out)
+        public bool ShowAchievementNotifications { get; set; } = true;
+
+        // Whether to print achievement unlocks in chat (opt-out)
+        public bool ShowAchievementChatMessages { get; set; } = true;
+
+        // Where the achievement toasts appear on screen
+        public ToastPosition AchievementToastPosition { get; set; } = ToastPosition.BottomRight;
+
         // Shared Name Replacement
         [JsonPropertyName("enableSharedNameReplacement")]
         public bool EnableSharedNameReplacement { get; set; } = false;
@@ -321,6 +342,17 @@ namespace CharacterSelectPlugin
             Shift
         }
 
+        /// <summary>Where achievement toast notifications appear on screen.</summary>
+        public enum ToastPosition
+        {
+            BottomRight,
+            BottomLeft,
+            TopRight,
+            TopLeft,
+            TopCenter,
+            BottomCenter,
+        }
+
         /// <summary>
         /// A custom group of characters for random selection.
         /// Users can create groups like "DPS", "Tanks", etc. and use /select random groupname
@@ -430,6 +462,17 @@ namespace CharacterSelectPlugin
         /// <summary>Button opacity for Compact Quick Switch (0.0-1.0).</summary>
         public float CompactQuickSwitchButtonOpacity { get; set; } = 1.0f;
 
+        /// <summary>Wardrobe background image path.</summary>
+        public string? WardrobeBackgroundImagePath { get; set; }
+        /// <summary>Wardrobe background opacity (0.0-1.0).</summary>
+        public float WardrobeBackgroundImageOpacity { get; set; } = 0.3f;
+        /// <summary>Wardrobe background zoom (0.5-3.0).</summary>
+        public float WardrobeBackgroundImageZoom { get; set; } = 1.0f;
+        /// <summary>Wardrobe background X offset (-1.0 to 1.0).</summary>
+        public float WardrobeBackgroundImageOffsetX { get; set; } = 0f;
+        /// <summary>Wardrobe background Y offset (-1.0 to 1.0).</summary>
+        public float WardrobeBackgroundImageOffsetY { get; set; } = 0f;
+
         /// <summary>Deep copy for preset saving.</summary>
         public CustomThemeConfig Clone()
         {
@@ -443,7 +486,12 @@ namespace CharacterSelectPlugin
                 BackgroundImageOffsetY = this.BackgroundImageOffsetY,
                 FavoriteIconId = this.FavoriteIconId,
                 UseNameplateColorForCardGlow = this.UseNameplateColorForCardGlow,
-                CompactQuickSwitchButtonOpacity = this.CompactQuickSwitchButtonOpacity
+                CompactQuickSwitchButtonOpacity = this.CompactQuickSwitchButtonOpacity,
+                WardrobeBackgroundImagePath = this.WardrobeBackgroundImagePath,
+                WardrobeBackgroundImageOpacity = this.WardrobeBackgroundImageOpacity,
+                WardrobeBackgroundImageZoom = this.WardrobeBackgroundImageZoom,
+                WardrobeBackgroundImageOffsetX = this.WardrobeBackgroundImageOffsetX,
+                WardrobeBackgroundImageOffsetY = this.WardrobeBackgroundImageOffsetY
             };
         }
 
@@ -459,6 +507,11 @@ namespace CharacterSelectPlugin
             this.FavoriteIconId = other.FavoriteIconId;
             this.UseNameplateColorForCardGlow = other.UseNameplateColorForCardGlow;
             this.CompactQuickSwitchButtonOpacity = other.CompactQuickSwitchButtonOpacity;
+            this.WardrobeBackgroundImagePath = other.WardrobeBackgroundImagePath;
+            this.WardrobeBackgroundImageOpacity = other.WardrobeBackgroundImageOpacity;
+            this.WardrobeBackgroundImageZoom = other.WardrobeBackgroundImageZoom;
+            this.WardrobeBackgroundImageOffsetX = other.WardrobeBackgroundImageOffsetX;
+            this.WardrobeBackgroundImageOffsetY = other.WardrobeBackgroundImageOffsetY;
         }
     }
 

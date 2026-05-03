@@ -157,6 +157,20 @@ namespace CharacterSelectPlugin.Windows
             }
         }
         
+        private int _chromeColorCount = 0;
+        public override void PreDraw()
+        {
+            var cfg = Plugin.Instance?.Configuration;
+            _chromeColorCount = cfg != null
+                ? CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(cfg)
+                : 0;
+        }
+        public override void PostDraw()
+        {
+            CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+            _chromeColorCount = 0;
+        }
+
         public override void Draw()
         {
             var windowSize = ImGui.GetWindowSize();

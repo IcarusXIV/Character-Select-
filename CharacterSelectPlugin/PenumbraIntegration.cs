@@ -519,7 +519,7 @@ namespace CharacterSelectPlugin
             try
             {
                 // Get local player's object index
-                var localPlayer = clientState.LocalPlayer;
+                var localPlayer = Plugin.ObjectTable.LocalPlayer;
                 if (localPlayer == null)
                 {
                     log.Warning("No local player for collection reset");
@@ -828,10 +828,7 @@ namespace CharacterSelectPlugin
             }
         }
         
-        /// <summary>
-        /// Analyze what mods are actually shown in Penumbra's On-Screen tab
-        /// This will help us understand what we should be detecting
-        /// </summary>
+        /// <summary>Analyzes mods shown in Penumbra's On-Screen tab for diagnostics.</summary>
         public void AnalyzeOnScreenTabMods()
         {
             // Method removed to reduce log spam
@@ -1269,10 +1266,7 @@ namespace CharacterSelectPlugin
             }
         }
         
-        /// <summary>
-        /// Extract mod name from an actual path that contains mod information
-        /// This handles the format seen in the On-Screen tab like "[M] Shall we Dance v1.0 | top | medium"
-        /// </summary>
+        /// <summary>Extracts the mod name from a Penumbra On-Screen tab path (e.g. "[M] Shall we Dance v1.0 | top | medium").</summary>
         private string? ExtractModNameFromActualPath(string actualPath)
         {
             if (string.IsNullOrEmpty(actualPath)) return null;
@@ -1903,10 +1897,7 @@ namespace CharacterSelectPlugin
             }
         }
         
-        /// <summary>
-        /// Extract the mod directory name from a full file path
-        /// This handles both mod file paths and potentially other path formats from Penumbra
-        /// </summary>
+        /// <summary>Extracts the mod directory name from a Penumbra file path. Handles both mod file paths and other Penumbra path formats.</summary>
         private string? ExtractModDirectoryFromPath(string actualPath)
         {
             try
@@ -2347,10 +2338,9 @@ namespace CharacterSelectPlugin
                 {
                     return true;
                 }
-                else if (result == 1) // 1 = NothingChanged (already in correct state)
+                else if (result == 1) // NothingChanged, already in correct state
                 {
-                    log.Debug($"TrySetModSettings - no change needed for {modName}.{optionGroupName} (already in correct state)");
-                    return true; // Treat as success since options are already correct
+                    return true;
                 }
 
                 log.Warning($"TrySetModSettings failed with error code: {result}");
@@ -2376,14 +2366,8 @@ namespace CharacterSelectPlugin
                 var ipc = pluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>("Penumbra.TryInheritMod");
                 var result = ipc.InvokeFunc(collectionId, modDirectory, modName, inherit);
 
-                if (result == 0) // Success
+                if (result == 0 || result == 1) // Success or NothingChanged
                 {
-                    log.Debug($"TryInheritMod - set inherit={inherit} for {modName}");
-                    return true;
-                }
-                else if (result == 1) // NothingChanged
-                {
-                    log.Debug($"TryInheritMod - no change needed for {modName} (already in correct state)");
                     return true;
                 }
 

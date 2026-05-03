@@ -392,7 +392,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Author
             if (!string.IsNullOrEmpty(box.QuoteAuthor))
             {
-                var authorText = $"— {box.QuoteAuthor}";
+                var authorText = $"- {box.QuoteAuthor}";
                 var authorSize = ImGui.CalcTextSize(authorText);
                 ImGui.SetCursorScreenPos(startPos + new Vector2(width - authorSize.X - 30 * scale, cardHeight - 30 * scale));
                 ImGui.TextColored(new Vector4(accentColor.X * 0.8f, accentColor.Y * 0.9f, accentColor.Z, 1.0f), authorText);
@@ -771,83 +771,96 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var pros = box.LeftColumn.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             var cons = box.RightColumn.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            
+
             var drawList = ImGui.GetWindowDrawList();
-            
+            float columnWidth = (width - 10 * scale) / 2;
+            float bgPadding = 6f * scale;
+
+            // Render one column inside a BeginGroup so we can measure its size,
+            // then draw the bg behind via ChannelsSplit.
+            void RenderColumn(string[] items, string headerText, Vector4 bgColor, Vector4 headerColor, Vector4 iconColor, string itemIcon, bool iconIsFontAwesome)
+            {
+                drawList.ChannelsSplit(2);
+                drawList.ChannelsSetCurrent(1); // foreground - content
+
+                var columnStart = ImGui.GetCursorScreenPos();
+                ImGui.BeginGroup();
+
+                // Column header
+                ImGui.PushStyleColor(ImGuiCol.Text, headerColor);
+                if (iconIsFontAwesome && headerText == "WEAKNESSES")
+                {
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.Text(FontAwesomeIcon.Times.ToIconString());
+                    ImGui.PopFont();
+                    ImGui.SameLine();
+                    ImGui.Text(headerText);
+                }
+                else
+                {
+                    ImGui.Text("✓ " + headerText);
+                }
+                ImGui.PopStyleColor();
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                foreach (var item in items)
+                {
+                    ImGui.Dummy(new Vector2(10 * scale, 0));
+                    ImGui.SameLine();
+                    if (iconIsFontAwesome)
+                    {
+                        ImGui.PushFont(UiBuilder.IconFont);
+                        ImGui.TextColored(iconColor, itemIcon);
+                        ImGui.PopFont();
+                    }
+                    else
+                    {
+                        ImGui.TextColored(iconColor, itemIcon);
+                    }
+                    ImGui.SameLine();
+                    ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + columnWidth - 40 * scale);
+                    ImGui.Text(item);
+                    ImGui.PopTextWrapPos();
+                }
+
+                ImGui.EndGroup();
+                var columnSize = ImGui.GetItemRectSize();
+
+                // Switch to background channel and draw the coloured rect using the
+                // measured size so it wraps the actual rendered content exactly.
+                drawList.ChannelsSetCurrent(0);
+                drawList.AddRectFilled(
+                    columnStart - new Vector2(bgPadding, bgPadding),
+                    columnStart + new Vector2(columnWidth, columnSize.Y) + new Vector2(bgPadding, bgPadding),
+                    ImGui.ColorConvertFloat4ToU32(bgColor),
+                    6 * scale
+                );
+
+                drawList.ChannelsMerge();
+            }
+
             if (ImGui.BeginTable("##proscons", 2, ImGuiTableFlags.None))
             {
                 ImGui.TableSetupColumn("Pros", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("Cons", ImGuiTableColumnFlags.WidthStretch);
-                
+
                 ImGui.TableNextRow();
-                
-                // Pros column
+
                 ImGui.TableNextColumn();
-                var prosPos = ImGui.GetCursorScreenPos();
-                var columnWidth = (width - 10 * scale) / 2;
-                
-                // Pros background
-                drawList.AddRectFilled(
-                    prosPos,
-                    prosPos + new Vector2(columnWidth, (pros.Length + 1) * 30 * scale + 20 * scale),
-                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.2f, 0.1f, 0.3f)),
-                    6 * scale
-                );
-                
-                // Pros header
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.8f, 0.4f, 1.0f));
-                ImGui.Text("✓ STRENGTHS");
-                ImGui.PopStyleColor();
-                ImGui.Separator();
-                ImGui.Spacing();
-                
-                foreach (var pro in pros)
-                {
-                    ImGui.Dummy(new Vector2(10 * scale, 0)); // Left padding
-                    ImGui.SameLine();
-                    ImGui.TextColored(new Vector4(0.4f, 0.8f, 0.4f, 0.9f), "✓");
-                    ImGui.SameLine();
-                    ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + columnWidth - 40 * scale);
-                    ImGui.Text(pro);
-                    ImGui.PopTextWrapPos();
-                }
-                
-                // Cons column
+                RenderColumn(pros, "STRENGTHS",
+                    new Vector4(0.1f, 0.2f, 0.1f, 0.3f),
+                    new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
+                    new Vector4(0.4f, 0.8f, 0.4f, 0.9f),
+                    "✓", iconIsFontAwesome: false);
+
                 ImGui.TableNextColumn();
-                var consPos = ImGui.GetCursorScreenPos() - new Vector2(0, ImGui.GetScrollY());
-                
-                // Cons background
-                drawList.AddRectFilled(
-                    consPos,
-                    consPos + new Vector2(columnWidth, (cons.Length + 1) * 30 * scale + 20 * scale),
-                    ImGui.ColorConvertFloat4ToU32(new Vector4(0.2f, 0.1f, 0.1f, 0.3f)),
-                    6 * scale
-                );
-                
-                // Cons header
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.3f, 0.3f, 1.0f));
-                ImGui.PushFont(UiBuilder.IconFont);
-                ImGui.Text(FontAwesomeIcon.Times.ToIconString());
-                ImGui.PopFont();
-                ImGui.SameLine();
-                ImGui.Text("WEAKNESSES");
-                ImGui.PopStyleColor();
-                ImGui.Separator();
-                ImGui.Spacing();
-                
-                foreach (var con in cons)
-                {
-                    ImGui.Dummy(new Vector2(10 * scale, 0)); // Left padding
-                    ImGui.SameLine();
-                    ImGui.PushFont(UiBuilder.IconFont);
-                    ImGui.TextColored(new Vector4(0.9f, 0.3f, 0.3f, 0.9f), FontAwesomeIcon.Times.ToIconString());
-                    ImGui.PopFont();
-                    ImGui.SameLine();
-                    ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + columnWidth - 40 * scale);
-                    ImGui.Text(con);
-                    ImGui.PopTextWrapPos();
-                }
-                
+                RenderColumn(cons, "WEAKNESSES",
+                    new Vector4(0.2f, 0.1f, 0.1f, 0.3f),
+                    new Vector4(0.9f, 0.3f, 0.3f, 1.0f),
+                    new Vector4(0.9f, 0.3f, 0.3f, 0.9f),
+                    FontAwesomeIcon.Times.ToIconString(), iconIsFontAwesome: true);
+
                 ImGui.EndTable();
             }
         }
@@ -884,8 +897,25 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var drawList = ImGui.GetWindowDrawList();
             var itemPos = ImGui.GetCursorScreenPos();
-            var itemHeight = 32f * scale;
-            
+
+            // Calculate the actual rendered height based on how the trait text wraps.
+            // Icon (thumbs) is drawn inline with the text and takes ~1 line's width.
+            // Text wraps at the available width after the icon + left/right padding.
+            float iconWidth;
+            ImGui.PushFont(UiBuilder.IconFont);
+            iconWidth = ImGui.CalcTextSize(isLike ? FontAwesomeIcon.ThumbsUp.ToIconString() : FontAwesomeIcon.ThumbsDown.ToIconString()).X;
+            ImGui.PopFont();
+
+            float leftPadding = 12f * scale;
+            float rightPadding = 12f * scale;
+            float iconGap = ImGui.GetStyle().ItemSpacing.X;
+            float textWrapWidth = Math.Max(1f, width - leftPadding - iconWidth - iconGap - rightPadding);
+
+            var traitSize = ImGui.CalcTextSize(trait, false, textWrapWidth);
+            float lineHeight = ImGui.GetTextLineHeight();
+            float textBlockHeight = Math.Max(lineHeight, traitSize.Y);
+            float itemHeight = Math.Max(32f * scale, textBlockHeight + 12f * scale);
+
             // Item background
             drawList.AddRectFilled(
                 itemPos,
@@ -893,7 +923,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.ColorConvertFloat4ToU32(new Vector4(0.039f, 0.039f, 0.039f, 1.0f)),
                 6f * scale
             );
-            
+
             // Item border
             drawList.AddRect(
                 itemPos,
@@ -903,9 +933,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImDrawFlags.None,
                 1f * scale
             );
-            
+
             // Left accent border (green for likes, red for dislikes)
-            var accentColor = isLike 
+            var accentColor = isLike
                 ? new Vector4(0.067f, 0.714f, 0.506f, 1.0f) // Green
                 : new Vector4(0.8f, 0.2f, 0.2f, 1.0f);      // Red
             drawList.AddRectFilled(
@@ -915,22 +945,27 @@ namespace CharacterSelectPlugin.Windows.Components
                 6f * scale,
                 ImDrawFlags.RoundCornersLeft
             );
-            
-            // Text with FontAwesome thumbs icons
-            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (itemHeight - ImGui.GetTextLineHeight()) * 0.5f);
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 12 * scale);
-            
+
+            // Vertically centre the text block inside the item
+            float textOffsetY = (itemHeight - textBlockHeight) * 0.5f;
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + textOffsetY);
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + leftPadding);
+
             // Draw icon first
             ImGui.PushFont(UiBuilder.IconFont);
             string icon = isLike ? FontAwesomeIcon.ThumbsUp.ToIconString() : FontAwesomeIcon.ThumbsDown.ToIconString();
             ImGui.TextColored(new Vector4(0.847f, 0.847f, 0.863f, 1.0f), icon);
             ImGui.PopFont();
-            
-            // Draw text next to icon
+
+            // Draw wrapped text next to icon
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(0.847f, 0.847f, 0.863f, 1.0f), trait);
-            
-            // Move cursor past the item
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + textWrapWidth);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.847f, 0.847f, 0.863f, 1.0f));
+            ImGui.TextWrapped(trait);
+            ImGui.PopStyleColor();
+            ImGui.PopTextWrapPos();
+
+            // Move cursor past the item (plus a small gap to the next item)
             ImGui.SetCursorPosY(itemPos.Y - ImGui.GetWindowPos().Y + itemHeight + 8 * scale);
         }
         

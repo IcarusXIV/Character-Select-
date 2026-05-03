@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 
 namespace CharacterSelectPlugin.Effects
 {
@@ -13,6 +14,11 @@ namespace CharacterSelectPlugin.Effects
         public float Life { get; set; }
         public float MaxLife { get; set; }
         public float Size { get; set; }
+        // Optional FontAwesome glyph; when set the particle renders as the
+        // glyph (snowflake / ghost / spider / heart) instead of a circle.
+        public string? Glyph { get; set; }
+        public float Rotation { get; set; }
+        public float SpinSpeed { get; set; }
 
         public bool IsAlive => Life > 0;
 
@@ -27,6 +33,9 @@ namespace CharacterSelectPlugin.Effects
 
             // Shrink over time
             Size *= 0.99f;
+
+            // Spin glyph particles for a bit of motion / character
+            Rotation += SpinSpeed * deltaTime;
         }
     }
 
@@ -51,22 +60,40 @@ namespace CharacterSelectPlugin.Effects
             int particleCount = isFavorited ? 12 : 8; // Favouriting
 
             Vector4 baseColor;
-            
-            // Check for seasonal themes
+            string? extraGlyph = null;
+
+            // Check for seasonal themes - pick a palette + glyph per theme.
             if (config != null && SeasonalThemeManager.IsSeasonalThemeEnabled(config))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(config);
-                if (effectiveTheme == SeasonalTheme.Winter || effectiveTheme == SeasonalTheme.Christmas)
+                switch (effectiveTheme)
                 {
-                    baseColor = isFavorited
-                        ? new Vector4(1f, 1f, 1f, 1f) // Pure white for winter/Christmas favourites
-                        : new Vector4(0.7f, 0.7f, 0.8f, 1f); // Light grey for unfavourited
-                }
-                else
-                {
-                    baseColor = isFavorited
-                        ? new Vector4(1f, 0.8f, 0.2f, 1f) // Gold for favourited (default/other themes)
-                        : new Vector4(0.6f, 0.6f, 0.6f, 1f); // Grey for unfavourited
+                    case SeasonalTheme.Winter:
+                    case SeasonalTheme.Christmas:
+                        baseColor = isFavorited
+                            ? new Vector4(1f, 1f, 1f, 1f)
+                            : new Vector4(0.7f, 0.7f, 0.8f, 1f);
+                        extraGlyph = ""; // FontAwesome snowflake
+                        break;
+                    case SeasonalTheme.Halloween:
+                        baseColor = isFavorited
+                            ? new Vector4(1f, 0.55f, 0.10f, 1f) // Pumpkin orange
+                            : new Vector4(0.7f, 0.7f, 0.7f, 1f);
+                        // Mix ghost () and spider () glyphs across particles
+                        // for variety; assigned per-particle in the loop below.
+                        extraGlyph = "";
+                        break;
+                    case SeasonalTheme.Valentines:
+                        baseColor = isFavorited
+                            ? new Vector4(1f, 0.35f, 0.55f, 1f) // Vivid pink
+                            : new Vector4(0.85f, 0.55f, 0.65f, 1f);
+                        extraGlyph = ""; // FontAwesome solid heart
+                        break;
+                    default:
+                        baseColor = isFavorited
+                            ? new Vector4(1f, 0.8f, 0.2f, 1f)
+                            : new Vector4(0.6f, 0.6f, 0.6f, 1f);
+                        break;
                 }
             }
             else
@@ -100,10 +127,49 @@ namespace CharacterSelectPlugin.Effects
                     ),
                     Life = life,
                     MaxLife = life,
-                    Size = 2f + (float)(random.NextDouble() * 2f)
+                    Size = 2f + (float)(random.NextDouble() * 2f),
+                    Glyph = null,
+                    Rotation = 0f,
+                    SpinSpeed = 0f
                 };
 
                 particles.Add(particle);
+            }
+
+            // Themed decoration: spawn a smaller second wave on top of the
+            // firework burst so the original circle-spark feel is preserved
+            // and the theme reads as a layer rather than replacing the burst.
+            // Halloween renders smoke puffs (Glyph "smoke" sentinel); other
+            // themes render the snowflake / heart glyph.
+            if (config != null && SeasonalThemeManager.IsSeasonalThemeEnabled(config))
+            {
+                bool halloween = SeasonalThemeManager.GetEffectiveTheme(config) == SeasonalTheme.Halloween;
+                int extras = isFavorited ? 6 : 4;
+                for (int j = 0; j < extras; j++)
+                {
+                    float angle = (float)(random.NextDouble() * Math.PI * 2);
+                    float speed = 30f + (float)(random.NextDouble() * 70f);
+                    float life = 0.55f + (float)(random.NextDouble() * 0.5f);
+                    var extra = new Particle
+                    {
+                        Position = position + new Vector2(
+                            (float)(random.NextDouble() * 10 - 5),
+                            (float)(random.NextDouble() * 10 - 5)
+                        ),
+                        Velocity = new Vector2(
+                            (float)Math.Cos(angle) * speed,
+                            (float)Math.Sin(angle) * speed
+                        ),
+                        Color = baseColor,
+                        Life = life,
+                        MaxLife = life,
+                        Size = 2.5f + (float)(random.NextDouble() * 2f),
+                        Rotation = (float)(random.NextDouble() * Math.PI * 2),
+                        SpinSpeed = (float)((random.NextDouble() - 0.5) * 4.0),
+                        Glyph = halloween ? "smoke" : extraGlyph
+                    };
+                    particles.Add(extra);
+                }
             }
         }
 
@@ -129,19 +195,57 @@ namespace CharacterSelectPlugin.Effects
             }
         }
 
-        public void Draw()
+        public void Draw() => Draw(ImGui.GetWindowDrawList());
+
+        public void Draw(ImDrawListPtr drawList)
         {
             if (!IsActive) return;
 
-            var drawList = ImGui.GetWindowDrawList();
-
+            var iconFont = UiBuilder.IconFont;
             foreach (var particle in particles)
             {
-                if (particle.IsAlive)
-                {
-                    uint color = ImGui.GetColorU32(particle.Color);
+                if (!particle.IsAlive) continue;
 
-                    // Draw particles
+                uint color = ImGui.GetColorU32(particle.Color);
+
+                if (particle.Glyph == "smoke")
+                {
+                    // Halloween: wispy smoke puff - stacked translucent grey
+                    // circles fading outward from the particle centre.
+                    float baseR = particle.Size * 2.6f;
+                    var smokeRgb = new Vector3(0.22f, 0.20f, 0.18f);
+                    for (int s = 0; s < 3; s++)
+                    {
+                        float layerR = baseR * (1f + s * 0.45f);
+                        float layerA = particle.Color.W * (0.45f - s * 0.13f);
+                        if (layerA <= 0f) continue;
+                        drawList.AddCircleFilled(particle.Position, layerR,
+                            ImGui.GetColorU32(new Vector4(smokeRgb.X, smokeRgb.Y, smokeRgb.Z, layerA)));
+                    }
+                }
+                else if (!string.IsNullOrEmpty(particle.Glyph))
+                {
+                    // Glyph particles (snowflake / heart) layered on top of
+                    // the circle-burst fireworks. Size scales with
+                    // particle.Size; glow halo for bright glyphs.
+                    float glyphPx = MathF.Max(10f, particle.Size * 6f);
+                    var glyphSz = ImGui.CalcTextSize(particle.Glyph);
+                    float scaleR = glyphPx / iconFont.FontSize;
+                    var glyphPos = new Vector2(
+                        particle.Position.X - glyphSz.X * scaleR * 0.5f,
+                        particle.Position.Y - glyphSz.Y * scaleR * 0.5f);
+
+                    if (particle.Color.W > 0.4f)
+                    {
+                        var glowColor = new Vector4(particle.Color.X, particle.Color.Y, particle.Color.Z, particle.Color.W * 0.30f);
+                        drawList.AddText(iconFont, glyphPx * 1.20f,
+                            new Vector2(glyphPos.X - 1f, glyphPos.Y - 1f),
+                            ImGui.GetColorU32(glowColor), particle.Glyph);
+                    }
+                    drawList.AddText(iconFont, glyphPx, glyphPos, color, particle.Glyph);
+                }
+                else
+                {
                     drawList.AddCircleFilled(
                         particle.Position,
                         particle.Size,
@@ -149,8 +253,7 @@ namespace CharacterSelectPlugin.Effects
                         6
                     );
 
-                    // Subtle glow effect
-                    if (particle.Color.X > 0.8f) // Gold particles
+                    if (particle.Color.X > 0.8f)
                     {
                         var glowColor = new Vector4(particle.Color.X, particle.Color.Y, particle.Color.Z, particle.Color.W * 0.3f);
                         drawList.AddCircleFilled(

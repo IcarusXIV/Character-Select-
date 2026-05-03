@@ -28,12 +28,39 @@ namespace CharacterSelectPlugin.Windows.Components
         private bool isSecretMode = false;
         private bool isAdvancedModeCharacter = false;
         private string? pendingImagePath = null;
+        private string? pendingAnimatedImagePath = null;
+        private string? pendingCutoutImagePath = null;
+        private string? pendingCutoutBackdropPath = null;
+        // 0 = None, 1 = Animated, 2 = Pop-out.  UI-only, derived from data on load,
+        // cleared on save so only the active mode's path persists.
+        private int _hoverModeRadio = 0;
+        private bool wasFormVisibleLastFrame = false;
+        // SetScrollY only takes effect on the next layout pass; apply across 3
+        // frames so the form actually opens at the top.
+        private int _formScrollResetFramesPending = 0;
+        private float _formIndent = 0f;
+        private float _formContentWidth = 0f;
 
         // Edit fields
         private string editedCharacterName = "";
         private string originalCharacterName = ""; // Track original name for warning resolution
         private string editedCharacterMacros = "";
         private string? editedCharacterImagePath = null;
+        private string? editedAnimatedImagePath = null;
+        private string? editedCutoutImagePath = null;
+        private string? editedCutoutBackdropPath = null;
+        // Cutout tuning state (mirrors Character defaults so new characters
+        // start at sensible values; updated on edit-load).
+        private float editedCutoutScale = 3.25f;
+        private float editedCutoutAnchorX = 0.65f;
+        private float editedCutoutAnchorY = 1.00f;
+        // Portrait + GIF framing controls
+        private float editedPortraitOffsetX = 0f;
+        private float editedPortraitOffsetY = 0f;
+        private float editedPortraitZoom    = 1f;
+        private float editedAnimatedOffsetX = 0f;
+        private float editedAnimatedOffsetY = 0f;
+        private float editedAnimatedZoom    = 1f;
         private string nameValidationError = "";
         private Vector3 editedCharacterColor = new Vector3(1.0f, 1.0f, 1.0f);
         private string editedCharacterPenumbra = "";
@@ -44,6 +71,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterMoodlePreset = "";
         private int? editedCharacterGearset = null;
         private bool editedCharacterExcludeFromNameSync = false;
+        private bool editedCharacterUseGlitchNameEffect = false;
         private string editedCharacterAlias = "";
 
         // Honorific fields
@@ -139,7 +167,22 @@ namespace CharacterSelectPlugin.Windows.Components
         public void Draw()
         {
             if (!plugin.IsAddCharacterWindowOpen && !IsEditWindowOpen)
+            {
+                wasFormVisibleLastFrame = false;
                 return;
+            }
+
+            // First frame the form appears, snap the parent grid scroll back to top
+            // so the user can see the header instead of mid-page wherever they were.
+            // Also flag the form's own BeginChild to reset its scroll on the next
+            // frame so previously-opened-and-scrolled forms don't re-open at the
+            // bottom.
+            if (!wasFormVisibleLastFrame)
+            {
+                ImGui.SetScrollY(0f);
+                _formScrollResetFramesPending = 3;
+                wasFormVisibleLastFrame = true;
+            }
 
             var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
@@ -172,299 +215,895 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
 
-            uiStyles.PushFormStyle();
+            // No chassis. The outer BeginChild fills the parent's FULL width so the
+            // scrollbar sits at the right edge of the available area (next to the
+            // dp-edge), not in the middle of the form. Form content INSIDE is
+            // constrained via the _formIndent + _formContentWidth class fields.
+            float fs = Boutique.FormScale;
+            float maxFormW = 580f * fs;
 
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, Vector4.Zero);
+            ImGui.BeginChild("##character_form_inline",
+                Vector2.Zero,
+                false,
+                ImGuiWindowFlags.NoBackground);
+
+            // Snap THIS child's scroll to the top on first 3 frames the form is
+            // visible. SetScrollY applies on the NEXT frame's layout pass, so a
+            // single-frame call leaves the form at the previous scroll briefly.
+            // 3 frames absorbs that lag without flicker on slow loops.
+            if (_formScrollResetFramesPending > 0)
+            {
+                ImGui.SetScrollY(0f);
+                _formScrollResetFramesPending--;
+            }
+
+            float availW = ImGui.GetContentRegionAvail().X;
+            _formIndent = 24f * fs;
+            _formContentWidth = MathF.Min(availW - _formIndent - 8f * fs, maxFormW);
+
+            DrawInlineTitleRow(fs);
+
+            Boutique.PushFormStyle();
             try
             {
-                float baseLines = 26f;
-                if (isAdvancedModeCharacter)
-                    baseLines += 6f;
-
-                float maxContentHeight = ImGui.GetTextLineHeightWithSpacing() * baseLines;
-                float availableHeight = ImGui.GetContentRegionAvail().Y - ImGui.GetFrameHeightWithSpacing() * 2.5f;
-                float scrollHeight = Math.Min(maxContentHeight, availableHeight);
-
-                ImGui.BeginChild("CharacterFormScrollable", new Vector2(0, scrollHeight), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
-                DrawCharacterFormContent(totalScale);
-                ImGui.EndChild();
+                // OutfitMed12 (15.6px Medium weight), same size as OutfitBody12 but
+                // heavier stroke so typed-in text is far easier on the eyes. Reduces
+                // squinting at small-size body text in input fields.
+                using (Plugin.Instance?.OutfitMed12?.Push())
+                {
+                    DrawCharacterFormContent(totalScale);
+                    DrawInlineFooterButtons(fs);
+                }
             }
             finally
             {
-                uiStyles.PopFormStyle();
+                Boutique.PopFormStyle();
             }
+
+            ImGui.EndChild();
+            ImGui.PopStyleColor();
         }
 
+        // Inline title row: kicker + diamond + pip + NAME + X close. No bg fill,
+        // no gold binding strip; just text and an X icon-button on the right.
+        private void DrawInlineTitleRow(float fs)
+        {
+            string kicker = IsEditWindowOpen ? "EDIT CHARACTER" : "NEW CHARACTER";
+            string headerTitle = "";
+            Vector4? npCol = null;
+            if (IsEditWindowOpen && selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
+            {
+                var ch = plugin.Characters[selectedCharacterIndex];
+                headerTitle = (ch.Name ?? "").ToUpperInvariant();
+                if (ch.NameplateColor.LengthSquared() > 0.001f)
+                    npCol = new Vector4(ch.NameplateColor.X, ch.NameplateColor.Y, ch.NameplateColor.Z, 1f);
+            }
+
+            var dl = ImGui.GetWindowDrawList();
+            ImGui.SetCursorPosX(_formIndent);
+            var rowStart = ImGui.GetCursorScreenPos();
+            // Title-row chrome (kicker + X close) spans the FULL available width
+            // from indent to the BeginChild's right edge, not the field-content
+            // width, so the X sits flush against the right-edge scrollbar.
+            float availW = ImGui.GetContentRegionAvail().X;
+            float rowH = 32f * fs;
+
+            ImFontPtr kickerFont, titleFont;
+            using (Plugin.Instance?.OswaldMed11?.Push())     { kickerFont = ImGui.GetFont(); }
+            using (Plugin.Instance?.OswaldSemiSmall?.Push()) { titleFont  = ImGui.GetFont(); }
+
+            float midY = rowStart.Y + rowH * 0.5f;
+            float cursorX = rowStart.X;
+
+            // Both texts render at the form's body font (OutfitMed12, 15.6px),
+            // NOT at OswaldMed11/SemiSmall. So compute pos.Y once based on the
+            // kicker's intended caps-centre and use it for both texts. This is
+            // what makes them share a vertical line.
+            const float capCenterRatio = 0.465f;
+            float textY = midY - kickerFont.FontSize * capCenterRatio;
+
+            float kickerTrack = kickerFont.FontSize * 0.32f;
+            float kickerW = Boutique.MeasureTrackedText(kicker, kickerTrack);
+            Boutique.DrawTrackedText(dl,
+                new Vector2(cursorX, textY),
+                kicker, Boutique.U32(Boutique.TextDim), kickerTrack);
+            // Tighter gap from kicker to diamond, shifts the diamond, pip,
+            // and name LEFT as a group (was 12*fs).
+            cursorX += kickerW + 6f * fs;
+
+            // Diamond / pip sit at the visual cap centre of the actual rendered
+            // text (OutfitMed12).
+            float diamondCY = midY + 2f * fs;
+
+            var sepC = new Vector2(cursorX + 3f * fs, diamondCY);
+            dl.AddTriangleFilled(
+                sepC + new Vector2(0, -3f * fs),
+                sepC + new Vector2(3f * fs, 0),
+                sepC + new Vector2(0, 3f * fs),
+                Boutique.U32(Boutique.GoldDeep));
+            dl.AddTriangleFilled(
+                sepC + new Vector2(0, -3f * fs),
+                sepC + new Vector2(0, 3f * fs),
+                sepC + new Vector2(-3f * fs, 0),
+                Boutique.U32(Boutique.GoldDeep));
+            cursorX += 14f * fs;
+
+            if (npCol.HasValue)
+            {
+                Boutique.DrawSquarePip(dl,
+                    new Vector2(cursorX + 4f * fs, diamondCY), 4f * fs, npCol.Value);
+                cursorX += 16f * fs;
+            }
+
+            if (!string.IsNullOrEmpty(headerTitle))
+            {
+                float titleTrack = titleFont.FontSize * 0.20f;
+                Boutique.DrawTrackedText(dl,
+                    new Vector2(cursorX, textY),
+                    headerTitle, Boutique.U32(Boutique.Text), titleTrack);
+            }
+
+            float xSize = 24f * fs;
+            var xMin = new Vector2(rowStart.X + availW - xSize, midY - xSize * 0.5f);
+            ImGui.SetCursorScreenPos(xMin);
+            bool xClicked = ImGui.InvisibleButton("##bform_close_inline", new Vector2(xSize, xSize));
+            bool xHovered = ImGui.IsItemHovered();
+            uint xBg = xHovered
+                ? Boutique.U32(Boutique.WithAlpha(Boutique.Red, 0.20f))
+                : Boutique.U32(new Vector4(20f / 255f, 24f / 255f, 32f / 255f, 0.6f));
+            dl.AddRectFilled(xMin, xMin + new Vector2(xSize, xSize), xBg);
+            dl.AddRect(xMin, xMin + new Vector2(xSize, xSize),
+                Boutique.U32(xHovered ? Boutique.Red : Boutique.BorderSoft),
+                0f, ImDrawFlags.None, 1f * fs);
+            ImGui.PushFont(UiBuilder.IconFont);
+            string xGlyph = "";
+            var xs = ImGui.CalcTextSize(xGlyph);
+            ImGui.PopFont();
+            float xIconSize = 12f * fs;
+            float xScaleR = xIconSize / UiBuilder.IconFont.FontSize;
+            dl.AddText(UiBuilder.IconFont, xIconSize,
+                xMin + new Vector2((xSize - xs.X * xScaleR) * 0.5f, (xSize - xs.Y * xScaleR) * 0.5f),
+                Boutique.U32(xHovered ? Boutique.Red : Boutique.TextDim), xGlyph);
+            if (xClicked) CloseForm();
+
+            ImGui.SetCursorScreenPos(rowStart);
+            ImGui.Dummy(new Vector2(availW, rowH));
+        }
+
+        // Inline footer row: CANCEL (left of save) + SAVE pill (right). No bg, no
+        // hairline, no enclosing footer bar; just two buttons in their natural flow.
+        private void DrawInlineFooterButtons(float fs)
+        {
+            string vName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
+            string vPenumbra = IsEditWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
+            string vGlamourer = IsEditWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
+            bool canSave = !string.IsNullOrWhiteSpace(vName)
+                        && !string.IsNullOrWhiteSpace(vPenumbra)
+                        && !string.IsNullOrWhiteSpace(vGlamourer)
+                        && string.IsNullOrEmpty(nameValidationError);
+
+            string disabledReason = null;
+            if (!canSave)
+            {
+                if (!string.IsNullOrEmpty(nameValidationError))
+                    disabledReason = nameValidationError;
+                else if (string.IsNullOrWhiteSpace(vName))
+                    disabledReason = "Enter a character name first.";
+                else if (string.IsNullOrWhiteSpace(vPenumbra))
+                    disabledReason = "Pick a Penumbra collection first.";
+                else if (string.IsNullOrWhiteSpace(vGlamourer))
+                    disabledReason = "Pick a Glamourer design first.";
+            }
+
+            // Lift the buttons off the bottom edge, bigger top breathing
+            // space than before. Trailing dummy below the buttons keeps them
+            // off the BeginChild's bottom edge when the user scrolls down.
+            ImGui.Dummy(new Vector2(0f, 22f * fs));
+
+            var dl = ImGui.GetWindowDrawList();
+            ImGui.SetCursorPosX(_formIndent);
+            float availW = _formContentWidth;
+            float btnH = 32f * fs;
+            float cancelW = 110f * fs;
+            float saveW   = 160f * fs;
+            float gap     = 10f * fs;
+
+            var rowStart = ImGui.GetCursorScreenPos();
+
+            // LEFT-aligned: Cancel first, Save right of it. Anchored at _formIndent.
+            // No Oswald font push, gold pills use the default ImGui font (same
+            // as the main window's "ADD CHARACTER" pill) for consistent look.
+            var cancelMin = new Vector2(rowStart.X, rowStart.Y);
+            var cancelMax = cancelMin + new Vector2(cancelW, btnH);
+            if (Boutique.DrawCancelBtn(dl, cancelMin, cancelMax,
+                    "CANCEL", 1.6f * fs, fs, "charform", ImGui.GetFont()))
+            {
+                CloseForm();
+            }
+
+            var saveMin = new Vector2(cancelMax.X + gap, rowStart.Y);
+            var saveMax = saveMin + new Vector2(saveW, btnH);
+            if (Boutique.DrawSavePill(dl, saveMin, saveMax,
+                    IsEditWindowOpen ? "SAVE CHANGES" : "SAVE CHARACTER",
+                    1.8f * fs, fs,
+                    IsEditWindowOpen ? "char_edit" : "char_new",
+                    !canSave, uiStyles.UpdateAndGetHoverSweepProgress, disabledReason)
+                && canSave)
+            {
+                if (IsEditWindowOpen)
+                {
+                    SaveEditedCharacter();
+                }
+                else
+                {
+                    string finalMacro = isAdvancedModeCharacter
+                        ? advancedCharacterMacroText
+                        : plugin.NewCharacterMacros;
+                    var created = plugin.SaveNewCharacter(finalMacro);
+                    ApplyEditedFramingToNew(created);
+                }
+                CloseForm();
+            }
+            plugin.SaveButtonPos = saveMin;
+            plugin.SaveButtonSize = saveMax - saveMin;
+
+            ImGui.SetCursorScreenPos(rowStart);
+            ImGui.Dummy(new Vector2(availW, btnH));
+            // Trailing breathing space so buttons aren't glued to the bottom
+            // edge of the BeginChild when scrolled.
+            ImGui.Dummy(new Vector2(0f, 18f * fs));
+        }
         private void DrawCharacterFormContent(float scale)
         {
             float labelWidth = 130 * scale;
             float inputWidth = 250 * scale;
             float inputOffset = 10 * scale;
 
-            string tempName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
-            string tempMacros = IsEditWindowOpen ? editedCharacterMacros : plugin.NewCharacterMacros;
-            string? imagePath = IsEditWindowOpen ? editedCharacterImagePath : plugin.NewCharacterImagePath;
-            string tempPenumbra = IsEditWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
-            string tempGlamourer = IsEditWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
-            string tempCustomize = IsEditWindowOpen ? editedCharacterCustomize : plugin.NewCustomizeProfile;
-            Vector3 tempColor = IsEditWindowOpen ? editedCharacterColor : plugin.NewCharacterColor;
-            string tempTag = IsEditWindowOpen ? editedCharacterTag : plugin.NewCharacterTag;
-
-            // Character Name
-            DrawFormField("Character Name*", labelWidth, inputWidth, inputOffset, () =>
+            // Section divider, OswaldSemiSmall (20.8px) so the section is the
+            // largest non-title text in the form and clearly separates groups.
+            // Hairline extends to the FULL right edge (chrome), fields below
+            // stay capped to _formContentWidth.
+            bool firstSection = true;
+            void Section(string label)
             {
-                // Show red border if there's a validation error
-                if (!string.IsNullOrEmpty(nameValidationError))
+                if (!firstSection)
+                    ImGui.Dummy(new Vector2(0f, 6f * Boutique.FormScale));
+                firstSection = false;
+                ImGui.SetCursorPosX(_formIndent);
+                float dividerWidth = ImGui.GetContentRegionAvail().X;
+                using (Plugin.Instance?.OswaldSemiSmall?.Push())
                 {
-                    ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(1.0f, 0.0f, 0.0f, 1.0f));
-                    ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 2.0f);
+                    Boutique.DrawSimpleSectionLabel(label.ToUpperInvariant(), scale, dividerWidth);
                 }
-                
-                ImGui.InputText("##CharacterName", ref tempName, 50);
-                plugin.CharacterNameFieldPos = ImGui.GetItemRectMin();
-                plugin.CharacterNameFieldSize = ImGui.GetItemRectSize();
+            }
 
-                if (!string.IsNullOrEmpty(nameValidationError))
-                {
-                    ImGui.PopStyleColor();
-                    ImGui.PopStyleVar();
-                    
-                    // Show error message
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.3f, 0.3f, 1.0f));
-                    ImGui.TextWrapped(nameValidationError);
-                    ImGui.PopStyleColor();
-                }
+            // ─── I · IDENTITY ───
+            Section("Identity");
 
-                if (IsEditWindowOpen) editedCharacterName = tempName;
-                else plugin.NewCharacterName = tempName;
+            // Row 1: Name (+optional Alias)
+            var idCols = new List<FieldCol>();
+            idCols.Add(Col(2f, "Character Name", true,
+                "Enter your OC's name or nickname for profile here.",
+                w => DrawCharacterNameInput(w, scale)));
 
-                // Validate name on change
-                ValidateCharacterName(tempName);
-            }, "Enter your OC's name or nickname for profile here.", scale,
-            // Name Sync exclusion checkbox - after tooltip, only show if Name Sync sharing is enabled
-            plugin.Configuration.AllowOthersToSeeMyCSName ? () =>
-            {
-                ImGui.SameLine();
-                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 4 * scale); // Small gap
-                bool tempExclude = IsEditWindowOpen ? editedCharacterExcludeFromNameSync : false;
-                if (ImGui.Checkbox("Exclude from Name Sync", ref tempExclude))
-                {
-                    if (IsEditWindowOpen) editedCharacterExcludeFromNameSync = tempExclude;
-                }
-                if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("When checked, Name Sync won't apply to this character.");
-                }
-            } : null);
-
-            // Character Alias field - only show when Name Sync is enabled
             if (plugin.Configuration.EnableNameReplacement || plugin.Configuration.EnableSharedNameReplacement)
             {
-                string tempAlias = IsEditWindowOpen ? editedCharacterAlias : plugin.NewCharacterAlias;
-                DrawFormField("Character Alias", labelWidth, inputWidth, inputOffset, () =>
-                {
-                    ImGui.InputTextWithHint("##CharacterAlias", "Leave empty to use Character Name", ref tempAlias, 100);
-
-                    if (IsEditWindowOpen) editedCharacterAlias = tempAlias;
-                    else plugin.NewCharacterAlias = tempAlias;
-                }, "Optional alias used for Name Sync.\nIf set, this name is displayed instead of Character Name.\nLeave empty to use the Character Name above.", scale);
+                idCols.Add(Col(1f, "Alias", false,
+                    "Optional alias used for Name Sync.\nIf set, this name is displayed instead of Character Name.\nLeave empty to use the Character Name.",
+                    w => DrawCharacterAliasInput(w)));
             }
+            DrawFieldRow(scale, idCols.ToArray());
 
-            ImGui.Separator();
+            // Row 2: Tags + Nameplate Colour
+            DrawFieldRow(scale,
+                Col(2f, "Character Tags", false,
+                    "You can assign multiple tags by separating them with commas.\nExamples: Casual, Favourites, Seasonal",
+                    w => DrawCharacterTagsInput(w)),
+                Col(1f, "Nameplate Colour", false,
+                    "Affects your character's nameplate under their profile picture.",
+                    w => DrawNameplateColourInput(scale)));
 
-            // Character Tags
-            DrawFormField("Character Tags", labelWidth, inputWidth, inputOffset, () =>
-            {
-                ImGui.InputTextWithHint("##Tags", "e.g. Casual, Battle, Beach", ref tempTag, 100);
+            // Per v2-simple spec: Exclude from Name Sync toggle on its own row at the
+            // end of Identity, not inline as the Name field's afterInput.
+            if (plugin.Configuration.AllowOthersToSeeMyCSName)
+                DrawExcludeFromNameSyncToggle(scale);
 
-                if (IsEditWindowOpen) editedCharacterTag = tempTag;
-                else plugin.NewCharacterTag = tempTag;
-            }, "You can assign multiple tags by separating them with commas.\nExamples: Casual, Favourites, Seasonal", scale);
+#if DEV_BUILD
+            // Glitch Pack is gated behind the achievement shop in public builds.
+            // The toggle UI only renders in dev builds; the underlying field is
+            // always serialised so dev-build profiles round-trip cleanly.
+            DrawGlitchNameEffectToggle(scale);
+#endif
 
-            ImGui.Separator();
+            // ─── II · INTEGRATIONS ───
+            Section("Integrations");
 
-            // Nameplate Colour
-            DrawFormField("Nameplate Color", labelWidth, inputWidth, inputOffset, () =>
-            {
-                ImGui.ColorEdit3("##NameplateColor", ref tempColor);
+            DrawFieldRow(scale,
+                Col(1f, "Penumbra Collection", true,
+                    "Select the Penumbra collection for this character. Right-click to clear.",
+                    w => DrawPenumbraInput(w)),
+                Col(1f, "Glamourer Design", true,
+                    "Select the Glamourer design for this character. Right-click to clear.\nYou can add additional designs later.",
+                    w => DrawGlamourerInput(w)));
 
-                if (IsEditWindowOpen) editedCharacterColor = tempColor;
-                else plugin.NewCharacterColor = tempColor;
-            }, "Affects your character's nameplate under their profile picture in Character Select+.", scale);
-
-            ImGui.Separator();
-
-            // Penumbra Collection
-            DrawFormField("Penumbra Collection*", labelWidth, inputWidth, inputOffset, () =>
-            {
-                var penumbraOptions = plugin.IntegrationListProvider?.GetPenumbraCollections() ?? Array.Empty<string>();
-                var currentPenumbra = plugin.IntegrationListProvider?.GetCurrentPenumbraCollection();
-                string oldValue = tempPenumbra;
-
-                if (AutocompleteCombo.Draw("##PenumbraCollection", ref tempPenumbra, penumbraOptions, inputWidth, "Select collection...", currentActive: currentPenumbra))
-                {
-                    plugin.PenumbraFieldPos = ImGui.GetItemRectMin();
-                    plugin.PenumbraFieldSize = ImGui.GetItemRectSize();
-
-                    if (IsEditWindowOpen)
-                    {
-                        editedCharacterPenumbra = tempPenumbra;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroPenumbra(tempPenumbra);
-                        }
-                        else
-                        {
-                            editedCharacterMacros = GenerateMacro();
-                        }
-                    }
-                    else
-                    {
-                        plugin.NewPenumbraCollection = tempPenumbra;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroPenumbra(tempPenumbra);
-                            plugin.NewCharacterMacros = advancedCharacterMacroText;
-                        }
-                        else
-                        {
-                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                        }
-                    }
-                }
-                else
-                {
-                    // Still track position even when not changed
-                    plugin.PenumbraFieldPos = ImGui.GetItemRectMin();
-                    plugin.PenumbraFieldSize = ImGui.GetItemRectSize();
-                }
-            }, "Select the Penumbra collection for this character. Right-click to clear.", scale);
-
-            ImGui.Separator();
-
-            // Glamourer Design
-            DrawFormField("Glamourer Design*", labelWidth, inputWidth, inputOffset, () =>
-            {
-                var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
-                string oldValue = tempGlamourer;
-
-                if (AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, inputWidth, "Select design..."))
-                {
-                    plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
-                    plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
-
-                    if (IsEditWindowOpen)
-                    {
-                        editedCharacterGlamourer = tempGlamourer;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroGlamourer(oldValue, tempGlamourer);
-                        }
-                        else
-                        {
-                            editedCharacterMacros = GenerateMacro();
-                        }
-                    }
-                    else
-                    {
-                        plugin.NewGlamourerDesign = tempGlamourer;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroGlamourer(oldValue, tempGlamourer);
-                            plugin.NewCharacterMacros = advancedCharacterMacroText;
-                        }
-                        else
-                        {
-                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                        }
-                    }
-                }
-                else
-                {
-                    // Still track position even when not changed
-                    plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
-                    plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
-                }
-            }, "Select the Glamourer design for this character. Right-click to clear.\nYou can add additional designs later.", scale);
-
-            ImGui.Separator();
-
-            // Automation (if enabled)
+            var integCols = new List<FieldCol>();
             if (plugin.Configuration.EnableAutomations)
             {
-                DrawAutomationField(labelWidth, inputWidth, inputOffset, scale);
-                ImGui.Separator();
+                integCols.Add(Col(1f, "Glam. Automation", false,
+                    "Enter the name of a Glamourer Automation for this character.\nMust match the automation name EXACTLY as shown in Glamourer.\nDesign-level automations override this if both are set.",
+                    w => DrawAutomationInput(w)));
             }
+            integCols.Add(Col(1f, "Customize+ Profile", false,
+                "Select the Customize+ profile for this character. Right-click to clear.",
+                w => DrawCustomizeInput(w)));
+            DrawFieldRow(scale, integCols.ToArray());
 
-            // Customize+ Profile
-            DrawCustomizeField(labelWidth, inputWidth, inputOffset, scale);
-            ImGui.Separator();
-
-            // Honorific Section
+            // ─── III · HONORIFIC ───
+            Section("Honorific");
             DrawHonorificSection(labelWidth, inputWidth, inputOffset, scale);
-            ImGui.Separator();
 
-            // Moodle Preset
-            DrawMoodleField(labelWidth, inputWidth, inputOffset, scale);
-            ImGui.Separator();
+            // ─── IV · ENHANCEMENTS ───
+            Section("Enhancements");
 
-            // Idle Pose
-            DrawIdlePoseField(labelWidth, inputWidth, inputOffset, scale);
-            ImGui.Separator();
-
-            // Assigned Gearset (only if enabled)
+            var enhCols = new List<FieldCol>();
+            enhCols.Add(Col(1f, "Moodle Preset", false,
+                "Select the Moodle preset for this character. Right-click to clear.",
+                w => DrawMoodleInput(w)));
+            enhCols.Add(Col(1f, "Idle Pose", false,
+                "Sets your character's idle pose (0-6).\nChoose 'None' if you don't want Character Select+ to change your idle.",
+                w => DrawIdlePoseInput(w)));
             if (plugin.Configuration.EnableGearsetAssignments)
             {
-                DrawGearsetField(labelWidth, inputWidth, inputOffset, scale);
-                ImGui.Separator();
+                enhCols.Add(Col(1f, "Gearset", false,
+                    "Automatically switch to this gearset when applying this character.\nChoose 'None' to not change gearsets.",
+                    w => DrawGearsetInput(w)));
             }
+            DrawFieldRow(scale, enhCols.ToArray());
 
-            // Mod Manager (Conflict Resolution)
-            if (isSecretMode)
+            // Mod Manager (Conflict Resolution), simple boutique checkbox per
+            // v2-simple spec (no special gold-deep left bar chip).
+            if (plugin.Configuration.EnableConflictResolution)
             {
-                DrawSecretModeModsField(labelWidth, inputWidth, inputOffset, scale);
-                ImGui.Separator();
+                ImFontPtr crLblF, crDescF;
+                using (Plugin.Instance?.OutfitMed13?.Push()) { crLblF  = ImGui.GetFont(); }
+                using (Plugin.Instance?.OutfitMed13?.Push()) { crDescF = ImGui.GetFont(); }
+                ImGui.SetCursorPosX(_formIndent);
+                Boutique.DrawBoutiqueCheckbox(
+                    "use_cr", ref isSecretMode,
+                    "Use Conflict Resolution",
+                    "Manual mod state for this character",
+                    scale, crLblF, crDescF);
+
+                if (isSecretMode)
+                {
+                    DrawSecretModeModsField(labelWidth, inputWidth, inputOffset, scale);
+                }
             }
 
-            // Image Selection
+            Section("Portrait");
             DrawImageSelection(scale);
-            ImGui.Separator();
+            DrawHoverModeSelection(scale);
 
-            // Advanced Mode Toggle
+            Section("Advanced Mode");
             DrawAdvancedModeSection(scale);
-            ImGui.Separator();
+            // Action buttons are now in the boutique footer (Draw method); not rendered here.
+        }
 
-            // Buttons!
-            DrawActionButtons(scale);
+        // ─── Identity inputs ───
+        private void DrawCharacterNameInput(float width, float scale)
+        {
+            string tempName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
+
+            if (Boutique.DrawBoutiqueTextInput("##CharacterName", ref tempName, 50, width))
+            {
+                if (IsEditWindowOpen) editedCharacterName = tempName;
+                else plugin.NewCharacterName = tempName;
+                ValidateCharacterName(tempName);
+            }
+            plugin.CharacterNameFieldPos = ImGui.GetItemRectMin();
+            plugin.CharacterNameFieldSize = ImGui.GetItemRectSize();
+
+            if (!string.IsNullOrEmpty(nameValidationError))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.3f, 0.3f, 1.0f));
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+                ImGui.TextWrapped(nameValidationError);
+                ImGui.PopTextWrapPos();
+                ImGui.PopStyleColor();
+            }
+        }
+
+        private void DrawExcludeFromNameSyncToggle(float scale)
+        {
+            bool tempExclude = IsEditWindowOpen ? editedCharacterExcludeFromNameSync : plugin.NewCharacterExcludeFromNameSync;
+            ImFontPtr labelF, descF;
+            // Both label + description at OutfitMed13 (16.9px Medium weight).
+            // Medium weight (vs Regular) eliminates the thin-stroke readability
+            // issue. Description differentiated only by colour (TextDim).
+            using (Plugin.Instance?.OutfitMed13?.Push()) { labelF = ImGui.GetFont(); }
+            using (Plugin.Instance?.OutfitMed13?.Push()) { descF  = ImGui.GetFont(); }
+            ImGui.SetCursorPosX(_formIndent);
+            if (Boutique.DrawBoutiqueCheckbox(
+                "exclude_namesync", ref tempExclude,
+                "Exclude from Name Sync",
+                "Skip Name Sync for this character",
+                scale, labelF, descF))
+            {
+                if (IsEditWindowOpen) editedCharacterExcludeFromNameSync = tempExclude;
+                else plugin.NewCharacterExcludeFromNameSync = tempExclude;
+            }
+            if (ImGui.IsItemHovered())
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("When checked, Name Sync won't apply to this character.");
+        }
+
+        private void DrawGlitchNameEffectToggle(float scale)
+        {
+            bool tempGlitch = IsEditWindowOpen ? editedCharacterUseGlitchNameEffect : plugin.NewCharacterUseGlitchNameEffect;
+            ImFontPtr labelF, descF;
+            using (Plugin.Instance?.OutfitMed13?.Push()) { labelF = ImGui.GetFont(); }
+            using (Plugin.Instance?.OutfitMed13?.Push()) { descF  = ImGui.GetFont(); }
+            ImGui.SetCursorPosX(_formIndent);
+            if (Boutique.DrawBoutiqueCheckbox(
+                "glitch_name_effect", ref tempGlitch,
+                "Glitch Name Effect",
+                "Renders the name in SD Glitch with a periodic chromatic burst",
+                scale, labelF, descF))
+            {
+                if (IsEditWindowOpen) editedCharacterUseGlitchNameEffect = tempGlitch;
+                else plugin.NewCharacterUseGlitchNameEffect = tempGlitch;
+            }
+            if (ImGui.IsItemHovered())
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(
+                    "Applies to this character's name in the character card and RP profile.\n" +
+                    "Every few seconds the name briefly glitches with cyan/magenta\n" +
+                    "chromatic ghosts and a letter-scramble pulse.");
+        }
+
+        private void DrawCharacterAliasInput(float width)
+        {
+            string tempAlias = IsEditWindowOpen ? editedCharacterAlias : plugin.NewCharacterAlias;
+            if (Boutique.DrawBoutiqueTextInput("##CharacterAlias", ref tempAlias, 100, width, "Optional"))
+            {
+                if (IsEditWindowOpen) editedCharacterAlias = tempAlias;
+                else plugin.NewCharacterAlias = tempAlias;
+            }
+        }
+
+        private void DrawCharacterTagsInput(float width)
+        {
+            string tempTag = IsEditWindowOpen ? editedCharacterTag : plugin.NewCharacterTag;
+            if (Boutique.DrawBoutiqueTextInput("##Tags", ref tempTag, 100, width, "e.g. Casual, Battle, Beach"))
+            {
+                if (IsEditWindowOpen) editedCharacterTag = tempTag;
+                else plugin.NewCharacterTag = tempTag;
+            }
+
+            // Live chips below the input (mockup .tag-chips)
+            if (!string.IsNullOrWhiteSpace(tempTag))
+            {
+                DrawTagChips(tempTag, width);
+            }
+        }
+
+        // Boutique tag chips: small gold-tinted pills with tracked-caps text. Wraps to
+        // multiple rows when chips exceed the input width.
+        private void DrawTagChips(string commaSeparated, float maxWidth)
+        {
+            float fs = Boutique.FormScale;
+            var tags = commaSeparated
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => t.Trim().ToUpperInvariant())
+                .Where(t => !string.IsNullOrEmpty(t))
+                .Distinct()
+                .ToArray();
+            if (tags.Length == 0) return;
+
+            // Bumped from OswaldSemi9 (11.7px) to OswaldSemi11 (14.3px), the
+            // chips were unreadable at the smaller size. Padding bumped slightly
+            // to keep the chip visually balanced with the bigger glyphs.
+            ImFontPtr font;
+            using (Plugin.Instance?.OswaldSemi11?.Push()) { font = ImGui.GetFont(); }
+
+            float chipPadX = 9f * fs;
+            float chipPadY = 4f * fs;
+            float chipGap = 6f * fs;
+
+            var dl = ImGui.GetWindowDrawList();
+            var rowStart = ImGui.GetCursorScreenPos() + new Vector2(0f, 4f * fs);
+            var pos = rowStart;
+            float maxRowY = pos.Y;
+
+            foreach (var tag in tags)
+            {
+                ImGui.PushFont(font);
+                var ts = ImGui.CalcTextSize(tag);
+                ImGui.PopFont();
+                float chipW = ts.X + chipPadX * 2f;
+                float chipH = ts.Y + chipPadY * 2f;
+
+                // Wrap to next row if it would exceed maxWidth
+                if (pos.X + chipW > rowStart.X + maxWidth && pos.X > rowStart.X)
+                {
+                    pos = new Vector2(rowStart.X, pos.Y + chipH + 4f * fs);
+                }
+
+                var chipMin = pos;
+                var chipMax = pos + new Vector2(chipW, chipH);
+
+                dl.AddRectFilled(chipMin, chipMax,
+                    Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.06f)));
+                dl.AddRect(chipMin, chipMax,
+                    Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.22f)),
+                    0f, ImDrawFlags.None, 1f * fs);
+                dl.AddText(font, font.FontSize,
+                    chipMin + new Vector2(chipPadX, chipPadY),
+                    Boutique.U32(Boutique.GoldWarm), tag);
+
+                pos.X += chipW + chipGap;
+                if (chipMax.Y > maxRowY) maxRowY = chipMax.Y;
+            }
+
+            // Reserve vertical space so the next field flows below the chips
+            float consumedH = (maxRowY - rowStart.Y) + 4f * fs;
+            ImGui.Dummy(new Vector2(maxWidth, consumedH));
+        }
+
+        private void DrawNameplateColourInput(float scale)
+        {
+            Vector3 tempColor = IsEditWindowOpen ? editedCharacterColor : plugin.NewCharacterColor;
+            if (CharacterSelectPlugin.Windows.Styles.Boutique.DrawBoutiqueColorSwatch(
+                "NameplateColor", ref tempColor, scale))
+            {
+                if (IsEditWindowOpen) editedCharacterColor = tempColor;
+                else plugin.NewCharacterColor = tempColor;
+            }
+            DrawSwatchHexAfter(scale,
+                $"#{(int)(tempColor.X * 255):X2}{(int)(tempColor.Y * 255):X2}{(int)(tempColor.Z * 255):X2}");
+        }
+
+        // Centers a small hex/label text vertically against the 28*scale boutique
+        // swatch on the same line. Replaces AlignTextToFramePadding which only
+        // aligns to FramePadding.y, not against the chamfered 28×28 swatch.
+        private void DrawSwatchHexAfter(float scale, string label)
+        {
+            ImGui.SameLine(0f, 8f * scale);
+            float swatchH = 28f * scale;
+            float fontH = ImGui.GetFontSize();
+            ImGui.SetCursorPosY(ImGui.GetCursorPosY() + (swatchH - fontH) * 0.5f);
+            ImGui.TextColored(Boutique.TextFaint, label);
+        }
+
+        // ─── Integrations inputs ───
+        private void DrawPenumbraInput(float width)
+        {
+            string tempPenumbra = IsEditWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
+            string oldValue = tempPenumbra;
+
+            var penumbraOptions = plugin.IntegrationListProvider?.GetPenumbraCollections() ?? Array.Empty<string>();
+            var currentPenumbra = plugin.IntegrationListProvider?.GetCurrentPenumbraCollection();
+
+            bool changed = AutocompleteCombo.Draw("##PenumbraCollection", ref tempPenumbra, penumbraOptions, width,
+                "Select collection...", currentActive: currentPenumbra);
+            plugin.PenumbraFieldPos = ImGui.GetItemRectMin();
+            plugin.PenumbraFieldSize = ImGui.GetItemRectSize();
+
+            if (changed)
+            {
+                if (IsEditWindowOpen)
+                {
+                    editedCharacterPenumbra = tempPenumbra;
+                    if (isAdvancedModeCharacter) UpdateAdvancedMacroPenumbra(tempPenumbra);
+                    else editedCharacterMacros = GenerateMacro();
+                }
+                else
+                {
+                    plugin.NewPenumbraCollection = tempPenumbra;
+                    if (isAdvancedModeCharacter)
+                    {
+                        UpdateAdvancedMacroPenumbra(tempPenumbra);
+                        plugin.NewCharacterMacros = advancedCharacterMacroText;
+                    }
+                    else
+                    {
+                        plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                    }
+                }
+            }
+        }
+
+        private void DrawGlamourerInput(float width)
+        {
+            string tempGlamourer = IsEditWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
+            string oldValue = tempGlamourer;
+
+            var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+
+            bool changed = AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, width, "Select design...");
+            plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
+            plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
+
+            if (changed)
+            {
+                if (IsEditWindowOpen)
+                {
+                    editedCharacterGlamourer = tempGlamourer;
+                    if (isAdvancedModeCharacter) UpdateAdvancedMacroGlamourer(oldValue, tempGlamourer);
+                    else editedCharacterMacros = GenerateMacro();
+                }
+                else
+                {
+                    plugin.NewGlamourerDesign = tempGlamourer;
+                    if (isAdvancedModeCharacter)
+                    {
+                        UpdateAdvancedMacroGlamourer(oldValue, tempGlamourer);
+                        plugin.NewCharacterMacros = advancedCharacterMacroText;
+                    }
+                    else
+                    {
+                        plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                    }
+                }
+            }
+        }
+
+        private void DrawAutomationInput(float width)
+        {
+            string tempAutomation = IsEditWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
+            if (Boutique.DrawBoutiqueTextInput("##Glam.Automation", ref tempAutomation, 100, width, "Exact name"))
+            {
+                if (IsEditWindowOpen)
+                {
+                    editedCharacterAutomation = tempAutomation;
+                    if (isAdvancedModeCharacter) UpdateAdvancedMacroAutomation(tempAutomation);
+                    else editedCharacterMacros = GenerateMacro();
+                }
+                else
+                {
+                    plugin.NewCharacterAutomation = tempAutomation;
+                    if (isAdvancedModeCharacter)
+                    {
+                        UpdateAdvancedMacroAutomation(tempAutomation);
+                        plugin.NewCharacterMacros = advancedCharacterMacroText;
+                    }
+                    else
+                    {
+                        plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                    }
+                }
+            }
+        }
+
+        private void DrawCustomizeInput(float width)
+        {
+            string tempCustomize = IsEditWindowOpen ? editedCharacterCustomize : plugin.NewCustomizeProfile;
+            var customizeOptions = plugin.IntegrationListProvider?.GetCustomizePlusProfiles() ?? Array.Empty<string>();
+            var currentCustomize = plugin.IntegrationListProvider?.GetCurrentCustomizePlusProfile();
+
+            if (AutocompleteCombo.Draw("##CustomizeProfile", ref tempCustomize, customizeOptions, width, "Select profile...", currentActive: currentCustomize))
+            {
+                if (IsEditWindowOpen)
+                {
+                    editedCharacterCustomize = tempCustomize;
+                    if (isAdvancedModeCharacter) UpdateAdvancedMacroCustomize(tempCustomize);
+                    else editedCharacterMacros = GenerateMacro();
+                }
+                else
+                {
+                    plugin.NewCustomizeProfile = tempCustomize;
+                    if (isAdvancedModeCharacter)
+                    {
+                        UpdateAdvancedMacroCustomize(tempCustomize);
+                        plugin.NewCharacterMacros = advancedCharacterMacroText;
+                    }
+                    else
+                    {
+                        plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                    }
+                }
+            }
+        }
+
+        // ─── Enhancements inputs ───
+        private void DrawMoodleInput(float width)
+        {
+            var moodleOptions = plugin.IntegrationListProvider?.GetMoodlesPresets() ?? Array.Empty<string>();
+            if (AutocompleteCombo.Draw("##MoodlePreset", ref tempMoodlePreset, moodleOptions, width, "Select preset..."))
+            {
+                if (IsEditWindowOpen) editedCharacterMoodlePreset = tempMoodlePreset;
+                else plugin.NewCharacterMoodlePreset = tempMoodlePreset;
+
+                if (isAdvancedModeCharacter)
+                {
+                    UpdateAdvancedMacroMoodle(tempMoodlePreset);
+                    if (!IsEditWindowOpen) plugin.NewCharacterMacros = advancedCharacterMacroText;
+                }
+                else
+                {
+                    if (IsEditWindowOpen) editedCharacterMacros = GenerateMacro();
+                    else plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                }
+            }
+        }
+
+        private void DrawIdlePoseInput(float width)
+        {
+            string[] poseOptions = { "None", "Pose 1", "Pose 2", "Pose 3", "Pose 4", "Pose 5", "Pose 6", "Pose 7" };
+            byte storedIndex = IsEditWindowOpen
+                ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
+                : plugin.NewCharacterIdlePoseIndex;
+            int dropdownIndex = storedIndex >= 7 ? 0 : storedIndex + 1;
+
+            string current = poseOptions[dropdownIndex];
+            string previous = current;
+            if (AutocompleteCombo.Draw("##IdlePose", ref current, poseOptions, width, "Select pose...", allowCustomInput: false))
+            {
+                int newDropdown = Array.IndexOf(poseOptions, current);
+                if (newDropdown < 0) newDropdown = 0;
+                byte newIndex = (byte)(newDropdown == 0 ? 7 : newDropdown - 1);
+
+                byte currentIndex = IsEditWindowOpen
+                    ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
+                    : plugin.NewCharacterIdlePoseIndex;
+
+                if (currentIndex != newIndex)
+                {
+                    if (IsEditWindowOpen) plugin.Characters[selectedCharacterIndex].IdlePoseIndex = newIndex;
+                    else plugin.NewCharacterIdlePoseIndex = newIndex;
+
+                    if (isAdvancedModeCharacter)
+                    {
+                        UpdateAdvancedMacroIdlePose(newIndex);
+                        if (!IsEditWindowOpen) plugin.NewCharacterMacros = advancedCharacterMacroText;
+                    }
+                    else
+                    {
+                        if (IsEditWindowOpen) editedCharacterMacros = GenerateMacro();
+                        else plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                    }
+                }
+            }
+        }
+
+        private void DrawGearsetInput(float width)
+        {
+            var gearsets = plugin.GetPlayerGearsets();
+            int? currentGearset = IsEditWindowOpen ? editedCharacterGearset : plugin.NewCharacterGearset;
+
+            // Build display strings + lookup
+            var displayList = new List<string> { "None" };
+            var displayToNumber = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var g in gearsets)
+            {
+                string display = plugin.GetGearsetDisplayName(g.Number, g.JobId, g.Name);
+                if (!displayToNumber.ContainsKey(display))
+                {
+                    displayList.Add(display);
+                    displayToNumber[display] = g.Number;
+                }
+            }
+
+            string current = "None";
+            if (currentGearset.HasValue)
+            {
+                var match = gearsets.FirstOrDefault(g => g.Number == currentGearset.Value);
+                if (match.Number > 0)
+                    current = plugin.GetGearsetDisplayName(match.Number, match.JobId, match.Name);
+                else
+                    current = $"Gearset {currentGearset.Value}";
+            }
+
+            if (AutocompleteCombo.Draw("##AssignedGearset", ref current, displayList, width, "Select gearset...", allowCustomInput: false))
+            {
+                int? newValue;
+                if (current == "None") newValue = null;
+                else if (displayToNumber.TryGetValue(current, out int n)) newValue = n;
+                else newValue = currentGearset; // unknown, keep prior
+
+                if (IsEditWindowOpen) editedCharacterGearset = newValue;
+                else plugin.NewCharacterGearset = newValue;
+            }
         }
 
         private void DrawFormField(string label, float labelWidth, float inputWidth, float inputOffset,
                                  System.Action drawInput, string tooltip, float scale, System.Action? afterTooltip = null)
         {
-            ImGui.SetCursorPosX(10 * scale);
-            ImGui.Text(label);
-            ImGui.SameLine(labelWidth);
-            ImGui.SetCursorPosX(labelWidth + inputOffset);
-            ImGui.SetNextItemWidth(inputWidth);
+            // Boutique label above the input (tracked-caps Oswald, optional "*" required + info tooltip)
+            bool required = label.EndsWith("*");
+            string clean = required ? label.TrimEnd('*').TrimEnd() : label;
 
-            drawInput();
-
-            // Tooltip
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.Text("\uf05a");
-            ImGui.PopFont();
-
-            if (ImGui.IsItemHovered())
+            // Respect the form's left indent so this field aligns with field rows
+            // rendered via DrawFieldRow (e.g. when CR is enabled the Mod Manager
+            // single-column field needs to line up with the rest).
+            ImGui.SetCursorPosX(_formIndent);
+            using (Plugin.Instance?.OswaldSemi11?.Push())
             {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted(tooltip);
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
+                CharacterSelectPlugin.Windows.Styles.Boutique.DrawFieldLabel(
+                    clean.ToUpperInvariant(), required, tooltip);
             }
 
-            // Optional content after tooltip
+            // Input on its own row below the label, indented to match the label
+            ImGui.SetCursorPosX(_formIndent);
+            ImGui.SetNextItemWidth(inputWidth > 0 ? inputWidth : MathF.Min(_formContentWidth, ImGui.GetContentRegionAvail().X));
+            drawInput();
+
             afterTooltip?.Invoke();
+            // ItemSpacing.y from PushFormStyle (= 5 * fs) provides the 5px label-to-next-label
+            // rhythm; an explicit Dummy of 5*fs raises field-to-field gap to 10px (mockup
+            // .section { gap: 10px } between stacked .field children).
+            ImGui.Dummy(new Vector2(0, 5f * Boutique.FormScale));
+        }
+
+        // ─── Field-row layout (mockup .field-row with flex children) ───
+        // A column spec for DrawFieldRow. drawInput receives the computed input
+        // width so combos / inputs can size themselves. afterInput runs after
+        // the input on the same column (e.g. inline checkbox).
+        private struct FieldCol
+        {
+            public float Flex;
+            public string Label;
+            public bool Required;
+            public string? Tooltip;
+            public Action<float> DrawInput;
+            public Action? AfterInput;
+        }
+
+        private static FieldCol Col(float flex, string label, bool required, string? tooltip,
+            Action<float> drawInput, Action? afterInput = null)
+            => new FieldCol { Flex = flex, Label = label, Required = required, Tooltip = tooltip,
+                              DrawInput = drawInput, AfterInput = afterInput };
+
+        // Renders multiple labeled fields side by side at the given flex weights.
+        // Each column = label-above-input, sized proportionally. A single col
+        // collapses to full-width.
+        private void DrawFieldRow(float scale, params FieldCol[] cols)
+        {
+            if (cols == null || cols.Length == 0) return;
+
+            // Indent the row to the form's left edge + use the form's content
+            // width budget rather than the parent's full width (which would be
+            // the whole BeginChild minus scrollbar).
+            ImGui.SetCursorPosX(_formIndent);
+            float availW = _formContentWidth;
+            float fs = Boutique.FormScale;
+            float gap = 10f * fs;
+            float totalGap = cols.Length > 1 ? gap * (cols.Length - 1) : 0f;
+            float totalFlex = 0f;
+            for (int i = 0; i < cols.Length; i++) totalFlex += cols[i].Flex;
+            if (totalFlex <= 0f) totalFlex = cols.Length;
+
+            // Cap individual input widths so they don't sprawl. A name field
+            // doesn't need 500px of pixels, 240*fs (~310px) covers ~30 chars
+            // of body text comfortably. Wider columns leave empty space rather
+            // than stretching the input.
+            float maxInputW = 260f * fs;
+            float usableW = availW - totalGap;
+            for (int i = 0; i < cols.Length; i++)
+            {
+                if (i > 0) ImGui.SameLine(0f, gap);
+                float colW = usableW * cols[i].Flex / totalFlex;
+                float inputW = MathF.Min(colW, maxInputW);
+
+                ImGui.BeginGroup();
+
+                // Field label = OswaldSemi13 (= 16.9px) tracked 0.20em, TextDim.
+                // Bumped substantially so the LABEL dominates the row, not the input.
+                using (Plugin.Instance?.OswaldSemi13?.Push())
+                {
+                    CharacterSelectPlugin.Windows.Styles.Boutique.DrawFieldLabel(
+                        cols[i].Label.ToUpperInvariant(), cols[i].Required, cols[i].Tooltip);
+                }
+
+                ImGui.SetNextItemWidth(inputW);
+                cols[i].DrawInput?.Invoke(inputW);
+
+                cols[i].AfterInput?.Invoke();
+
+                ImGui.EndGroup();
+            }
+            // Tighter inter-row breathing, let ItemSpacing.y carry the gap +
+            // a small explicit dummy. Less whitespace = more information density.
+            ImGui.Dummy(new Vector2(0f, 1f * Boutique.FormScale));
         }
 
         private void DrawSecretModeModsField(float labelWidth, float inputWidth, float inputOffset, float scale)
@@ -474,19 +1113,24 @@ namespace CharacterSelectPlugin.Windows.Components
                 var selectedCount = IsEditWindowOpen && plugin.Characters[selectedCharacterIndex].SecretModState != null
                     ? plugin.Characters[selectedCharacterIndex].SecretModState.Count
                     : (plugin.NewSecretModState?.Count ?? 0);
-                
-                var buttonText = selectedCount > 0 
+
+                var buttonText = selectedCount > 0
                     ? $"Configure Mods ({selectedCount} selected)###SecretMods"
                     : "Configure Mods###SecretMods";
-                
+
                 // Validate that character name is filled before opening mod manager
                 string characterName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
                 bool hasValidName = !string.IsNullOrWhiteSpace(characterName);
-                
+
+                // Reserve space for the quick-update refresh button on the same row
+                float refreshButtonWidth = 30f * scale;
+                float buttonGap = 4f * scale;
+                float configureButtonWidth = inputWidth - refreshButtonWidth - buttonGap;
+
                 if (!hasValidName)
                     ImGui.BeginDisabled();
-                
-                if (ImGui.Button(buttonText, new Vector2(inputWidth, 0)))
+
+                if (ImGui.Button(buttonText, new Vector2(configureButtonWidth, 0)))
                 {
                     if (hasValidName)
                     {
@@ -560,7 +1204,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (!hasValidName)
                 {
                     ImGui.EndDisabled();
-                    
+
                     // Show tooltip explaining why the button is disabled
                     if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                     {
@@ -571,353 +1215,550 @@ namespace CharacterSelectPlugin.Windows.Components
                         ImGui.EndTooltip();
                     }
                 }
+
+                // Quick update refresh button - same pattern as the Designs panel. Pulls in the
+                // currently-affecting gear/hair mods without having to open the mod manager window.
+                ImGui.SameLine(0, buttonGap);
+                ImGui.PushFont(UiBuilder.IconFont);
+
+                bool canQuickUpdate = hasValidName && plugin.Configuration.EnableConflictResolution;
+
+                if (!canQuickUpdate)
+                    ImGui.BeginDisabled();
+
+                if (ImGui.Button("\uf2f1##CharacterQuickUpdate", new Vector2(refreshButtonWidth, 0)))
+                {
+                    if (canQuickUpdate)
+                    {
+                        PerformQuickCharacterGearHairUpdate();
+                    }
+                }
+
+                if (!canQuickUpdate)
+                    ImGui.EndDisabled();
+
+                ImGui.PopFont();
+
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    ImGui.BeginTooltip();
+                    if (canQuickUpdate)
+                    {
+                        ImGui.Text("Update gear/hair changes");
+                        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f),
+                            "Pulls currently-affecting gear/hair mods into this character's mod state.");
+                    }
+                    else
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.7f, 0.7f, 1.0f));
+                        if (!hasValidName)
+                            ImGui.Text("Enter a Character Name first");
+                        else if (!plugin.Configuration.EnableConflictResolution)
+                            ImGui.Text("Conflict Resolution must be enabled");
+                        ImGui.PopStyleColor();
+                    }
+                    ImGui.EndTooltip();
+                }
             }, "Select which mods to enable and configure their options for this character.\nAllows different characters to use different mod combinations and settings.", scale);
-        }
-        
-        private void DrawAutomationField(float labelWidth, float inputWidth, float inputOffset, float scale)
-        {
-            string tempCharacterAutomation = IsEditWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
-
-            DrawFormField("Glam. Automation", labelWidth, inputWidth, inputOffset, () =>
-            {
-                // Glamourer doesn't expose an IPC to get automation names, so use plain text input
-                ImGui.SetNextItemWidth(inputWidth);
-                if (ImGui.InputText("##Glam.Automation", ref tempCharacterAutomation, 100))
-                {
-                    if (IsEditWindowOpen)
-                    {
-                        editedCharacterAutomation = tempCharacterAutomation;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroAutomation(tempCharacterAutomation);
-                        }
-                        else
-                        {
-                            editedCharacterMacros = GenerateMacro();
-                        }
-                    }
-                    else
-                    {
-                        plugin.NewCharacterAutomation = tempCharacterAutomation;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroAutomation(tempCharacterAutomation);
-                            plugin.NewCharacterMacros = advancedCharacterMacroText;
-                        }
-                        else
-                        {
-                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                        }
-                    }
-                }
-            }, "Enter the name of a Glamourer Automation for this character.\nMust match the automation name EXACTLY as shown in Glamourer.\nDesign-level automations override this if both are set.", scale);
-        }
-
-        private void DrawCustomizeField(float labelWidth, float inputWidth, float inputOffset, float scale)
-        {
-            string tempCustomize = IsEditWindowOpen ? editedCharacterCustomize : plugin.NewCustomizeProfile;
-
-            DrawFormField("Customize+ Profile", labelWidth, inputWidth, inputOffset, () =>
-            {
-                var customizeOptions = plugin.IntegrationListProvider?.GetCustomizePlusProfiles() ?? Array.Empty<string>();
-                var currentCustomize = plugin.IntegrationListProvider?.GetCurrentCustomizePlusProfile();
-
-                if (AutocompleteCombo.Draw("##CustomizeProfile", ref tempCustomize, customizeOptions, inputWidth, "Select profile...", currentActive: currentCustomize))
-                {
-                    if (IsEditWindowOpen)
-                    {
-                        editedCharacterCustomize = tempCustomize;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroCustomize(tempCustomize);
-                        }
-                        else
-                        {
-                            editedCharacterMacros = GenerateMacro();
-                        }
-                    }
-                    else
-                    {
-                        plugin.NewCustomizeProfile = tempCustomize;
-                        if (isAdvancedModeCharacter)
-                        {
-                            UpdateAdvancedMacroCustomize(tempCustomize);
-                            plugin.NewCharacterMacros = advancedCharacterMacroText;
-                        }
-                        else
-                        {
-                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                        }
-                    }
-                }
-            }, "Select the Customize+ profile for this character. Right-click to clear.", scale);
-        }
-
-        private void DrawHonorificSection(float labelWidth, float inputWidth, float inputOffset, float scale)
-        {
-            ImGui.SetCursorPosX(10 * scale);
-            ImGui.Text("Honorific Title");
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(labelWidth + inputOffset);
-            ImGui.SetNextItemWidth(inputWidth);
-
-            bool changed = false;
-
-            // Title input
-            changed |= ImGui.InputText("##HonorificTitle", ref tempHonorificTitle, 50);
-
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(80 * scale);
-            if (ImGui.BeginCombo("##HonorificPlacement", tempHonorificPrefix))
-            {
-                foreach (var opt in new[] { "Prefix", "Suffix" })
-                {
-                    if (ImGui.Selectable(opt, tempHonorificPrefix == opt))
-                    {
-                        tempHonorificPrefix = opt;
-                        tempHonorificSuffix = opt;
-                        changed = true;
-                    }
-                }
-                ImGui.EndCombo();
-            }
-
-            // Text colour picker
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(40 * scale);
-            changed |= ImGui.ColorEdit3("##HonorificColor", ref tempHonorificColor, ImGuiColorEditFlags.NoInputs);
-
-            // Glow picker with gradient options (Honorific-style)
-            ImGui.SameLine();
-            changed |= DrawGlowPicker(scale);
-
-            // Tooltip
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.Text("\uf05a");
-            ImGui.PopFont();
-
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("This will set a forced title when you switch to this character.\nThe dropdown selects if the title appears above (prefix) or below (suffix) your name in-game.\nClick the glow color box to access gradient presets.\nUse the Honorific plug-in's 'Clear' button if you need to remove it.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
-            }
-
-            // Live preview to the right of tooltip
-            if (!string.IsNullOrWhiteSpace(tempHonorificTitle))
-            {
-                ImGui.SameLine(0, 4 * scale);
-                DrawHonorificPreview(scale);
-            }
-
-            if (changed)
-            {
-                UpdateHonorificData();
-
-                // Always update advanced macro when in advanced mode
-                if (isAdvancedModeCharacter)
-                {
-                    UpdateAdvancedMacroHonorific();
-                    if (!IsEditWindowOpen)
-                    {
-                        plugin.NewCharacterMacros = advancedCharacterMacroText;
-                    }
-                }
-                else
-                {
-                    if (IsEditWindowOpen)
-                    {
-                        editedCharacterMacros = GenerateMacro();
-                    }
-                    else
-                    {
-                        plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                    }
-                }
-            }
         }
 
         /// <summary>
-        /// Draws a glow color picker with gradient options (Honorific-style)
+        /// Pulls currently-affecting gear/hair mods into the character's SecretModState, mirroring
+        /// the per-design "quick update" in DesignPanel. Preserves any existing non-gear/hair
+        /// selections so the user's broader config isn't clobbered.
         /// </summary>
-        private bool DrawGlowPicker(float scale)
+        private void PerformQuickCharacterGearHairUpdate()
         {
-            bool modified = false;
-            long animOffset = AnimationTimer.ElapsedMilliseconds;
-
-            // When a gradient is selected, show animated color; otherwise show solid glow
-            Vector3 displayColor;
-            if (tempHonorificGradientSet.HasValue)
+            try
             {
-                if (tempHonorificGradientSet.Value == -1)
+                Plugin.Log.Information("[CharacterQuickUpdate] Starting character-level quick gear/hair update...");
+
+                var allAffectingMods = plugin.PenumbraIntegration.GetCurrentlyAffectingMods();
+                Plugin.Log.Information($"[CharacterQuickUpdate] Found {allAffectingMods.Count} total affecting mods");
+
+                if (!allAffectingMods.Any())
                 {
-                    // Two-colour gradient: alternate between the two colours
-                    displayColor = GetTwoColourPreviewColor(tempHonorificGlow, tempHonorificColor3, animOffset);
+                    Plugin.Log.Warning("[CharacterQuickUpdate] No affecting mods detected");
+                    return;
+                }
+
+                // Filter to gear/hair mods only, using the same categorization logic as DesignPanel
+                var gearHairMods = new HashSet<string>();
+                var modList = plugin.PenumbraIntegration.GetModList();
+
+                foreach (var modDir in allAffectingMods)
+                {
+                    if (plugin.modCategorizationCache?.TryGetValue(modDir, out var modType) == true)
+                    {
+                        if (modType == CharacterSelectPlugin.Windows.ModType.Gear ||
+                            modType == CharacterSelectPlugin.Windows.ModType.Hair)
+                        {
+                            gearHairMods.Add(modDir);
+                        }
+                    }
+                    else if (modList.TryGetValue(modDir, out var modName))
+                    {
+                        // Fall back to analysing changed items if not cached
+                        var changedItems = plugin.PenumbraIntegration.GetModChangedItems(modDir, modName);
+                        if (IsGearOrHairMod(changedItems.Keys))
+                        {
+                            gearHairMods.Add(modDir);
+                        }
+                    }
+                }
+
+                Plugin.Log.Information($"[CharacterQuickUpdate] Filtered to {gearHairMods.Count} gear/hair mods");
+
+                if (!gearHairMods.Any())
+                {
+                    Plugin.Log.Information("[CharacterQuickUpdate] No gear/hair mods currently affecting - nothing to update");
+                    return;
+                }
+
+                // Merge with existing state so non-gear/hair selections are preserved
+                var newModState = new Dictionary<string, bool>();
+                Dictionary<string, bool>? existingState = IsEditWindowOpen
+                    ? plugin.Characters[selectedCharacterIndex].SecretModState
+                    : plugin.NewSecretModState;
+
+                if (existingState != null)
+                {
+                    foreach (var (modDir, enabled) in existingState)
+                    {
+                        if (!gearHairMods.Contains(modDir))
+                            newModState[modDir] = enabled;
+                    }
+                }
+
+                foreach (var modDir in gearHairMods)
+                    newModState[modDir] = true;
+
+                // Commit to the right destination
+                if (IsEditWindowOpen)
+                {
+                    plugin.Characters[selectedCharacterIndex].SecretModState = newModState;
+                    plugin.SaveConfiguration();
+                    Plugin.Log.Information($"[CharacterQuickUpdate] Updated character '{plugin.Characters[selectedCharacterIndex].Name}' with {gearHairMods.Count} gear/hair mods");
                 }
                 else
                 {
-                    displayColor = GetGradientPreviewColor(tempHonorificGradientSet.Value, animOffset);
+                    plugin.NewSecretModState = newModState;
+                    Plugin.Log.Information($"[CharacterQuickUpdate] Updated new-character state with {gearHairMods.Count} gear/hair mods");
                 }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"[CharacterQuickUpdate] Error during quick update: {ex}");
+            }
+        }
+
+        /// <summary>Minimal gear/hair classifier for mods not in the categorization cache.</summary>
+        private static bool IsGearOrHairMod(IEnumerable<string> changedItems)
+        {
+            foreach (var item in changedItems)
+            {
+                if (string.IsNullOrEmpty(item)) continue;
+                var lower = item.ToLowerInvariant();
+
+                // Equipment
+                if (lower.Contains("equipment/e") || lower.Contains("weapon/w") ||
+                    lower.Contains("accessory/a") || lower.Contains("hat") || lower.Contains("body") ||
+                    lower.Contains("hand") || lower.Contains("leg") || lower.Contains("foot") ||
+                    lower.Contains("earring") || lower.Contains("necklace") || lower.Contains("bracelet") ||
+                    lower.Contains("ring"))
+                {
+                    return true;
+                }
+
+                // Hair
+                if (lower.Contains("/hair/") || lower.Contains("hair/h") || lower.Contains("hairstyle"))
+                    return true;
+            }
+            return false;
+        }
+        
+        private void DrawHonorificSection(float labelWidth, float inputWidth, float inputOffset, float scale)
+        {
+            bool changed = false;
+
+            // Row 1: Title (flex 2) + Prefix/Suffix combo (flex 1)
+            DrawFieldRow(scale,
+                Col(2f, "Title Text", false,
+                    "This sets a forced title when you switch to this character.\nUse the Honorific plug-in's Clear button if you need to remove it.",
+                    w =>
+                    {
+                        if (Boutique.DrawBoutiqueTextInput("##HonorificTitle", ref tempHonorificTitle, 50, w, "e.g. Court Sorcerer"))
+                            HonorificFieldChanged();
+                    }),
+                Col(1f, "Placement", false,
+                    "Prefix shows the title above your name; Suffix shows it below.",
+                    w =>
+                    {
+                        var placementOptions = new[] { "Prefix", "Suffix" };
+                        string current = tempHonorificPrefix;
+                        if (AutocompleteCombo.Draw("##HonorificPlacement", ref current, placementOptions, w, "Prefix", allowCustomInput: false))
+                        {
+                            if (current == "Prefix" || current == "Suffix")
+                            {
+                                tempHonorificPrefix = current;
+                                tempHonorificSuffix = current;
+                                HonorificFieldChanged();
+                            }
+                        }
+                    }));
+
+            // Row 2: 3-col grid \u2014 Colour 1 (text) | Colour 2 (glow + gradient picker) | Animation
+            DrawFieldRow(scale,
+                Col(1f, "Colour 1", false,
+                    "Text colour of the honorific title.",
+                    w => DrawHonorificTextColourSwatch(scale)),
+                Col(1f, "Colour 2", false,
+                    "Glow colour. Click to choose a gradient preset (Honorific-style) and animation style.",
+                    w => DrawHonorificGlowSwatch(scale)),
+                Col(1f, "Animation", false,
+                    "Animation style for gradient glows (Wave / Pulse / Static). Solid when no gradient is selected.",
+                    w => DrawHonorificAnimationCombo(w, scale)));
+
+            // Preview chip below (only when the title has content)
+            if (!string.IsNullOrWhiteSpace(tempHonorificTitle))
+            {
+                ImGui.Dummy(new Vector2(0, 4f * scale));
+                DrawHonorificPreviewChip(scale);
+            }
+        }
+
+        // Apply changes after any honorific field is touched (regenerates macro).
+        private void HonorificFieldChanged()
+        {
+            UpdateHonorificData();
+
+            if (isAdvancedModeCharacter)
+            {
+                UpdateAdvancedMacroHonorific();
+                if (!IsEditWindowOpen) plugin.NewCharacterMacros = advancedCharacterMacroText;
             }
             else
             {
-                displayColor = tempHonorificGlow;
+                if (IsEditWindowOpen) editedCharacterMacros = GenerateMacro();
+                else plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+            }
+        }
+
+        // Text colour: solid swatch + hex.
+        private void DrawHonorificTextColourSwatch(float scale)
+        {
+            if (Boutique.DrawBoutiqueColorSwatch("HonorificColor", ref tempHonorificColor, scale))
+                HonorificFieldChanged();
+            DrawSwatchHexAfter(scale,
+                $"#{(int)(tempHonorificColor.X * 255):X2}{(int)(tempHonorificColor.Y * 255):X2}{(int)(tempHonorificColor.Z * 255):X2}");
+        }
+
+        // Glow / gradient swatch \u2014 opens the gradient picker popup. Animated when
+        // a gradient is selected; solid swatch otherwise.
+        private void DrawHonorificGlowSwatch(float scale)
+        {
+            // Compute display colour: animated for gradient modes, solid for none.
+            long animOffset = AnimationTimer.ElapsedMilliseconds;
+            Vector3 displayColour;
+            if (tempHonorificGradientSet.HasValue)
+            {
+                if (tempHonorificGradientSet.Value == -1)
+                    displayColour = GetTwoColourPreviewColor(tempHonorificGlow, tempHonorificColor3, animOffset);
+                else
+                    displayColour = GetGradientPreviewColor(tempHonorificGradientSet.Value, animOffset);
+            }
+            else
+            {
+                displayColour = tempHonorificGlow;
             }
 
-            // Use ColorButton to match the text color picker size exactly
-            if (ImGui.ColorButton("##GlowPickerBtn", new Vector4(displayColor, 1f), ImGuiColorEditFlags.NoTooltip))
+            // Custom-paint a chamfered swatch \u2014 same shape as DrawBoutiqueColorSwatch
+            // but with a per-frame display colour (animated for gradients).
+            var dl = ImGui.GetWindowDrawList();
+            var pos = ImGui.GetCursorScreenPos();
+            float side = 28f * scale;
+
+            ImGui.SetCursorScreenPos(pos);
+            ImGui.InvisibleButton("##HonorificGlowSwatch", new Vector2(side, side));
+            bool hovered = ImGui.IsItemHovered();
+            bool clicked = ImGui.IsItemClicked();
+
+            Span<Vector2> pts = stackalloc Vector2[6];
+            Boutique.BuildSlipPolygon(pos, pos + new Vector2(side, side), 5f * scale, pts);
+            unsafe
             {
-                ImGui.OpenPopup("##GlowPickerPopup");
+                fixed (Vector2* p = pts)
+                    dl.AddConvexPolyFilled(p, 6, Boutique.U32(new Vector4(displayColour, 1f)));
             }
+            for (int i = 0; i < 6; i++) dl.PathLineTo(pts[i]);
+            dl.PathStroke(Boutique.U32(hovered ? Boutique.Gold : Boutique.BorderSoft),
+                ImDrawFlags.Closed, 1f * scale);
+            // Tiny TL corner highlight
+            dl.AddLine(pos + new Vector2(2f, 2f), pos + new Vector2(6f, 2f),
+                Boutique.U32(new Vector4(1f, 1f, 1f, 0.20f)), 1f);
+            dl.AddLine(pos + new Vector2(2f, 2f), pos + new Vector2(2f, 6f),
+                Boutique.U32(new Vector4(1f, 1f, 1f, 0.20f)), 1f);
 
             // Tooltip
-            if (ImGui.IsItemHovered())
+            if (hovered)
             {
                 if (tempHonorificGradientSet.HasValue)
                 {
                     if (tempHonorificGradientSet.Value == -1)
-                        ImGui.SetTooltip($"Two Colour Gradient ({tempHonorificAnimationStyle ?? "Wave"})");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Two Colour Gradient ({tempHonorificAnimationStyle ?? "Wave"})");
                     else
-                        ImGui.SetTooltip($"{GradientPresetNames[tempHonorificGradientSet.Value]} ({tempHonorificAnimationStyle ?? "Wave"})");
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"{GradientPresetNames[tempHonorificGradientSet.Value]} ({tempHonorificAnimationStyle ?? "Wave"})");
                 }
                 else
-                    ImGui.SetTooltip("Glow (click for gradients)");
+                {
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Solid glow. Click to choose a gradient.");
+                }
             }
 
-            // The popup with gradient options
-            if (ImGui.BeginPopup("##GlowPickerPopup"))
+            if (clicked) ImGui.OpenPopup("##GlowPickerPopup");
+
+            // Reuse the existing popup body \u2014 extracted from the legacy DrawGlowPicker.
+            DrawHonorificGlowPickerPopup(scale);
+
+            // Hex display: solid hex when no gradient; mode label when gradient.
+            string hexLabel = tempHonorificGradientSet.HasValue
+                ? (tempHonorificGradientSet.Value == -1 ? "TWO-COLOUR" : "GRADIENT")
+                : $"#{(int)(tempHonorificGlow.X * 255):X2}{(int)(tempHonorificGlow.Y * 255):X2}{(int)(tempHonorificGlow.Z * 255):X2}";
+            DrawSwatchHexAfter(scale, hexLabel);
+        }
+
+        // Animation style combo. Solid (read-only) if no gradient is active.
+        private void DrawHonorificAnimationCombo(float width, float scale)
+        {
+            bool gradientActive = tempHonorificGradientSet.HasValue;
+            string current = gradientActive
+                ? (tempHonorificAnimationStyle ?? "Wave")
+                : "Solid";
+
+            var options = gradientActive
+                ? new[] { "Wave", "Pulse", "Static" }
+                : new[] { "Solid" };
+
+            if (!gradientActive) ImGui.BeginDisabled();
+            if (AutocompleteCombo.Draw("##HonorificAnimation", ref current, options, width,
+                placeholder: "Wave", allowCustomInput: false))
             {
-                float popupWidth = 220 * scale;
-
-                // Default Glow option with color picker
-                ImGui.Text("Solid Glow:");
-                ImGui.SameLine();
-                if (ImGui.ColorEdit3("##GlowColorPicker", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.NoLabel))
+                if (gradientActive)
                 {
-                    tempHonorificGradientSet = null;
-                    tempHonorificAnimationStyle = null;
-                    modified = true;
+                    tempHonorificAnimationStyle = current;
+                    HonorificFieldChanged();
                 }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Use##UseGlow"))
-                {
-                    tempHonorificGradientSet = null;
-                    tempHonorificAnimationStyle = null;
-                    modified = true;
-                    ImGui.CloseCurrentPopup();
-                }
+            }
+            if (!gradientActive) ImGui.EndDisabled();
+        }
 
-                ImGui.Separator();
+        // Honorific preview: same crisp rendering as the legacy DrawHonorificPreview
+        // (text + padding box, SeString rendered via UiBuilder.DefaultFont at the box
+        // origin), wrapped in a small boutique-flavoured chamber: 2px gold-deep left
+        // accent bar and a tracked-caps "PREVIEW" kicker rendered to the LEFT of the
+        // box. Box position + size are computed from the actual SeString text size
+        // and rounded to integer pixels so the glyph pass is pixel-perfect.
+        private void DrawHonorificPreviewChip(float scale)
+        {
+            if (string.IsNullOrWhiteSpace(tempHonorificTitle)) return;
 
-                // Gate animated gradients behind supporter acknowledgment
-                if (plugin.Configuration.HasAcknowledgedHonorificSupport)
-                {
-                    // Nested combo for gradient selection (like Honorific)
-                    string gradientLabel = tempHonorificGradientSet.HasValue
-                        ? (tempHonorificGradientSet.Value == -1 ? "Two Colour Gradient" : GradientPresetNames[tempHonorificGradientSet.Value])
-                        : "Select Gradient...";
+            var dl = ImGui.GetWindowDrawList();
 
-                    ImGui.SetNextItemWidth(popupWidth);
-                    if (ImGui.BeginCombo("##GradientSelect", gradientLabel, ImGuiComboFlags.HeightLargest))
-                    {
-                        // Tab bar for animation styles
-                        if (ImGui.BeginTabBar("##GradAnimTabs"))
-                        {
-                            foreach (var animStyle in new[] { "Wave", "Pulse", "Static" })
-                            {
-                                if (ImGui.BeginTabItem(animStyle))
-                                {
-                                    // Child region for scrolling
-                                    float childHeight = Math.Min(180 * scale, (GradientPresetNames.Length + 1) * ImGui.GetTextLineHeightWithSpacing());
-                                    if (ImGui.BeginChild($"##Presets{animStyle}", new Vector2(popupWidth - 16 * scale, childHeight)))
-                                    {
-                                        var drawList = ImGui.GetWindowDrawList();
+            // Pre-measure the title at the SAME font the SeString renderer will use,
+            // so the box size matches the rendered glyphs exactly. Without this, the
+            // box was sized in OutfitBody but the text was drawn in DefaultFont,
+            // causing visible blur from sub-pixel offsets.
+            var defFont = UiBuilder.DefaultFont;
+            ImGui.PushFont(defFont);
+            var textSize = ImGui.CalcTextSize(tempHonorificTitle);
+            ImGui.PopFont();
 
-                                        // Two Colour Gradient option at top
-                                        bool isTwoColourSelected = tempHonorificGradientSet == -1 && tempHonorificAnimationStyle == animStyle;
-                                        if (ImGui.Selectable("Two Colour Gradient", isTwoColourSelected, ImGuiSelectableFlags.DontClosePopups))
-                                        {
-                                            tempHonorificGradientSet = -1;
-                                            tempHonorificAnimationStyle = animStyle;
-                                            modified = true;
-                                            ImGui.CloseCurrentPopup();  // Close inner combo only
-                                        }
+            // Layout: "PREVIEW" kicker | 8px gap | preview box
+            ImFontPtr labelFont;
+            using (Plugin.Instance?.OswaldSemi9?.Push()) { labelFont = ImGui.GetFont(); }
+            ImGui.PushFont(labelFont);
+            var labelSize = ImGui.CalcTextSize("PREVIEW");
+            ImGui.PopFont();
 
-                                        // Preset gradients
-                                        for (int i = 0; i < GradientPresetNames.Length; i++)
-                                        {
-                                            bool isSelected = tempHonorificGradientSet == i && tempHonorificAnimationStyle == animStyle;
+            var padding = new Vector2(8f * scale, 4f * scale);
+            var boxSize = textSize + padding * 2f;
 
-                                            var selectableSize = new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeightWithSpacing());
-                                            var cursorPos = ImGui.GetCursorScreenPos();
+            // Round all positions to integers so the SeString renderer paints
+            // glyphs at pixel boundaries (no bilinear blur).
+            var rowStart = ImGui.GetCursorScreenPos();
+            float rowH = MathF.Max(boxSize.Y, labelSize.Y);
+            float labelY = MathF.Round(rowStart.Y + (rowH - labelSize.Y) * 0.5f);
+            float boxY   = MathF.Round(rowStart.Y + (rowH - boxSize.Y) * 0.5f);
 
-                                            if (ImGui.Selectable($"##Preset{animStyle}{i}", isSelected, ImGuiSelectableFlags.DontClosePopups, selectableSize))
-                                            {
-                                                tempHonorificGradientSet = i;
-                                                tempHonorificAnimationStyle = animStyle;
-                                                modified = true;
-                                                ImGui.CloseCurrentPopup();
-                                            }
+            // 2px gold-deep accent bar to the left of the kicker
+            dl.AddRectFilled(
+                new Vector2(rowStart.X, rowStart.Y),
+                new Vector2(rowStart.X + 2f * scale, rowStart.Y + rowH),
+                Boutique.U32(Boutique.GoldDeep));
 
-                                            // Draw the preset name with animated gradient effect
-                                            var textPos = cursorPos + ImGui.GetStyle().FramePadding;
-                                            DrawGradientTextForPicker(drawList, textPos, GradientPresetNames[i], i, animStyle);
-                                        }
-                                    }
-                                    ImGui.EndChild();
-                                    ImGui.EndTabItem();
-                                }
-                            }
-                            ImGui.EndTabBar();
-                        }
-                        ImGui.EndCombo();
-                    }
+            // PREVIEW kicker (tracked-caps Oswald)
+            float kickerX = MathF.Round(rowStart.X + 8f * scale);
+            dl.AddText(labelFont, labelFont.FontSize,
+                new Vector2(kickerX, labelY),
+                Boutique.U32(Boutique.TextFaint), "PREVIEW");
 
-                    // Show animated preview of selected gradient (below the combo, still in popup)
-                    if (tempHonorificGradientSet.HasValue)
-                    {
-                        var previewText = tempHonorificGradientSet.Value == -1
-                            ? "Two Colour Gradient"
-                            : GradientPresetNames[tempHonorificGradientSet.Value];
+            // Preview box (legacy dark/grey rect, keeps the crisp rendering)
+            var boxStart = new Vector2(MathF.Round(kickerX + labelSize.X + 10f * scale), boxY);
+            var boxEnd = boxStart + boxSize;
+            dl.AddRectFilled(boxStart, boxEnd,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 1f)));
+            dl.AddRect(boxStart, boxEnd,
+                ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.3f, 0.3f, 1f)));
 
-                        var previewPos = ImGui.GetCursorScreenPos();
-                        var drawList = ImGui.GetWindowDrawList();
+            var textPos = boxStart + padding;
 
-                        // Reserve space and draw preview
-                        ImGui.Dummy(new Vector2(popupWidth, ImGui.GetTextLineHeightWithSpacing()));
-                        DrawGradientTextForPicker(drawList, previewPos, previewText,
-                            tempHonorificGradientSet.Value, tempHonorificAnimationStyle ?? "Wave");
-                    }
-
-                    // Two colour pickers (shown below combo when two-colour is selected)
-                    if (tempHonorificGradientSet == -1)
-                    {
-                        if (ImGui.ColorEdit3("##TwoColour1", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs))
-                        {
-                            modified = true;
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.ColorEdit3("Colours##TwoColour2", ref tempHonorificColor3, ImGuiColorEditFlags.NoInputs))
-                        {
-                            modified = true;
-                        }
-                    }
-                }
-                else
-                {
-                    // Show message when supporter acknowledgment not enabled
-                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.65f, 1.0f));
-                    ImGui.TextWrapped("Enable in Settings > Visual Settings to use animated gradients.");
-                    ImGui.PopStyleColor();
-                }
-
-                ImGui.EndPopup();
+            SeString seString;
+            if (tempHonorificGradientSet.HasValue)
+            {
+                seString = BuildGradientSeString(tempHonorificTitle, tempHonorificGradientSet.Value,
+                    tempHonorificAnimationStyle ?? "Wave", tempHonorificColor,
+                    tempHonorificGradientSet.Value == -1 ? tempHonorificGlow : null,
+                    tempHonorificGradientSet.Value == -1 ? tempHonorificColor3 : null);
+            }
+            else
+            {
+                seString = BuildColoredSeString(tempHonorificTitle, tempHonorificColor, tempHonorificGlow);
             }
 
-            return modified;
+            ImGuiHelpers.SeStringWrapped(seString.Encode(), new SeStringDrawParams
+            {
+                Color = 0xFFFFFFFF,
+                WrapWidth = float.MaxValue,
+                TargetDrawList = dl,
+                Font = defFont,
+                FontSize = UiBuilder.DefaultFontSizePx,
+                ScreenOffset = new Vector2(MathF.Round(textPos.X), MathF.Round(textPos.Y))
+            });
+
+            // Reserve vertical space for the row
+            ImGui.Dummy(new Vector2(0f, rowH));
+        }
+
+        // Extracted gradient + animation popup body (called from DrawHonorificGlowSwatch).
+        private void DrawHonorificGlowPickerPopup(float scale)
+        {
+            if (!ImGui.BeginPopup("##GlowPickerPopup")) return;
+            float popupWidth = 220 * scale;
+
+            // Default Glow option with colour picker
+            ImGui.Text("Solid Glow:");
+            ImGui.SameLine();
+            if (ImGui.ColorEdit3("##GlowColorPicker", ref tempHonorificGlow,
+                ImGuiColorEditFlags.NoInputs | ImGuiColorEditFlags.NoLabel))
+            {
+                tempHonorificGradientSet = null;
+                tempHonorificAnimationStyle = null;
+                HonorificFieldChanged();
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Use##UseGlow"))
+            {
+                tempHonorificGradientSet = null;
+                tempHonorificAnimationStyle = null;
+                HonorificFieldChanged();
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.Separator();
+
+            if (plugin.Configuration.HasAcknowledgedHonorificSupport)
+            {
+                string gradientLabel = tempHonorificGradientSet.HasValue
+                    ? (tempHonorificGradientSet.Value == -1 ? "Two Colour Gradient" : GradientPresetNames[tempHonorificGradientSet.Value])
+                    : "Select Gradient...";
+
+                ImGui.SetNextItemWidth(popupWidth);
+                if (ImGui.BeginCombo("##GradientSelect", gradientLabel, ImGuiComboFlags.HeightLargest))
+                {
+                    if (ImGui.BeginTabBar("##GradAnimTabs"))
+                    {
+                        foreach (var animStyle in new[] { "Wave", "Pulse", "Static" })
+                        {
+                            if (ImGui.BeginTabItem(animStyle))
+                            {
+                                float childHeight = Math.Min(180 * scale,
+                                    (GradientPresetNames.Length + 1) * ImGui.GetTextLineHeightWithSpacing());
+                                if (ImGui.BeginChild($"##Presets{animStyle}",
+                                    new Vector2(popupWidth - 16 * scale, childHeight)))
+                                {
+                                    var drawList = ImGui.GetWindowDrawList();
+
+                                    bool isTwoColourSelected = tempHonorificGradientSet == -1 && tempHonorificAnimationStyle == animStyle;
+                                    if (ImGui.Selectable("Two Colour Gradient", isTwoColourSelected, ImGuiSelectableFlags.DontClosePopups))
+                                    {
+                                        tempHonorificGradientSet = -1;
+                                        tempHonorificAnimationStyle = animStyle;
+                                        HonorificFieldChanged();
+                                        ImGui.CloseCurrentPopup();
+                                    }
+
+                                    for (int i = 0; i < GradientPresetNames.Length; i++)
+                                    {
+                                        bool isSelected = tempHonorificGradientSet == i && tempHonorificAnimationStyle == animStyle;
+
+                                        var selectableSize = new Vector2(ImGui.GetContentRegionAvail().X,
+                                            ImGui.GetTextLineHeightWithSpacing());
+                                        var cursorPos = ImGui.GetCursorScreenPos();
+
+                                        if (ImGui.Selectable($"##preset_{animStyle}_{i}", isSelected,
+                                            ImGuiSelectableFlags.DontClosePopups, selectableSize))
+                                        {
+                                            tempHonorificGradientSet = i;
+                                            tempHonorificAnimationStyle = animStyle;
+                                            HonorificFieldChanged();
+                                            ImGui.CloseCurrentPopup();
+                                        }
+
+                                        DrawGradientTextForPicker(drawList,
+                                            cursorPos + new Vector2(4f * scale, 2f * scale),
+                                            GradientPresetNames[i], i, animStyle);
+                                    }
+                                }
+                                ImGui.EndChild();
+                                ImGui.EndTabItem();
+                            }
+                        }
+                        ImGui.EndTabBar();
+                    }
+                    ImGui.EndCombo();
+                }
+
+                // Live preview of the chosen gradient
+                if (tempHonorificGradientSet.HasValue && tempHonorificGradientSet.Value != -1)
+                {
+                    ImGui.Text("Preview:");
+                    var drawList = ImGui.GetWindowDrawList();
+                    var previewPos = ImGui.GetCursorScreenPos() + new Vector2(60 * scale, 0);
+                    string previewText = string.IsNullOrWhiteSpace(tempHonorificTitle)
+                        ? "Sample Title" : tempHonorificTitle;
+                    ImGui.Dummy(new Vector2(popupWidth, ImGui.GetTextLineHeightWithSpacing()));
+                    DrawGradientTextForPicker(drawList, previewPos, previewText,
+                        tempHonorificGradientSet.Value, tempHonorificAnimationStyle ?? "Wave");
+                }
+
+                // Two-colour gradient pickers (only when -1 is selected)
+                if (tempHonorificGradientSet == -1)
+                {
+                    if (ImGui.ColorEdit3("##TwoColour1", ref tempHonorificGlow, ImGuiColorEditFlags.NoInputs))
+                        HonorificFieldChanged();
+                    ImGui.SameLine();
+                    if (ImGui.ColorEdit3("Colours##TwoColour2", ref tempHonorificColor3, ImGuiColorEditFlags.NoInputs))
+                        HonorificFieldChanged();
+                }
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.65f, 1.0f));
+                ImGui.TextWrapped("Enable in Settings > Visual Settings to use animated gradients.");
+                ImGui.PopStyleColor();
+            }
+
+            ImGui.EndPopup();
         }
 
         /// <summary>
@@ -954,296 +1795,790 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
-        private void DrawMoodleField(float labelWidth, float inputWidth, float inputOffset, float scale)
-        {
-            DrawFormField("Moodle Preset", labelWidth, inputWidth, inputOffset, () =>
-            {
-                var moodleOptions = plugin.IntegrationListProvider?.GetMoodlesPresets() ?? Array.Empty<string>();
-
-                if (AutocompleteCombo.Draw("##MoodlePreset", ref tempMoodlePreset, moodleOptions, inputWidth, "Select preset..."))
-                {
-                    if (IsEditWindowOpen)
-                        editedCharacterMoodlePreset = tempMoodlePreset;
-                    else
-                        plugin.NewCharacterMoodlePreset = tempMoodlePreset;
-
-                    if (isAdvancedModeCharacter)
-                    {
-                        UpdateAdvancedMacroMoodle(tempMoodlePreset);
-                        if (!IsEditWindowOpen)
-                        {
-                            plugin.NewCharacterMacros = advancedCharacterMacroText;
-                        }
-                    }
-                    else
-                    {
-                        if (IsEditWindowOpen)
-                        {
-                            editedCharacterMacros = GenerateMacro();
-                        }
-                        else
-                        {
-                            plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                        }
-                    }
-                }
-            }, "Select the Moodle preset for this character. Right-click to clear.", scale);
-        }
-
-        private void DrawIdlePoseField(float labelWidth, float inputWidth, float inputOffset, float scale)
-        {
-            ImGui.SetCursorPosX(10 * scale);
-            ImGui.Text("Idle Pose");
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(labelWidth + inputOffset);
-            ImGui.SetNextItemWidth(inputWidth);
-
-            string[] poseOptions = { "None", "0", "1", "2", "3", "4", "5", "6" };
-            byte storedIndex = IsEditWindowOpen
-                ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
-                : plugin.NewCharacterIdlePoseIndex;
-
-            int dropdownIndex = storedIndex == 7 ? 0 : storedIndex + 1;
-
-            if (ImGui.BeginCombo("##IdlePose", poseOptions[dropdownIndex]))
-            {
-                for (int i = 0; i < poseOptions.Length; i++)
-                {
-                    bool selected = i == dropdownIndex;
-                    if (ImGui.Selectable(poseOptions[i], selected))
-                    {
-                        byte newIndex = (byte)(i == 0 ? 7 : i - 1);
-                        byte currentIndex = IsEditWindowOpen
-                            ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
-                            : plugin.NewCharacterIdlePoseIndex;
-
-                        if (currentIndex != newIndex)
-                        {
-                            if (IsEditWindowOpen)
-                                plugin.Characters[selectedCharacterIndex].IdlePoseIndex = newIndex;
-                            else
-                                plugin.NewCharacterIdlePoseIndex = newIndex;
-
-                            if (isAdvancedModeCharacter)
-                            {
-                                UpdateAdvancedMacroIdlePose(newIndex);
-                                if (!IsEditWindowOpen)
-                                {
-                                    plugin.NewCharacterMacros = advancedCharacterMacroText;
-                                }
-                            }
-                            else
-                            {
-                                if (IsEditWindowOpen)
-                                {
-                                    editedCharacterMacros = GenerateMacro();
-                                }
-                                else
-                                {
-                                    plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                                }
-                            }
-                        }
-                    }
-                    if (selected) ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-
-            // Tooltip
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.TextUnformatted("\uf05a");
-            ImGui.PopFont();
-
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("Sets your character's idle pose (0–6).\nChoose 'None' if you don't want Character Select+ to change your idle.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
-            }
-        }
-
-        private void DrawGearsetField(float labelWidth, float inputWidth, float inputOffset, float scale)
-        {
-            ImGui.SetCursorPosX(10 * scale);
-            ImGui.Text("Assigned Gearset");
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(labelWidth + inputOffset);
-            ImGui.SetNextItemWidth(inputWidth);
-
-            // Get available gearsets
-            var gearsets = plugin.GetPlayerGearsets();
-
-            // Get current value
-            int? currentGearset = IsEditWindowOpen ? editedCharacterGearset : plugin.NewCharacterGearset;
-
-            // Build display text for current selection
-            string currentDisplay = "None";
-            if (currentGearset.HasValue)
-            {
-                var matchingGearset = gearsets.FirstOrDefault(g => g.Number == currentGearset.Value);
-                if (matchingGearset.Number > 0)
-                {
-                    currentDisplay = plugin.GetGearsetDisplayName(matchingGearset.Number, matchingGearset.JobId, matchingGearset.Name);
-                }
-                else
-                {
-                    currentDisplay = $"Gearset {currentGearset.Value}";
-                }
-            }
-
-            if (ImGui.BeginCombo("##AssignedGearset", currentDisplay))
-            {
-                // "None" option
-                if (ImGui.Selectable("None", !currentGearset.HasValue))
-                {
-                    if (IsEditWindowOpen)
-                        editedCharacterGearset = null;
-                    else
-                        plugin.NewCharacterGearset = null;
-                }
-                if (!currentGearset.HasValue)
-                    ImGui.SetItemDefaultFocus();
-
-                // Gearset options
-                foreach (var gearset in gearsets)
-                {
-                    string displayName = plugin.GetGearsetDisplayName(gearset.Number, gearset.JobId, gearset.Name);
-                    bool isSelected = currentGearset.HasValue && currentGearset.Value == gearset.Number;
-
-                    if (ImGui.Selectable(displayName, isSelected))
-                    {
-                        if (IsEditWindowOpen)
-                            editedCharacterGearset = gearset.Number;
-                        else
-                            plugin.NewCharacterGearset = gearset.Number;
-                    }
-                    if (isSelected)
-                        ImGui.SetItemDefaultFocus();
-                }
-
-                ImGui.EndCombo();
-            }
-
-            // Tooltip
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.TextUnformatted("\uf05a");
-            ImGui.PopFont();
-
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("Automatically switch to this gearset when applying this character.\nChoose 'None' to not change gearsets.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
-            }
-        }
-
         private void DrawImageSelection(float scale)
         {
-            if (ImGui.Button("Choose Image", new Vector2(0, 25 * scale)))
+            // Apply any pending pasted/picked image first
+            ApplyPendingImagePath();
+
+            float fs = Boutique.FormScale;
+            float previewSide = 96f * fs;        // 96, earlier shrink wasn't needed
+            float gap        = 12f * fs;
+            float pathInputW = 240f * fs;        // capped path input
+            float btnH       = 22f * fs;         // smaller action buttons
+            float btnW       = 70f * fs;
+            float btnGap     = 6f * fs;
+
+            // Indent to match the rest of the form's left edge.
+            ImGui.SetCursorPosX(_formIndent);
+            var rowStart = ImGui.GetCursorScreenPos();
+
+            // Left: chamfered preview
+            DrawPortraitPreviewBox(rowStart, previewSide, scale);
+            ImGui.Dummy(new Vector2(previewSide, previewSide));
+
+            // Right column: path input + action buttons
+            ImGui.SameLine(0f, gap);
+            ImGui.BeginGroup();
+
+            // Path display (capped width)
+            string? imagePath = IsEditWindowOpen ? editedCharacterImagePath : plugin.NewCharacterImagePath;
+            string display = imagePath ?? "";
+            if (Boutique.DrawBoutiqueTextInput("##PortraitPath", ref display, 512, pathInputW, "No image selected"))
+            {
+                if (IsEditWindowOpen) editedCharacterImagePath = display;
+                else plugin.NewCharacterImagePath = display;
+            }
+
+            ImGui.Dummy(new Vector2(0f, 4f * fs));
+
+            // Action buttons row, compact fixed-size buttons in natural flow
+            if (DrawPortraitActionButton("BROWSE", "", btnW, btnH, scale, "browse"))
             {
                 plugin.OpenFilePicker(
                     "Select Character Image",
                     "Image files (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|PNG files (*.png)|*.png",
                     (selectedPath) =>
                     {
-                        lock (this)
-                        {
-                            pendingImagePath = selectedPath;
-                        }
-                    }
-                );
+                        lock (this) { pendingImagePath = selectedPath; }
+                    });
+            }
+            ImGui.SameLine(0f, btnGap);
+            bool clipboardHasImage = false;
+            try { clipboardHasImage = Clipboard.ContainsImage(); } catch { }
+            if (!clipboardHasImage) ImGui.BeginDisabled();
+            if (DrawPortraitActionButton("PASTE", "", btnW, btnH, scale, "paste"))
+            {
+                PasteCharacterImageFromClipboard();
+            }
+            if (!clipboardHasImage) ImGui.EndDisabled();
+            ImGui.SameLine(0f, btnGap);
+            if (DrawPortraitActionButton("CLEAR", "", btnW, btnH, scale, "clear"))
+            {
+                if (IsEditWindowOpen) editedCharacterImagePath = null;
+                else plugin.NewCharacterImagePath = null;
             }
 
-            // Apply pending image
+            // Compact framing sliders inside the right group, beneath the buttons
+            ImGui.Dummy(new Vector2(0f, 6f * fs));
+            DrawFramingSliders(fs, pathInputW,
+                () => editedPortraitOffsetX, v => editedPortraitOffsetX = v,
+                () => editedPortraitOffsetY, v => editedPortraitOffsetY = v,
+                () => editedPortraitZoom,    v => editedPortraitZoom    = v,
+                "portrait");
+
+            ImGui.EndGroup();
+
+            ImGui.Dummy(new Vector2(0f, 5f * fs));
+        }
+
+        // Compact stacked Offset X / Offset Y / Zoom rows. Designed to live
+        // inside the right-side path/buttons group, no section header. rowWidth
+        // is the available width inside the group (typically pathInputW).
+        private void DrawFramingSliders(float fs, float rowWidth,
+            Func<float> getOffX, Action<float> setOffX,
+            Func<float> getOffY, Action<float> setOffY,
+            Func<float> getZoom, Action<float> setZoom,
+            string idSuffix)
+        {
+            // Tighten label column to the widest label + small gap so the
+            // sliders sit right next to their labels.
+            float labelW = MathF.Max(MathF.Max(
+                ImGui.CalcTextSize("Offset X").X,
+                ImGui.CalcTextSize("Offset Y").X),
+                ImGui.CalcTextSize("Zoom").X) + 8f * fs;
+            float sliderW = MathF.Max(40f, rowWidth - labelW);
+            float startX = ImGui.GetCursorPosX();
+
+            // Offset X
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Offset X");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(startX + labelW);
+            ImGui.SetNextItemWidth(sliderW);
+            {
+                float v = getOffX();
+                if (ImGui.SliderFloat($"##{idSuffix}OffX", ref v, -1f, 1f, "%.2f")) setOffX(v);
+            }
+
+            // Offset Y
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Offset Y");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(startX + labelW);
+            ImGui.SetNextItemWidth(sliderW);
+            {
+                float v = getOffY();
+                if (ImGui.SliderFloat($"##{idSuffix}OffY", ref v, -1f, 1f, "%.2f")) setOffY(v);
+            }
+
+            // Zoom
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Zoom");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(startX + labelW);
+            ImGui.SetNextItemWidth(sliderW);
+            {
+                float v = getZoom();
+                if (ImGui.SliderFloat($"##{idSuffix}Zoom", ref v, 0.5f, 3.0f, "%.2f×")) setZoom(v);
+            }
+        }
+
+        // Apply any pending pasted/picked image path (called from DrawImageSelection)
+        private void ApplyPendingImagePath()
+        {
             if (pendingImagePath != null)
             {
                 lock (this)
                 {
-                    if (IsEditWindowOpen)
-                        editedCharacterImagePath = pendingImagePath;
-                    else
-                        plugin.NewCharacterImagePath = pendingImagePath;
-
+                    if (IsEditWindowOpen) editedCharacterImagePath = pendingImagePath;
+                    else plugin.NewCharacterImagePath = pendingImagePath;
                     pendingImagePath = null;
                 }
             }
-
-            // Show image preview
-            DrawImagePreview(scale);
         }
 
-        private void DrawImagePreview(float scale)
+        // Apply any pending picked path (called from DrawHoverModeSelection)
+        private void ApplyPendingAnimatedImagePath()
         {
+            if (pendingAnimatedImagePath != null)
+            {
+                lock (this)
+                {
+                    if (IsEditWindowOpen) editedAnimatedImagePath = pendingAnimatedImagePath;
+                    else plugin.NewCharacterAnimatedImagePath = pendingAnimatedImagePath;
+                    pendingAnimatedImagePath = null;
+                }
+            }
+        }
+        private void ApplyPendingCutoutImagePath()
+        {
+            if (pendingCutoutImagePath != null)
+            {
+                lock (this)
+                {
+                    if (IsEditWindowOpen) editedCutoutImagePath = pendingCutoutImagePath;
+                    else plugin.NewCharacterCutoutImagePath = pendingCutoutImagePath;
+                    pendingCutoutImagePath = null;
+                }
+            }
+        }
+        private void ApplyPendingCutoutBackdropPath()
+        {
+            if (pendingCutoutBackdropPath != null)
+            {
+                lock (this)
+                {
+                    if (IsEditWindowOpen) editedCutoutBackdropPath = pendingCutoutBackdropPath;
+                    else plugin.NewCharacterCutoutBackdropPath = pendingCutoutBackdropPath;
+                    pendingCutoutBackdropPath = null;
+                }
+            }
+        }
+
+        // Hover mode picker, radio (None / Animated / Pop-out) followed by the
+        // file pickers for the active mode.  Mutually exclusive: switching the
+        // radio doesn't clear paths mid-edit (so the user can toggle and not
+        // lose what they typed); the inactive mode's path is cleared on save.
+        private void DrawHoverModeSelection(float scale)
+        {
+            ApplyPendingAnimatedImagePath();
+            ApplyPendingCutoutImagePath();
+            ApplyPendingCutoutBackdropPath();
+
+            float fs = Boutique.FormScale;
+            float pathInputW = 240f * fs;
+            float btnH       = 22f * fs;
+            float btnW       = 70f * fs;
+            float btnGap     = 6f * fs;
+
+            // Header label
+            ImGui.SetCursorPosX(_formIndent);
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                Boutique.DrawFieldLabel("ON HOVER", false, null);
+            }
+            ImGui.Dummy(new Vector2(0f, 3f * fs));
+
+            // Radio row
+            ImGui.SetCursorPosX(_formIndent);
+            if (ImGui.RadioButton("None##hovermode", _hoverModeRadio == 0)) _hoverModeRadio = 0;
+            ImGui.SameLine(0f, 14f * fs);
+            if (ImGui.RadioButton("GIF##hovermode", _hoverModeRadio == 1)) _hoverModeRadio = 1;
+            ImGui.SameLine(0f, 14f * fs);
+            if (ImGui.RadioButton("Pop-out##hovermode", _hoverModeRadio == 2)) _hoverModeRadio = 2;
+            ImGui.Dummy(new Vector2(0f, 5f * fs));
+
+            // Conditional file pickers
+            if (_hoverModeRadio == 1)
+            {
+                // Mirror portrait layout: preview on left, path/buttons/sliders in right group
+                float previewSide = 96f * fs;
+                float gap = 12f * fs;
+
+                ImGui.SetCursorPosX(_formIndent);
+                var rowStart = ImGui.GetCursorScreenPos();
+
+                // Left: GIF preview
+                DrawAnimatedPreviewBox(rowStart, previewSide, scale);
+                ImGui.Dummy(new Vector2(previewSide, previewSide));
+
+                // Right: path input + BROWSE/CLEAR + framing sliders
+                ImGui.SameLine(0f, gap);
+                ImGui.BeginGroup();
+
+                string animDisplay = GetAnimatedPath() ?? "";
+                if (Boutique.DrawBoutiqueTextInput("##animPath", ref animDisplay, 512, pathInputW, "No animated image"))
+                {
+                    SetAnimatedPath(animDisplay);
+                }
+
+                ImGui.Dummy(new Vector2(0f, 4f * fs));
+
+                if (DrawPortraitActionButton("BROWSE", "", btnW, btnH, scale, "anim_browse"))
+                {
+                    plugin.OpenFilePicker("Select Animated Image",
+                        "Animated images (*.gif;*.webp)|*.gif;*.webp|GIF files (*.gif)|*.gif|WebP files (*.webp)|*.webp",
+                        (p) => { lock (this) { pendingAnimatedImagePath = p; } });
+                }
+                ImGui.SameLine(0f, btnGap);
+                if (DrawPortraitActionButton("CLEAR", "", btnW, btnH, scale, "anim_clear"))
+                {
+                    SetAnimatedPath(null);
+                }
+
+                ImGui.Dummy(new Vector2(0f, 6f * fs));
+                DrawFramingSliders(fs, pathInputW,
+                    () => editedAnimatedOffsetX, v => editedAnimatedOffsetX = v,
+                    () => editedAnimatedOffsetY, v => editedAnimatedOffsetY = v,
+                    () => editedAnimatedZoom,    v => editedAnimatedZoom    = v,
+                    "gif");
+
+                ImGui.EndGroup();
+            }
+            else if (_hoverModeRadio == 2)
+            {
+                DrawHoverPickerRow(scale, fs, "CUTOUT  (.png transparent)",
+                    GetCutoutPath(), SetCutoutPath,
+                    "Select Cutout Image",
+                    "PNG files (*.png)|*.png",
+                    (p) => { lock (this) { pendingCutoutImagePath = p; } },
+                    "cutout", pathInputW, btnW, btnH, btnGap, "No cutout image");
+
+                ImGui.Dummy(new Vector2(0f, 4f * fs));
+
+                DrawHoverPickerRow(scale, fs, "BACKDROP SWAP  (optional)",
+                    GetCutoutBackdropPath(), SetCutoutBackdropPath,
+                    "Select Backdrop Swap Image",
+                    "Image files (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+                    (p) => { lock (this) { pendingCutoutBackdropPath = p; } },
+                    "cutout_bg", pathInputW, btnW, btnH, btnGap, "No backdrop swap");
+
+                ImGui.Dummy(new Vector2(0f, 6f * fs));
+                DrawCutoutTuningSliders(fs);
+            }
+
+            ImGui.Dummy(new Vector2(0f, 5f * fs));
+        }
+
+        // Shared compact path-row (label, input, BROWSE, CLEAR) for hover-mode pickers
+        private void DrawHoverPickerRow(float scale, float fs, string label,
+            string currentValue, Action<string?> setValue,
+            string pickerTitle, string pickerFilter, Action<string> pickerCallback,
+            string idSuffix,
+            float pathInputW, float btnW, float btnH, float btnGap, string placeholder)
+        {
+            ImGui.SetCursorPosX(_formIndent);
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                Boutique.DrawFieldLabel(label.ToUpperInvariant(), false, null);
+            }
+            ImGui.Dummy(new Vector2(0f, 3f * fs));
+            ImGui.SetCursorPosX(_formIndent);
+
+            string display = currentValue ?? "";
+            if (Boutique.DrawBoutiqueTextInput($"##{idSuffix}Path", ref display, 512, pathInputW, placeholder))
+            {
+                setValue(display);
+            }
+            ImGui.SameLine(0f, 8f * fs);
+            if (DrawPortraitActionButton("BROWSE", "", btnW, btnH, scale, $"{idSuffix}_browse"))
+            {
+                plugin.OpenFilePicker(pickerTitle, pickerFilter, pickerCallback);
+            }
+            ImGui.SameLine(0f, btnGap);
+            if (DrawPortraitActionButton("CLEAR", "", btnW, btnH, scale, $"{idSuffix}_clear"))
+            {
+                setValue(null);
+            }
+        }
+
+        // Path getters/setters bound to either edit-state or new-state depending on form mode
+        private string? GetAnimatedPath() => IsEditWindowOpen ? editedAnimatedImagePath : plugin.NewCharacterAnimatedImagePath;
+        private void SetAnimatedPath(string? v)
+        {
+            if (IsEditWindowOpen) editedAnimatedImagePath = v;
+            else plugin.NewCharacterAnimatedImagePath = v;
+        }
+        private string? GetCutoutPath() => IsEditWindowOpen ? editedCutoutImagePath : plugin.NewCharacterCutoutImagePath;
+        private void SetCutoutPath(string? v)
+        {
+            if (IsEditWindowOpen) editedCutoutImagePath = v;
+            else plugin.NewCharacterCutoutImagePath = v;
+        }
+        private string? GetCutoutBackdropPath() => IsEditWindowOpen ? editedCutoutBackdropPath : plugin.NewCharacterCutoutBackdropPath;
+        private void SetCutoutBackdropPath(string? v)
+        {
+            if (IsEditWindowOpen) editedCutoutBackdropPath = v;
+            else plugin.NewCharacterCutoutBackdropPath = v;
+        }
+
+        // Cutout tuning sliders (Scale + Pos X + Pos Y).  Per-character so users
+        // can dial each cutout's size and position to fit the card.
+        // Includes a live mini preview above the sliders so they can see
+        // what they're tuning without leaving the form.
+        private void DrawCutoutTuningSliders(float fs)
+        {
+            ImGui.SetCursorPosX(_formIndent);
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                Boutique.DrawFieldLabel("CUTOUT TUNING", false, null);
+            }
+            ImGui.Dummy(new Vector2(0f, 4f * fs));
+
+            float previewW = 160f * fs;
+            float previewH = 140f * fs;
+            float gap = 12f * fs;
+
+            ImGui.SetCursorPosX(_formIndent);
+            var rowStart = ImGui.GetCursorScreenPos();
+
+            // Left: shrunk live preview
+            DrawCutoutPreview(rowStart, previewW, previewH, fs);
+            ImGui.Dummy(new Vector2(previewW, previewH));
+
+            // Right: stacked Size / Pos X / Pos Y sliders, mirroring portrait/GIF layout
+            ImGui.SameLine(0f, gap);
+            ImGui.BeginGroup();
+
+            float labelW = MathF.Max(MathF.Max(
+                ImGui.CalcTextSize("Size").X,
+                ImGui.CalcTextSize("Pos X").X),
+                ImGui.CalcTextSize("Pos Y").X) + 8f * fs;
+            float sliderRowW = 220f * fs;
+            float sliderW = MathF.Max(40f, sliderRowW - labelW);
+            float startX = ImGui.GetCursorPosX();
+
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Size");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(startX + labelW);
+            ImGui.SetNextItemWidth(sliderW);
+            {
+                float v = editedCutoutScale;
+                if (ImGui.SliderFloat("##cutoutScale", ref v, 1.0f, 6.0f, "%.2f×")) editedCutoutScale = v;
+            }
+
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Pos X");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(startX + labelW);
+            ImGui.SetNextItemWidth(sliderW);
+            {
+                float v = editedCutoutAnchorX;
+                if (ImGui.SliderFloat("##cutoutAnchorX", ref v, 0.0f, 1.0f, "%.2f")) editedCutoutAnchorX = v;
+            }
+
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextUnformatted("Pos Y");
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(startX + labelW);
+            ImGui.SetNextItemWidth(sliderW);
+            {
+                float v = editedCutoutAnchorY;
+                if (ImGui.SliderFloat("##cutoutAnchorY", ref v, 0.0f, 1.0f, "%.2f")) editedCutoutAnchorY = v;
+            }
+
+            ImGui.EndGroup();
+        }
+
+        // Live mini preview of the cutout, clipped to the preview rect.
+        private void DrawCutoutPreview(Vector2 origin, float previewW, float previewH, float fs)
+        {
+            var cutoutPath = GetCutoutPath();
+            var dl = ImGui.GetWindowDrawList();
+
+            float padding = 6f * fs;
+
+            var previewMin = origin;
+            var previewMax = origin + new Vector2(previewW, previewH);
+
+            // Background fill + faint border
+            uint bgCol     = ImGui.GetColorU32(new Vector4(0.04f, 0.05f, 0.07f, 1.00f));
+            uint borderCol = ImGui.GetColorU32(new Vector4(0.20f, 0.22f, 0.28f, 1.00f));
+            dl.AddRectFilled(previewMin, previewMax, bgCol);
+            dl.AddRect(previewMin, previewMax, borderCol, 0f, ImDrawFlags.None, 1f);
+
+            // Sample card, scaled to ~35% of the preview width so it stays
+            // legible inside the smaller canvas.
+            float cardW = 56f * fs;
+            float imageH = 56f * fs;
+            float nameH = 16f * fs;
+            float cardH = imageH + nameH;
+            var cardMin = new Vector2(
+                previewMin.X + (previewW - cardW) * 0.5f,
+                previewMax.Y - cardH - padding);
+            var cardMax = cardMin + new Vector2(cardW, cardH);
+            var portraitMin = cardMin;
+            var portraitMax = new Vector2(cardMax.X, cardMin.Y + imageH);
+
+            // Clip cutout draws to the preview rect
+            dl.PushClipRect(previewMin, previewMax, true);
+
+            // Cutout rendered with current slider values
+            if (!string.IsNullOrEmpty(cutoutPath) && System.IO.File.Exists(cutoutPath))
+            {
+                var tex = Plugin.TextureProvider.GetFromFile(cutoutPath).GetWrapOrDefault();
+                if (tex != null && tex.Width > 0 && tex.Height > 0)
+                {
+                    var slipSize = cardMax - cardMin;
+                    var portraitSize = portraitMax - portraitMin;
+
+                    float dispW = slipSize.X * editedCutoutScale;
+                    float imgAR = tex.Width / (float)tex.Height;
+                    float dispH = dispW / imgAR;
+                    var poseSize = new Vector2(dispW, dispH);
+
+                    // pose-anchor fixed at bottom-center (matches the live render)
+                    var anchorWorld = portraitMin + new Vector2(
+                        portraitSize.X * editedCutoutAnchorX,
+                        portraitSize.Y * editedCutoutAnchorY);
+                    var poseMin = anchorWorld - new Vector2(poseSize.X * 0.5f, poseSize.Y * 1.0f);
+                    var poseMax = poseMin + poseSize;
+
+                    dl.AddImage(tex.Handle, poseMin, poseMax);
+                }
+            }
+            else
+            {
+                // Friendly placeholder text
+                var msg = "Pick a cutout above to preview";
+                var size = ImGui.CalcTextSize(msg);
+                var textPos = new Vector2(
+                    previewMin.X + (previewW - size.X) * 0.5f,
+                    previewMin.Y + previewH * 0.4f - size.Y * 0.5f);
+                dl.AddText(textPos, ImGui.GetColorU32(new Vector4(0.5f, 0.52f, 0.6f, 0.85f)), msg);
+            }
+
+            dl.PopClipRect();
+
+            // Card outline drawn on top so the user can always see where the
+            // card edges are relative to the cutout.  Photo area in faint
+            // grey, nameplate area in slightly more visible band, full
+            // outline in gold so it reads.
+            uint photoCol = ImGui.GetColorU32(new Vector4(0.10f, 0.12f, 0.16f, 0.55f));
+            uint nameCol  = ImGui.GetColorU32(new Vector4(0.06f, 0.07f, 0.10f, 0.85f));
+            dl.AddRectFilled(portraitMin, portraitMax, photoCol);
+            dl.AddRectFilled(new Vector2(cardMin.X, portraitMax.Y), cardMax, nameCol);
+
+            uint goldCol = ImGui.GetColorU32(new Vector4(0.72f, 0.56f, 0.10f, 0.80f));
+            dl.AddRect(cardMin, cardMax, goldCol, 0f, ImDrawFlags.None, 1.5f);
+            // Hairline between portrait and nameplate
+            dl.AddLine(new Vector2(cardMin.X, portraitMax.Y), new Vector2(cardMax.X, portraitMax.Y),
+                goldCol, 1f);
+        }
+
+        // 96x96 chamfered slip-polygon preview with inset gilt frame.
+        private void DrawPortraitPreviewBox(Vector2 origin, float side, float scale)
+        {
+            float fs = Boutique.FormScale;
+            var dl = ImGui.GetWindowDrawList();
+            var min = origin;
+            var max = origin + new Vector2(side, side);
+            float chamfer = 6f * fs;
+
+            // Background slip polygon (dark velvet with diagonal stripe)
+            Span<Vector2> pts = stackalloc Vector2[6];
+            Boutique.BuildSlipPolygon(min, max, chamfer, pts);
+
+            uint bgCol = Boutique.U32(Boutique.Surface2);
+            unsafe
+            {
+                fixed (Vector2* p = pts)
+                    dl.AddConvexPolyFilled(p, 6, bgCol);
+            }
+
+            // Image (drawn as a smaller inset rect inside the chamfered slip)
             string pluginDirectory = plugin.PluginDirectory;
             string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
-
             string? imagePath = IsEditWindowOpen ? editedCharacterImagePath : plugin.NewCharacterImagePath;
             string finalImagePath = !string.IsNullOrEmpty(imagePath) && File.Exists(imagePath)
                 ? imagePath
                 : defaultImagePath;
 
-            if (!string.IsNullOrEmpty(finalImagePath) && File.Exists(finalImagePath))
+            float inset = 4f * fs;
+            var imgMin = min + new Vector2(inset, inset);
+            var imgMax = max - new Vector2(inset, inset);
+
+            if (File.Exists(finalImagePath))
             {
                 var texture = Plugin.TextureProvider.GetFromFile(finalImagePath).GetWrapOrDefault();
                 if (texture != null)
                 {
-                    float originalWidth = texture.Width;
-                    float originalHeight = texture.Height;
-                    float maxSize = 100f * scale;
-
-                    float aspectRatio = originalWidth / originalHeight;
-                    float displayWidth, displayHeight;
-
-                    if (aspectRatio > 1)
+                    float aspect = (float)texture.Width / texture.Height;
+                    var imgSize = imgMax - imgMin;
+                    float drawW, drawH;
+                    if (aspect > 1f)
                     {
-                        displayWidth = maxSize;
-                        displayHeight = maxSize / aspectRatio;
+                        drawW = imgSize.X;
+                        drawH = imgSize.X / aspect;
                     }
                     else
                     {
-                        displayHeight = maxSize;
-                        displayWidth = maxSize * aspectRatio;
+                        drawH = imgSize.Y;
+                        drawW = imgSize.Y * aspect;
                     }
+                    // Apply per-character zoom + offset so the preview matches
+                    // what the live card will render.
+                    drawW *= editedPortraitZoom;
+                    drawH *= editedPortraitZoom;
+                    var off = new Vector2(imgSize.X * editedPortraitOffsetX, imgSize.Y * editedPortraitOffsetY);
+                    var drawMin = imgMin + new Vector2((imgSize.X - drawW) * 0.5f, (imgSize.Y - drawH) * 0.5f) + off;
+                    var drawMax = drawMin + new Vector2(drawW, drawH);
 
-                    var cursorPos = ImGui.GetCursorScreenPos();
-                    var imageEnd = cursorPos + new Vector2(displayWidth, displayHeight);
-
-                    uiStyles.DrawGlowingBorder(
-                        cursorPos - new Vector2(2 * scale, 2 * scale),
-                        imageEnd + new Vector2(2 * scale, 2 * scale),
-                        new Vector3(0.5f, 0.5f, 0.5f),
-                        0.3f,
-                        false,
-                        scale
-                    );
-
-                    ImGui.Image((ImTextureID)texture.Handle, new Vector2(displayWidth, displayHeight));
-                }
-                else
-                {
-                    ImGui.Text($"Failed to load image: {Path.GetFileName(finalImagePath)}");
+                    // Clip so a zoomed image stays inside the preview frame
+                    dl.PushClipRect(imgMin, imgMax, true);
+                    dl.AddImage((ImTextureID)texture.Handle, drawMin, drawMax);
+                    dl.PopClipRect();
                 }
             }
             else
             {
-                ImGui.Text("No Image Available");
+                // "No image" placeholder, empty diagonal-hatched area + ghost text
+                ImFontPtr ghostFont;
+                using (Plugin.Instance?.OswaldSemi9?.Push()) { ghostFont = ImGui.GetFont(); }
+                string ghost = "NO IMAGE";
+                var gs = ImGui.CalcTextSize(ghost);
+                dl.AddText(ghostFont, ghostFont.FontSize,
+                    min + new Vector2((side - gs.X) * 0.5f, (side - gs.Y) * 0.5f),
+                    Boutique.U32(Boutique.TextGhost), ghost);
+            }
+
+            // Gilt, 1px gold-at-20% inset frame
+            Span<Vector2> giltPts = stackalloc Vector2[6];
+            Boutique.BuildSlipPolygon(min + new Vector2(3f * fs, 3f * fs),
+                max - new Vector2(3f * fs, 3f * fs),
+                chamfer - 2f * fs, giltPts);
+            for (int i = 0; i < 6; i++) dl.PathLineTo(giltPts[i]);
+            dl.PathStroke(Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.20f)),
+                ImDrawFlags.Closed, 1f * fs);
+
+            // Outer chamfered border
+            for (int i = 0; i < 6; i++) dl.PathLineTo(pts[i]);
+            dl.PathStroke(Boutique.U32(Boutique.BorderSoft), ImDrawFlags.Closed, 1f * fs);
+        }
+
+        // GIF preview, same chassis as the portrait preview but driven by
+        // the GIF path + GIF framing values, so the user can see how their
+        // animated image is framed before saving.
+        private void DrawAnimatedPreviewBox(Vector2 origin, float side, float scale)
+        {
+            float fs = Boutique.FormScale;
+            var dl = ImGui.GetWindowDrawList();
+            var min = origin;
+            var max = origin + new Vector2(side, side);
+            float chamfer = 6f * fs;
+
+            // Background slip polygon
+            Span<Vector2> pts = stackalloc Vector2[6];
+            Boutique.BuildSlipPolygon(min, max, chamfer, pts);
+            uint bgCol = Boutique.U32(Boutique.Surface2);
+            unsafe { fixed (Vector2* p = pts) dl.AddConvexPolyFilled(p, 6, bgCol); }
+
+            float inset = 4f * fs;
+            var imgMin = min + new Vector2(inset, inset);
+            var imgMax = max - new Vector2(inset, inset);
+
+            string? gifPath = GetAnimatedPath();
+            if (!string.IsNullOrEmpty(gifPath) && File.Exists(gifPath))
+            {
+                // For preview we use the static-texture loader rather than the
+                // animated wrap, first frame is enough for framing decisions
+                // and avoids spinning up the cache for a tuning preview.
+                var texture = Plugin.TextureProvider.GetFromFile(gifPath).GetWrapOrDefault();
+                if (texture != null && texture.Width > 0 && texture.Height > 0)
+                {
+                    float aspect = (float)texture.Width / texture.Height;
+                    var imgSize = imgMax - imgMin;
+                    float drawW, drawH;
+                    if (aspect > 1f)
+                    {
+                        drawW = imgSize.X;
+                        drawH = imgSize.X / aspect;
+                    }
+                    else
+                    {
+                        drawH = imgSize.Y;
+                        drawW = imgSize.Y * aspect;
+                    }
+                    drawW *= editedAnimatedZoom;
+                    drawH *= editedAnimatedZoom;
+                    var off = new Vector2(imgSize.X * editedAnimatedOffsetX, imgSize.Y * editedAnimatedOffsetY);
+                    var drawMin = imgMin + new Vector2((imgSize.X - drawW) * 0.5f, (imgSize.Y - drawH) * 0.5f) + off;
+                    var drawMax = drawMin + new Vector2(drawW, drawH);
+
+                    dl.PushClipRect(imgMin, imgMax, true);
+                    dl.AddImage(texture.Handle, drawMin, drawMax);
+                    dl.PopClipRect();
+                }
+            }
+            else
+            {
+                ImFontPtr ghostFont;
+                using (Plugin.Instance?.OswaldSemi9?.Push()) { ghostFont = ImGui.GetFont(); }
+                string ghost = "NO GIF";
+                var gs = ImGui.CalcTextSize(ghost);
+                dl.AddText(ghostFont, ghostFont.FontSize,
+                    min + new Vector2((side - gs.X) * 0.5f, (side - gs.Y) * 0.5f),
+                    Boutique.U32(Boutique.TextGhost), ghost);
+            }
+
+            // Gilt, 1px gold-at-20% inset frame
+            Span<Vector2> giltPts = stackalloc Vector2[6];
+            Boutique.BuildSlipPolygon(min + new Vector2(3f * fs, 3f * fs),
+                max - new Vector2(3f * fs, 3f * fs),
+                chamfer - 2f * fs, giltPts);
+            for (int i = 0; i < 6; i++) dl.PathLineTo(giltPts[i]);
+            dl.PathStroke(Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.20f)),
+                ImDrawFlags.Closed, 1f * fs);
+
+            // Outer chamfered border
+            for (int i = 0; i < 6; i++) dl.PathLineTo(pts[i]);
+            dl.PathStroke(Boutique.U32(Boutique.BorderSoft), ImDrawFlags.Closed, 1f * fs);
+        }
+
+        // Chamfered action button (BROWSE / PASTE / CLEAR). Returns true when clicked.
+        private bool DrawPortraitActionButton(string label, string icon, float w, float h, float scale, string id)
+        {
+            float fs = Boutique.FormScale;
+            var dl = ImGui.GetWindowDrawList();
+            var pos = ImGui.GetCursorScreenPos();
+            var max = pos + new Vector2(w, h);
+            float chamfer = 5f * fs;
+
+            ImGui.SetCursorScreenPos(pos);
+            bool clicked = ImGui.InvisibleButton($"##bportrait_{id}", new Vector2(w, h));
+            bool hovered = ImGui.IsItemHovered();
+
+            Span<Vector2> pts = stackalloc Vector2[6];
+            Boutique.BuildSlipPolygon(pos, max, chamfer, pts);
+
+            Vector4 bg = hovered
+                ? new Vector4(28f / 255f, 32f / 255f, 42f / 255f, 0.92f)
+                : new Vector4(20f / 255f, 24f / 255f, 32f / 255f, 0.78f);
+            unsafe
+            {
+                fixed (Vector2* p = pts)
+                    dl.AddConvexPolyFilled(p, 6, Boutique.U32(bg));
+            }
+            for (int i = 0; i < 6; i++) dl.PathLineTo(pts[i]);
+            dl.PathStroke(Boutique.U32(hovered ? Boutique.GoldDeep : Boutique.BorderSoft),
+                ImDrawFlags.Closed, 1f * fs);
+
+            // Icon + label centred. OswaldSemi13 (16.9px), bumped further from
+            // Semi11 since the previous size still read as small inside the 22*fs
+            // button frame.
+            ImFontPtr labelFont;
+            using (Plugin.Instance?.OswaldSemi13?.Push()) { labelFont = ImGui.GetFont(); }
+            float iconFontSize = 11f * fs;
+
+            ImGui.PushFont(UiBuilder.IconFont);
+            var iconSz = ImGui.CalcTextSize(icon);
+            ImGui.PopFont();
+            float iconScale = iconFontSize / UiBuilder.IconFont.FontSize;
+            float iconW = iconSz.X * iconScale;
+
+            ImGui.PushFont(labelFont);
+            var labelSz = ImGui.CalcTextSize(label);
+            ImGui.PopFont();
+
+            float gap = 6f * fs;
+            float totalW = iconW + gap + labelSz.X;
+            float startX = pos.X + (w - totalW) * 0.5f;
+
+            Vector4 inkCol = hovered ? Boutique.GoldWarm : Boutique.TextDim;
+            dl.AddText(UiBuilder.IconFont, iconFontSize,
+                new Vector2(startX, pos.Y + (h - iconFontSize) * 0.5f),
+                Boutique.U32(inkCol), icon);
+            dl.AddText(labelFont, labelFont.FontSize,
+                new Vector2(startX + iconW + gap, pos.Y + (h - labelFont.FontSize) * 0.5f),
+                Boutique.U32(inkCol), label);
+
+            return clicked;
+        }
+
+        // Mirrors DesignPanel.PasteImageFromClipboard but writes to character images dir.
+        private void PasteCharacterImageFromClipboard()
+        {
+            try
+            {
+                Thread thread = new Thread(() =>
+                {
+                    try
+                    {
+                        if (!Clipboard.ContainsImage())
+                        {
+                            Plugin.Log.Warning("No image found in clipboard");
+                            return;
+                        }
+                        using (var clipboardImage = Clipboard.GetImage())
+                        {
+                            if (clipboardImage == null) return;
+
+                            string imagesDir = Path.Combine(plugin.PluginPath, "Images", "CharacterPortraits");
+                            Directory.CreateDirectory(imagesDir);
+
+                            string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+                            string fullPath = Path.Combine(imagesDir,
+                                $"character_portrait_{timestamp}.png");
+                            clipboardImage.Save(fullPath, System.Drawing.Imaging.ImageFormat.Png);
+
+                            lock (this) { pendingImagePath = fullPath; }
+                            Plugin.Log.Info($"Pasted character portrait saved to: {fullPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Plugin.Log.Error($"Error pasting image from clipboard: {ex.Message}");
+                    }
+                });
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Start();
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Error($"Critical clipboard paste error: {ex.Message}");
             }
         }
 
         private void DrawAdvancedModeSection(float scale)
         {
-            if (ImGui.Button(isAdvancedModeCharacter ? "Exit Advanced Mode" : "Advanced Mode", new Vector2(0, 25 * scale)))
-            {
-                isAdvancedModeCharacter = !isAdvancedModeCharacter;
+            float fs = Boutique.FormScale;
 
-                // Update the character's advanced mode flag
+            // Simple boutique checkbox per v2-simple spec (no special gold-deep left
+            // bar chip, that vocabulary was overdoing it for a flat toggle).
+            ImFontPtr lblF, descF;
+            using (Plugin.Instance?.OutfitMed13?.Push()) { lblF  = ImGui.GetFont(); }
+            using (Plugin.Instance?.OutfitMed13?.Push()) { descF = ImGui.GetFont(); }
+            bool prev = isAdvancedModeCharacter;
+            ImGui.SetCursorPosX(_formIndent);
+            Boutique.DrawBoutiqueCheckbox(
+                "enable_adv", ref isAdvancedModeCharacter,
+                "Enable advanced mode",
+                "Custom macro runs when character is applied",
+                scale, lblF, descF);
+            // Toggle change side-effects (preserved from legacy)
+            if (prev != isAdvancedModeCharacter)
+            {
                 if (IsEditWindowOpen && selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
                 {
                     plugin.Characters[selectedCharacterIndex].IsAdvancedMode = isAdvancedModeCharacter;
@@ -1252,7 +2587,6 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 if (isAdvancedModeCharacter)
                 {
-                    // When entering advanced mode, use existing macro if available, otherwise generate
                     if (IsEditWindowOpen)
                     {
                         advancedCharacterMacroText = !string.IsNullOrWhiteSpace(editedCharacterMacros)
@@ -1269,58 +2603,43 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 else
                 {
-                    // When exiting advanced mode, preserve the current macro state
-                    if (IsEditWindowOpen)
-                    {
-                        editedCharacterMacros = advancedCharacterMacroText;
-                    }
-                    else
-                    {
-                        plugin.NewCharacterMacros = advancedCharacterMacroText;
-                    }
+                    if (IsEditWindowOpen) editedCharacterMacros = advancedCharacterMacroText;
+                    else plugin.NewCharacterMacros = advancedCharacterMacroText;
                 }
             }
 
-            // Tooltip
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + (5 * scale));
-            ImGui.PushFont(UiBuilder.IconFont);
-            ImGui.Text("\uf05a");
-            ImGui.PopFont();
+            if (!isAdvancedModeCharacter) return;
 
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(300 * scale);
-                ImGui.TextUnformatted("⚠️ Do not touch this unless you know what you're doing.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
-            }
+            // ── Macro toolbar + line numbers + textarea ──
+            ImFontPtr smallFont;
+            using (Plugin.Instance?.OswaldSemi9?.Push()) { smallFont = ImGui.GetFont(); }
+            Boutique.DrawMacroEditor(ref advancedCharacterMacroText,
+                "AdvancedCharacterMacro", scale,
+                regenerate: () => isSecretMode && !plugin.Configuration.EnableConflictResolution
+                    ? GenerateSecretMacro() : GenerateMacro(),
+                paste: () => PasteMacroFromClipboardInto(ref advancedCharacterMacroText),
+                smallFont: smallFont);
 
-            // Advanced mode editor
-            if (isAdvancedModeCharacter)
-            {
-                ImGui.Text("Edit Macro Manually:");
-
-                ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0.1f, 0.1f, 0.1f, 0.9f));
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.9f, 0.9f, 1.0f));
-
-                ImGui.InputTextMultiline("##AdvancedCharacterMacro", ref advancedCharacterMacroText, 2000,
-                    new Vector2(500 * scale, 150 * scale), ImGuiInputTextFlags.AllowTabInput);
-
-                ImGui.PopStyleColor(2);
-
-                // Real-time sync when user types in advanced mode
-                if (!IsEditWindowOpen)
-                {
-                    plugin.NewCharacterMacros = advancedCharacterMacroText;
-                }
-                else
-                {
-                    editedCharacterMacros = advancedCharacterMacroText;
-                }
-            }
+            // Real-time sync
+            if (!IsEditWindowOpen) plugin.NewCharacterMacros = advancedCharacterMacroText;
+            else editedCharacterMacros = advancedCharacterMacroText;
         }
+
+        // Helper: synchronously read text clipboard on STA thread and assign to target.
+        private void PasteMacroFromClipboardInto(ref string target)
+        {
+            try
+            {
+                string clip = "";
+                var t = new Thread(() => { try { clip = Clipboard.GetText() ?? ""; } catch { } });
+                t.SetApartmentState(ApartmentState.STA);
+                t.Start();
+                t.Join();
+                if (!string.IsNullOrEmpty(clip)) target = clip;
+            }
+            catch (Exception ex) { Plugin.Log.Warning($"Paste macro failed: {ex.Message}"); }
+        }
+
         private float GetSafeScale(float baseScale)
         {
             return Math.Clamp(baseScale, 0.3f, 5.0f); // Prevent extreme scaling
@@ -1360,7 +2679,8 @@ namespace CharacterSelectPlugin.Windows.Components
                         finalMacro = plugin.NewCharacterMacros;
                     }
 
-                    plugin.SaveNewCharacter(finalMacro);
+                    var created = plugin.SaveNewCharacter(finalMacro);
+                    ApplyEditedFramingToNew(created);
                 }
 
                 CloseForm();
@@ -1644,62 +2964,6 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.NewCharacterHonorificGradientSet = tempHonorificGradientSet;
                 plugin.NewCharacterHonorificAnimationStyle = tempHonorificAnimationStyle;
             }
-        }
-
-        /// <summary>
-        /// Draws an animated preview of the Honorific title with the current settings in a dark container
-        /// </summary>
-        private void DrawHonorificPreview(float scale)
-        {
-            if (string.IsNullOrWhiteSpace(tempHonorificTitle))
-                return;
-
-            var textSize = ImGui.CalcTextSize(tempHonorificTitle);
-            var padding = new Vector2(8 * scale, 4 * scale);
-            var boxSize = textSize + padding * 2;
-
-            // Draw dark background box
-            var drawList = ImGui.GetWindowDrawList();
-            var boxStart = ImGui.GetCursorScreenPos();
-            var boxEnd = boxStart + boxSize;
-
-            // Dark background with slight border
-            drawList.AddRectFilled(boxStart, boxEnd, ImGui.ColorConvertFloat4ToU32(new Vector4(0.1f, 0.1f, 0.1f, 1f)), 4f);
-            drawList.AddRect(boxStart, boxEnd, ImGui.ColorConvertFloat4ToU32(new Vector4(0.3f, 0.3f, 0.3f, 1f)), 4f);
-
-            // Text position inside the box
-            var textPos = boxStart + padding;
-
-            // Build SeString with proper color and glow
-            SeString seString;
-            if (tempHonorificGradientSet.HasValue)
-            {
-                // For gradients, build per-character SeString with animated colors
-                // For two-colour gradient (-1), pass both colours
-                seString = BuildGradientSeString(tempHonorificTitle, tempHonorificGradientSet.Value,
-                    tempHonorificAnimationStyle ?? "Wave", tempHonorificColor,
-                    tempHonorificGradientSet.Value == -1 ? tempHonorificGlow : null,
-                    tempHonorificGradientSet.Value == -1 ? tempHonorificColor3 : null);
-            }
-            else
-            {
-                // Build SeString with solid color and glow
-                seString = BuildColoredSeString(tempHonorificTitle, tempHonorificColor, tempHonorificGlow);
-            }
-
-            // Render using Dalamud's SeString renderer for smooth text
-            ImGuiHelpers.SeStringWrapped(seString.Encode(), new SeStringDrawParams
-            {
-                Color = 0xFFFFFFFF,
-                WrapWidth = float.MaxValue,
-                TargetDrawList = drawList,
-                Font = UiBuilder.DefaultFont,
-                FontSize = UiBuilder.DefaultFontSizePx,
-                ScreenOffset = textPos
-            });
-
-            // Reserve space for the box
-            ImGui.Dummy(boxSize);
         }
 
         /// <summary>
@@ -2088,15 +3352,20 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             IsEditWindowOpen = false;
             plugin.CloseAddCharacterWindow();
-            
-            // Close Mod Manager window if it's open
+
             if (plugin.SecretModeModWindow?.IsOpen ?? false)
             {
                 plugin.SecretModeModWindow.IsOpen = false;
             }
-            
+
             isSecretMode = false;
             isAdvancedModeCharacter = false;
+            // Force the form to treat the next open as a fresh appearance so
+            // its scroll resets to the top. Draw() never runs while the form
+            // is closed (MainWindow gates on the open flags), so the early
+            // return at the top of Draw can't reset wasFormVisibleLastFrame
+            // for us, we have to do it here.
+            wasFormVisibleLastFrame = false;
             ResetFields();
         }
 
@@ -2104,12 +3373,17 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             plugin.NewCharacterName = "";
             plugin.NewCharacterAlias = "";
+            plugin.NewCharacterExcludeFromNameSync = false;
+            plugin.NewCharacterUseGlitchNameEffect = false;
             plugin.NewCharacterColor = new Vector3(1.0f, 1.0f, 1.0f);
             plugin.NewPenumbraCollection = "";
             plugin.NewGlamourerDesign = "";
             plugin.NewCharacterAutomation = "";
             plugin.NewCustomizeProfile = "";
             plugin.NewCharacterImagePath = null;
+            plugin.NewCharacterAnimatedImagePath = null;
+            plugin.NewCharacterCutoutImagePath = null;
+            plugin.NewCharacterCutoutBackdropPath = null;
             plugin.NewCharacterDesigns.Clear();
             plugin.NewCharacterHonorificTitle = "";
             plugin.NewCharacterHonorificPrefix = "Prefix";
@@ -2137,6 +3411,19 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterName = "";
             editedCharacterMacros = "";
             editedCharacterImagePath = null;
+            editedAnimatedImagePath = null;
+            editedCutoutImagePath = null;
+            editedCutoutBackdropPath = null;
+            editedCutoutScale = 3.25f;
+            editedCutoutAnchorX = 0.65f;
+            editedCutoutAnchorY = 1.00f;
+            editedPortraitOffsetX = 0f;
+            editedPortraitOffsetY = 0f;
+            editedPortraitZoom    = 1f;
+            editedAnimatedOffsetX = 0f;
+            editedAnimatedOffsetY = 0f;
+            editedAnimatedZoom    = 1f;
+            _hoverModeRadio = 0;
             editedCharacterColor = new Vector3(1.0f, 1.0f, 1.0f);
             editedCharacterPenumbra = "";
             editedCharacterGlamourer = "";
@@ -2146,6 +3433,7 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterMoodlePreset = "";
             editedCharacterGearset = null;
             editedCharacterExcludeFromNameSync = false;
+            editedCharacterUseGlitchNameEffect = false;
             editedCharacterAlias = "";
             editedCharacterHonorificTitle = "";
             editedCharacterHonorificPrefix = "Prefix";
@@ -2165,12 +3453,46 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
+        // Plugin.SaveNewCharacter constructs the Character with default
+        // framing values, these private edited* fields aren't reachable
+        // from there.  Patch them onto the freshly-created character so the
+        // grid renders the user's chosen zoom / offset / cutout tuning.
+        private void ApplyEditedFramingToNew(Character? c)
+        {
+            if (c == null) return;
+
+            c.PortraitOffsetX = editedPortraitOffsetX;
+            c.PortraitOffsetY = editedPortraitOffsetY;
+            c.PortraitZoom    = editedPortraitZoom;
+
+            if (_hoverModeRadio == 1)
+            {
+                c.AnimatedOffsetX = editedAnimatedOffsetX;
+                c.AnimatedOffsetY = editedAnimatedOffsetY;
+                c.AnimatedZoom    = editedAnimatedZoom;
+            }
+            else if (_hoverModeRadio == 2)
+            {
+                c.CutoutScale   = editedCutoutScale;
+                c.CutoutAnchorX = editedCutoutAnchorX;
+                c.CutoutAnchorY = editedCutoutAnchorY;
+            }
+
+            plugin.SaveConfiguration();
+        }
+
         private void SaveEditedCharacter()
         {
             if (selectedCharacterIndex < 0 || selectedCharacterIndex >= plugin.Characters.Count)
                 return;
 
             var character = plugin.Characters[selectedCharacterIndex];
+
+            // Capture pre-edit identity so we can detect a rename/alias change below. The server
+            // filename is derived from (Alias ?? Name), so that's the value that determines whether
+            // a rename leaves an orphan file on the server.
+            string oldDisplayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
+            string? oldLastInGameName = character.LastInGameName;
 
             character.Name = editedCharacterName;
             character.Tags = string.IsNullOrWhiteSpace(editedCharacterTag)
@@ -2192,7 +3514,34 @@ namespace CharacterSelectPlugin.Windows.Components
             character.MoodlePreset = editedCharacterMoodlePreset;
             character.AssignedGearset = editedCharacterGearset;
             character.ExcludeFromNameSync = editedCharacterExcludeFromNameSync;
+            character.UseGlitchNameEffect = editedCharacterUseGlitchNameEffect;
+            // Mirror the glitch toggle into the RP profile so other users see the
+            // pack applied when they view this character's profile.
+            if (character.RPProfile != null)
+                character.RPProfile.AppliedPack = editedCharacterUseGlitchNameEffect ? "glitch" : null;
             character.Alias = string.IsNullOrWhiteSpace(editedCharacterAlias) ? null : editedCharacterAlias;
+
+            // Keep rp.CharacterName aligned with Name/Alias so renames and alias changes don't
+            // leave stale values behind. Stale rp.CharacterName can collide across characters on
+            // the server (same filename) and cause name/image mismatches via upload paths that
+            // pass the stored RPProfile directly instead of going through BuildProfileForUpload.
+            if (character.RPProfile != null)
+            {
+                character.RPProfile.CharacterName = !string.IsNullOrWhiteSpace(character.Alias)
+                    ? character.Alias
+                    : character.Name;
+            }
+
+            // Rename migration: if the effective display name (Alias ?? Name) changed and we know
+            // which in-game character this CS+ character was last applied to, record the old
+            // server fileKey so the next upload migrates likes and deletes the orphan on the server.
+            string newDisplayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
+            if (!string.Equals(oldDisplayName, newDisplayName, StringComparison.Ordinal)
+                && !string.IsNullOrWhiteSpace(oldLastInGameName))
+            {
+                string oldFileKey = $"{oldDisplayName}_{oldLastInGameName}";
+                character.AddPreviousProfileKey(oldFileKey);
+            }
 
             character.Macros = isAdvancedModeCharacter ? advancedCharacterMacroText : editedCharacterMacros;
 
@@ -2201,8 +3550,109 @@ namespace CharacterSelectPlugin.Windows.Components
                 character.ImagePath = editedCharacterImagePath;
             }
 
+            // Portrait framing (always saved, applies regardless of hover mode)
+            character.PortraitOffsetX = editedPortraitOffsetX;
+            character.PortraitOffsetY = editedPortraitOffsetY;
+            character.PortraitZoom    = editedPortraitZoom;
+
+            // Hover mode, only the active mode's paths persist on save.
+            // Switching modes mid-edit doesn't clobber paths, but committing
+            // the radio's current selection wins.
+            if (_hoverModeRadio == 1)
+            {
+                character.AnimatedImagePath = string.IsNullOrWhiteSpace(editedAnimatedImagePath) ? null : editedAnimatedImagePath;
+                character.AnimatedOffsetX = editedAnimatedOffsetX;
+                character.AnimatedOffsetY = editedAnimatedOffsetY;
+                character.AnimatedZoom    = editedAnimatedZoom;
+                character.CutoutImagePath = null;
+                character.CutoutBackdropPath = null;
+            }
+            else if (_hoverModeRadio == 2)
+            {
+                character.AnimatedImagePath = null;
+                character.CutoutImagePath = string.IsNullOrWhiteSpace(editedCutoutImagePath) ? null : editedCutoutImagePath;
+                character.CutoutBackdropPath = string.IsNullOrWhiteSpace(editedCutoutBackdropPath) ? null : editedCutoutBackdropPath;
+                character.CutoutScale = editedCutoutScale;
+                character.CutoutAnchorX = editedCutoutAnchorX;
+                character.CutoutAnchorY = editedCutoutAnchorY;
+                // Migrate old saves: pose-anchor was (0.5, 0.5) before; force to
+                // (0.5, 1.0) on every save so the data matches what the renderer
+                // and form preview both assume.
+                character.CutoutPoseAx = 0.5f;
+                character.CutoutPoseAy = 1.0f;
+            }
+            else // None
+            {
+                character.AnimatedImagePath = null;
+                character.CutoutImagePath = null;
+                character.CutoutBackdropPath = null;
+            }
+
             // Note: SecretModState is handled directly in the SecretModeModWindow callback
             // and doesn't need to be copied here since it's already persisted to the character object
+
+            // Achievement hooks for feature discovery
+            if (!string.IsNullOrWhiteSpace(character.Alias)) plugin.AchievementTracker?.OnAliasSet();
+            if (!string.IsNullOrEmpty(editedCharacterImagePath)) plugin.AchievementTracker?.OnProfileImageSet();
+            if (character.IdlePoseIndex < 7) plugin.AchievementTracker?.OnPoseSet();
+            if (isAdvancedModeCharacter) plugin.AchievementTracker?.OnAdvancedModeUsed();
+            if (!string.IsNullOrWhiteSpace(character.RPProfile?.Pronouns)) plugin.AchievementTracker?.OnPronounsSet();
+            if (editedCharacterColor != default) plugin.AchievementTracker?.OnNameplateColorSet();
+            if (character.Tags?.Count > 0) plugin.AchievementTracker?.OnTagsUsed();
+            if (!string.IsNullOrWhiteSpace(editedCharacterAutomation)) plugin.AchievementTracker?.OnGlamourerAutomationSet();
+
+            // New integration achievements
+            if (!string.IsNullOrWhiteSpace(character.HonorificTitle)) plugin.AchievementTracker?.OnHonorificTitleSet();
+            if (!string.IsNullOrWhiteSpace(character.CustomizeProfile)) plugin.AchievementTracker?.OnCustomizePlusSet();
+            if (character.HonorificGradientSet == -1) plugin.AchievementTracker?.OnTwoColourGradientSet();
+            // Triple integration: all three plugin fields set on this character
+            if (!string.IsNullOrWhiteSpace(character.GlamourerDesign)
+                && !string.IsNullOrWhiteSpace(character.CustomizeProfile)
+                && !string.IsNullOrWhiteSpace(character.HonorificTitle))
+                plugin.AchievementTracker?.OnTripleIntegrationSet();
+
+            // ERP profile depth checks
+            var rp = character.RPProfile;
+            if (rp != null)
+            {
+                if ((rp.Bio?.Length ?? 0) >= 500) plugin.AchievementTracker?.OnLongBioWritten();
+                if (!string.IsNullOrWhiteSpace(rp.BannerImagePath)) plugin.AchievementTracker?.OnBannerImageSet();
+                if (!string.IsNullOrWhiteSpace(rp.BackgroundImageUrl) || !string.IsNullOrWhiteSpace(rp.RPBackgroundImageUrl))
+                    plugin.AchievementTracker?.OnUrlBackgroundSet();
+
+                int totalBoxes = (rp.LeftContentBoxes?.Count ?? 0) + (rp.RightContentBoxes?.Count ?? 0);
+                if (totalBoxes >= 6) plugin.AchievementTracker?.OnSixContentBoxes();
+
+                // Layout type checks
+                bool hasTimeline = (rp.LeftContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Timeline) ?? false)
+                                || (rp.RightContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Timeline) ?? false);
+                bool hasQuote    = (rp.LeftContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Quote) ?? false)
+                                || (rp.RightContentBoxes?.Any(b => b.LayoutType == ContentBoxLayoutType.Quote) ?? false);
+                if (hasTimeline) plugin.AchievementTracker?.OnTimelineLayoutUsed();
+                if (hasQuote)    plugin.AchievementTracker?.OnQuoteLayoutUsed();
+
+                // Layout type breadth - count distinct layouts across ALL characters (not just this one)
+                var distinctLayouts = new HashSet<ContentBoxLayoutType>();
+                foreach (var c in plugin.Characters)
+                {
+                    if (c.RPProfile?.LeftContentBoxes != null)
+                        foreach (var b in c.RPProfile.LeftContentBoxes) distinctLayouts.Add(b.LayoutType);
+                    if (c.RPProfile?.RightContentBoxes != null)
+                        foreach (var b in c.RPProfile.RightContentBoxes) distinctLayouts.Add(b.LayoutType);
+                }
+                if (distinctLayouts.Count >= 5) plugin.AchievementTracker?.OnLayoutTypesExplored();
+
+                // Fully Realised composite
+                bool hasBio      = !string.IsNullOrWhiteSpace(rp.Bio);
+                bool hasPronouns = !string.IsNullOrWhiteSpace(rp.Pronouns);
+                bool hasImage    = !string.IsNullOrWhiteSpace(character.ImagePath);
+                bool hasBg       = !string.IsNullOrWhiteSpace(rp.BackgroundImage)
+                                || !string.IsNullOrWhiteSpace(rp.BackgroundImageUrl)
+                                || !string.IsNullOrWhiteSpace(rp.RPBackgroundImageUrl);
+                bool hasBox      = totalBoxes > 0;
+                if (hasBio && hasPronouns && hasImage && hasBg && hasBox)
+                    plugin.AchievementTracker?.OnProfileCompleted();
+            }
 
             plugin.SaveConfiguration();
 
@@ -2279,6 +3729,23 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterMacros = character.Macros;
 
             editedCharacterImagePath = !string.IsNullOrEmpty(character.ImagePath) ? character.ImagePath : defaultImagePath;
+            editedAnimatedImagePath = character.AnimatedImagePath;
+            editedCutoutImagePath = character.CutoutImagePath;
+            editedCutoutBackdropPath = character.CutoutBackdropPath;
+            editedCutoutScale = character.CutoutScale;
+            editedCutoutAnchorX = character.CutoutAnchorX;
+            editedCutoutAnchorY = character.CutoutAnchorY;
+            editedPortraitOffsetX = character.PortraitOffsetX;
+            editedPortraitOffsetY = character.PortraitOffsetY;
+            editedPortraitZoom    = character.PortraitZoom;
+            editedAnimatedOffsetX = character.AnimatedOffsetX;
+            editedAnimatedOffsetY = character.AnimatedOffsetY;
+            editedAnimatedZoom    = character.AnimatedZoom;
+            // Derive radio state, both can't be set, but if they are
+            // (corrupt config), prefer cutout (newer feature).
+            if (!string.IsNullOrWhiteSpace(character.CutoutImagePath)) _hoverModeRadio = 2;
+            else if (!string.IsNullOrWhiteSpace(character.AnimatedImagePath)) _hoverModeRadio = 1;
+            else _hoverModeRadio = 0;
             editedCharacterTag = character.Tags != null && character.Tags.Count > 0
                 ? string.Join(", ", character.Tags)
                 : "";
@@ -2294,6 +3761,7 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterMoodlePreset = character.MoodlePreset ?? "";
             editedCharacterGearset = character.AssignedGearset;
             editedCharacterExcludeFromNameSync = character.ExcludeFromNameSync;
+            editedCharacterUseGlitchNameEffect = character.UseGlitchNameEffect;
             editedCharacterAlias = character.Alias ?? "";
 
             string safeAutomation = character.CharacterAutomation == "None" ? "" : character.CharacterAutomation ?? "";

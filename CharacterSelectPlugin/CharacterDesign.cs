@@ -18,7 +18,8 @@ namespace CharacterSelectPlugin
         public string Tag { get; set; } = "Unsorted";
         public List<string> KnownTags { get; set; } = new();
         public List<string> DesignTags { get; set; } = new List<string>();
-        public Guid? FolderId { get; set; } = null; 
+        public Guid? FolderId { get; set; } = null;
+        public DateTime? LastApplied { get; set; } = null;
         public Guid Id { get; set; } = Guid.NewGuid();
         public int SortOrder { get; set; } = 0;
         public Dictionary<string, bool>? SecretModState { get; set; }
