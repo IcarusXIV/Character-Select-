@@ -20,7 +20,7 @@ using CharacterSelectPlugin.Effects;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
-    public class DesignPanel : IDisposable
+    public partial class DesignPanel : IDisposable
     {
         private Plugin plugin;
         private UIStyles uiStyles;
@@ -58,7 +58,7 @@ namespace CharacterSelectPlugin.Windows.Components
         // Search functionality
         private bool showSearchBar = false;
         private string searchQuery = "";
-        
+
         // Design editing state
         private bool isEditDesignWindowOpen = false;
         // Frame counter: SetScrollY applies on NEXT frame's layout pass, so applying
@@ -89,7 +89,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string originalDesignName = "";
         private string? pendingDesignImagePath = null;
         private string? pendingPastedImagePath = null;
-        
+
         // Temporary Secret Mode state for new designs
         private Dictionary<string, bool>? temporaryDesignSecretModState = null;
         private HashSet<string>? temporaryDesignSecretModPinOverrides = null;
@@ -156,6 +156,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             if (!IsVisible) return;
 
             // Calculate responsive sizing
@@ -351,13 +352,13 @@ namespace CharacterSelectPlugin.Windows.Components
             activeCharacterIndex = -1;
             plugin.IsDesignPanelOpen = false;
             plugin.MainWindow?.InvalidateLayout();
-            
+
             // Close Mod Manager window if it's open
             if (plugin.SecretModeModWindow?.IsOpen ?? false)
             {
                 plugin.SecretModeModWindow.IsOpen = false;
             }
-            
+
             CloseDesignEditor();
         }
 
@@ -382,6 +383,19 @@ namespace CharacterSelectPlugin.Windows.Components
         // wrapping in BeginChild so the chrome renders directly into the main window.
         public void DrawIntoRect(Vector2 panelMin, Vector2 panelMax, float totalScale)
         {
+            if (Plugin.UseClassicLayout)
+            {
+                if (!IsVisible) return;
+                if (activeCharacterIndex < 0 || activeCharacterIndex >= plugin.Characters.Count) return;
+                ImGui.SetCursorScreenPos(panelMin);
+                var size = panelMax - panelMin;
+                if (ImGui.BeginChild("##DesignPanelClassic", size, false, ImGuiWindowFlags.NoScrollbar))
+                {
+                    DrawClassicLayout();
+                }
+                ImGui.EndChild();
+                return;
+            }
             if (!IsVisible) return;
             if (activeCharacterIndex < 0 || activeCharacterIndex >= plugin.Characters.Count) return;
             var character = plugin.Characters[activeCharacterIndex];
@@ -996,7 +1010,7 @@ namespace CharacterSelectPlugin.Windows.Components
             float buttonSize = 25f * scale;
             float spacing = 2f * scale;
 
-            
+
             ImGui.BeginGroup();
 
             // Add and Folder buttons
@@ -1008,18 +1022,9 @@ namespace CharacterSelectPlugin.Windows.Components
             if (ImGui.Button("+##AddDesign", new Vector2(buttonSize, buttonSize)))
             {
                 var io = ImGui.GetIO();
-                bool ctrlHeld = io.KeyCtrl;
                 bool shiftHeld = io.KeyShift;
 
-                if (ctrlHeld && shiftHeld && plugin.Configuration.EnableConflictResolution)
-                {
-                    isSecretDesignMode = true;
-                    AddNewDesign();
-                    editedDesignMacro = (!plugin.Configuration.EnableConflictResolution && isSecretDesignMode) ? GenerateSecretDesignMacro(character) : GenerateDesignMacro(character);
-                    if (isAdvancedModeDesign)
-                        advancedDesignMacroText = editedDesignMacro;
-                }
-                else if (shiftHeld)
+                if (shiftHeld)
                 {
                     isSecretDesignMode = false;
                     isImportWindowOpen = true;
@@ -1111,7 +1116,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.PushFont(UiBuilder.IconFont);
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.2f, 0.2f, 0.8f));        // Dark gray
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.4f, 0.4f, 0.9f)); // Medium gray  
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.4f, 0.4f, 0.9f)); // Medium gray
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.6f, 0.6f, 0.6f, 1.0f));  // Light gray
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 1.0f, 1.0f, 1.0f));          // White text
             ImGui.PushStyleVar(ImGuiStyleVar.ButtonTextAlign, new Vector2(0.5f, 0.5f));        // Center icon
@@ -1122,7 +1127,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     var io = ImGui.GetIO();
                     var selectedCharacter = plugin.Characters[activeCharacterIndex];
-                    
+
                     if (io.KeyCtrl && io.KeyShift)
                     {
                         // Ctrl+Shift: Smart snapshot with CR
@@ -1865,12 +1870,12 @@ namespace CharacterSelectPlugin.Windows.Components
             // Add Paste button
             ImGui.SameLine();
             bool clipboardHasImage = IsClipboardImageAvailable();
-            
+
             if (!clipboardHasImage)
             {
                 ImGui.PushStyleVar(ImGuiStyleVar.Alpha, 0.5f);
             }
-            
+
             if (ImGui.Button("Paste"))
             {
                 if (clipboardHasImage)
@@ -1878,12 +1883,12 @@ namespace CharacterSelectPlugin.Windows.Components
                     PasteImageFromClipboard();
                 }
             }
-            
+
             if (!clipboardHasImage)
             {
                 ImGui.PopStyleVar();
             }
-            
+
             if (ImGui.IsItemHovered())
             {
                 CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(clipboardHasImage
@@ -1970,16 +1975,16 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
 
-            string buttonText = selectedModCount > 0 
+            string buttonText = selectedModCount > 0
                 ? $"Configure Mods ({selectedModCount} selected)"
                 : "Configure Mods";
 
             // Validate that design name is filled before opening mod manager
             bool hasValidDesignName = !string.IsNullOrWhiteSpace(editedDesignName);
-            
+
             if (!hasValidDesignName)
                 ImGui.BeginDisabled();
-            
+
             if (ImGui.Button(buttonText))
             {
                 if (hasValidDesignName)
@@ -2030,17 +2035,17 @@ namespace CharacterSelectPlugin.Windows.Components
                     );
                 }
             }
-            
+
             // Quick update button for gear/hair changes
             ImGui.SameLine();
-            
+
             ImGui.PushFont(UiBuilder.IconFont);
-            
+
             bool canQuickUpdate = hasValidDesignName && plugin.Configuration.EnableConflictResolution;
-            
+
             if (!canQuickUpdate)
                 ImGui.BeginDisabled();
-            
+
             if (ImGui.Button("\uf2f1")) // Import icon - suggests pulling in current state
             {
                 if (canQuickUpdate)
@@ -2048,12 +2053,12 @@ namespace CharacterSelectPlugin.Windows.Components
                     PerformQuickGearHairUpdate(character);
                 }
             }
-            
+
             if (!canQuickUpdate)
                 ImGui.EndDisabled();
-            
+
             ImGui.PopFont();
-            
+
             if (ImGui.IsItemHovered())
             {
                 if (canQuickUpdate)
@@ -2250,7 +2255,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 ImGui.EndCombo();
             }
-            
+
             // Search input field
             if (showSearchBar)
             {
@@ -2260,7 +2265,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
         }
-        
+
         // ── Boutique design list (translated from design-mockups/design-panel/01-themed.html) ──
         private enum DpRowAction { Apply, Edit, Delete }
 
@@ -3145,18 +3150,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void EditDesignFromRow(Character character, CharacterDesign design)
         {
-            bool isCtrlShift = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
             OpenEditDesignWindow(character, design);
-
-            if (isCtrlShift && plugin.Configuration.EnableConflictResolution)
-            {
-                isSecretDesignMode = true;
-                editedDesignMacro = (!plugin.Configuration.EnableConflictResolution && isSecretDesignMode)
-                    ? GenerateSecretDesignMacro(character)
-                    : GenerateDesignMacro(character);
-                if (isAdvancedModeDesign)
-                    advancedDesignMacroText = editedDesignMacro;
-            }
         }
 
         private void DrawDesignList(Character character, float scale)
@@ -3372,7 +3366,7 @@ namespace CharacterSelectPlugin.Windows.Components
                      .Where(f => f.ParentFolderId == folder.Id);
             var designsToShow = character.Designs
                      .Where(d => d.FolderId == folder.Id);
-                     
+
             if (!string.IsNullOrWhiteSpace(searchQuery))
             {
                 foldersToShow = foldersToShow.Where(f => FolderContainsMatchingDesigns(character, f));
@@ -3492,7 +3486,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Favourite star/ghost
             ImGui.SetCursorScreenPos(new Vector2(x, rowMin.Y + (rowH - btnSize) / 2));
-            
+
             // Check for seasonal themes
             var effectiveTheme = SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration)
                 ? SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration)
@@ -3576,7 +3570,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 ImGui.SetWindowFontScale(1.0f);
             }
-            
+
             if (buttonClicked)
             {
                 bool wasFavorite = design.IsFavorite;
@@ -3592,7 +3586,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.SaveConfiguration();
                 SortDesigns(character);
             }
-            
+
             // Add tooltip for all favourite buttons
             if (ImGui.IsItemHovered())
             {
@@ -3672,7 +3666,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             plugin.Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
                             plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
                             plugin.Configuration.LastUsedCharacterKey = character.Name;
-                            
+
                             // Update player-specific character tracking for green highlighting
                             if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
                             {
@@ -3682,7 +3676,7 @@ namespace CharacterSelectPlugin.Windows.Components
                                 string pluginCharacterKey = $"{character.Name}@{worldName}";
                                 plugin.Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
                             }
-                            
+
                             plugin.Configuration.Save();
                         });
                     });
@@ -3695,7 +3689,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     plugin.Configuration.LastUsedDesignByCharacter[character.Name] = design.Name;
                     plugin.Configuration.LastUsedDesignCharacterKey = character.Name;
                     plugin.Configuration.LastUsedCharacterKey = character.Name;
-                    
+
                     // Update player-specific character tracking for green highlighting
                     if (Plugin.ObjectTable.LocalPlayer is { } player && player.HomeWorld.IsValid)
                     {
@@ -3705,7 +3699,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         string pluginCharacterKey = $"{character.Name}@{worldName}";
                         plugin.Configuration.LastUsedCharacterByPlayer[fullKey] = pluginCharacterKey;
                     }
-                    
+
                     plugin.Configuration.Save();
                 }
 
@@ -3728,24 +3722,7 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.3f, 0.7f, 1f, 1f)); // Blue
             if (ImGui.Button("\uf044", new Vector2(btnSize, btnSize)))
             {
-                bool isCtrlShift = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
-                
-                // Open edit window first
                 OpenEditDesignWindow(character, design);
-                
-                // Then convert to secret mode if Ctrl+Shift was held and Conflict Resolution is enabled
-                if (isCtrlShift && plugin.Configuration.EnableConflictResolution)
-                {
-                    // Set secret mode flag
-                    isSecretDesignMode = true;
-                    
-                    // Generate and set the appropriate macro in the edit fields
-                    editedDesignMacro = (!plugin.Configuration.EnableConflictResolution && isSecretDesignMode) ? GenerateSecretDesignMacro(character) : GenerateDesignMacro(character);
-                    if (isAdvancedModeDesign)
-                    {
-                        advancedDesignMacroText = editedDesignMacro;
-                    }
-                }
             }
             ImGui.PopStyleColor();
             ImGui.PopFont();
@@ -4583,7 +4560,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             string configDir = plugin.PluginPath;
                             string imagesDir = Path.Combine(configDir, "Images");
                             string previewsDir = Path.Combine(imagesDir, "DesignPreviews");
-                            
+
                             Directory.CreateDirectory(previewsDir);
 
                             // Generate unique filename with timestamp
@@ -4636,7 +4613,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 string configDir = plugin.PluginPath;
                 string previewsDir = Path.Combine(configDir, "Images", "DesignPreviews");
-                
+
                 if (!Directory.Exists(previewsDir))
                     return;
 
@@ -4651,12 +4628,12 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 // Collect all preview image paths currently in use
                 var referencedImages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                
+
                 foreach (var character in plugin.Characters)
                 {
                     foreach (var design in character.Designs)
                     {
-                        if (!string.IsNullOrEmpty(design.PreviewImagePath) && 
+                        if (!string.IsNullOrEmpty(design.PreviewImagePath) &&
                             File.Exists(design.PreviewImagePath))
                         {
                             referencedImages.Add(Path.GetFullPath(design.PreviewImagePath));
@@ -4669,7 +4646,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 foreach (var imageFile in imageFiles)
                 {
                     string fullImagePath = Path.GetFullPath(imageFile);
-                    
+
                     if (!referencedImages.Contains(fullImagePath))
                     {
                         try
@@ -4750,7 +4727,7 @@ namespace CharacterSelectPlugin.Windows.Components
             isAdvancedModeDesign = design.IsAdvancedMode;
             isAdvancedModeWindowOpen = design.IsAdvancedMode;
             advancedDesignMacroText = design.AdvancedMacro ?? "";
-            
+
             // Check if this is a Secret Mode (Conflict Resolution) design
             if ((design.SecretModState != null && design.SecretModState.Any()) ||
                 (design.ModOptionSettings != null && design.ModOptionSettings.Any()) ||
@@ -4776,13 +4753,13 @@ namespace CharacterSelectPlugin.Windows.Components
             isAdvancedModeWindowOpen = false;
             isNewDesign = false;
             isSecretDesignMode = false;
-            
+
             // Close Mod Manager window if it's open
             if (plugin.SecretModeModWindow?.IsOpen ?? false)
             {
                 plugin.SecretModeModWindow.IsOpen = false;
             }
-            
+
             ResetEditFields();
         }
 
@@ -4921,7 +4898,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 _ => DesignSortType.Alphabetical // Default fallback
             };
         }
-        
+
         private void SetDesignSort(int sortIndex)
         {
             plugin.Configuration.CurrentDesignSortIndex = sortIndex;
@@ -4937,7 +4914,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Sort all designs - both root level and within folders
             SortDesignList(character.Designs, sortType);
         }
-        
+
         private void SortDesignList(List<CharacterDesign> designs, DesignSortType sortType)
         {
             if (sortType == DesignSortType.Favorites)
@@ -4991,7 +4968,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Apply search filtering if active
             var designsToShow = character.Designs.AsEnumerable();
             var foldersToShow = character.DesignFolders.AsEnumerable();
-            
+
             if (!string.IsNullOrWhiteSpace(searchQuery))
             {
                 designsToShow = designsToShow.Where(d => MatchesSearchQuery(d));
@@ -5319,49 +5296,49 @@ namespace CharacterSelectPlugin.Windows.Components
                 text = text[..^1];
             return text + "...";
         }
-        
+
         // Search helper methods
         private bool MatchesSearchQuery(CharacterDesign design)
         {
             if (string.IsNullOrWhiteSpace(searchQuery))
                 return true;
-                
+
             var query = searchQuery.ToLowerInvariant();
-            
+
             // Search in design name
             if (design.Name.ToLowerInvariant().Contains(query))
                 return true;
-                
+
             // Search in glamourer design name
-            if (!string.IsNullOrWhiteSpace(design.GlamourerDesign) && 
+            if (!string.IsNullOrWhiteSpace(design.GlamourerDesign) &&
                 design.GlamourerDesign.ToLowerInvariant().Contains(query))
                 return true;
-                
+
             // Search in automation
-            if (!string.IsNullOrWhiteSpace(design.Automation) && 
+            if (!string.IsNullOrWhiteSpace(design.Automation) &&
                 design.Automation.ToLowerInvariant().Contains(query))
                 return true;
-                
+
             // Search in tags
             if (design.Tag?.ToLowerInvariant().Contains(query) == true)
                 return true;
-                
+
             return false;
         }
-        
+
         private bool FolderContainsMatchingDesigns(Character character, DesignFolder folder)
         {
             if (string.IsNullOrWhiteSpace(searchQuery))
                 return true;
-                
+
             // Check if folder name matches
             if (folder.Name.ToLowerInvariant().Contains(searchQuery.ToLowerInvariant()))
                 return true;
-                
+
             // Check if any design in this folder matches
             if (character.Designs.Any(d => d.FolderId == folder.Id && MatchesSearchQuery(d)))
                 return true;
-                
+
             // Check if any subfolder contains matching designs
             var subfolders = character.DesignFolders.Where(f => f.ParentFolderId == folder.Id);
             foreach (var subfolder in subfolders)
@@ -5369,7 +5346,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (FolderContainsMatchingDesigns(character, subfolder))
                     return true;
             }
-                
+
             return false;
         }
 
@@ -5409,7 +5386,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopFont();
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(0.9f, 0.9f, 0.9f, 1.0f), "Snapshot Current Character State");
-                
+
                 // Subtle styled separator
                 ImGui.PushStyleColor(ImGuiCol.Separator, new Vector4(0.4f, 0.6f, 0.8f, 0.5f));
                 ImGui.Separator();
@@ -5455,10 +5432,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.SameLine();
                 ImGui.Text("Glamourer State:");
                 ImGui.SameLine();
-                
+
                 float statusPosX = ImGui.GetContentRegionAvail().X - 80 * scale;
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + statusPosX);
-                
+
                 if (snapshotDetectedMods.Count > 0)
                 {
                     ImGui.TextColored(new Vector4(0.3f, 0.8f, 0.3f, 1.0f), "Detected");
@@ -5479,9 +5456,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.SameLine();
                 ImGui.Text("Customize+ Profile:");
                 ImGui.SameLine();
-                
+
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + statusPosX);
-                
+
                 if (!string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile))
                 {
                     ImGui.TextColored(new Vector4(0.3f, 0.8f, 0.3f, 1.0f), "Found");
@@ -5502,9 +5479,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.SameLine();
                 ImGui.Text("Clipboard Image:");
                 ImGui.SameLine();
-                
+
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + statusPosX);
-                
+
                 if (snapshotHasClipboardImage)
                 {
                     ImGui.TextColored(new Vector4(0.3f, 0.8f, 0.3f, 1.0f), "Available");
@@ -5535,7 +5512,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 float spacing = 10 * scale;
                 float totalButtonWidth = (buttonWidth * 2) + spacing;
                 float offsetX = (ImGui.GetContentRegionAvail().X - totalButtonWidth) * 0.5f;
-                
+
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + offsetX);
 
                 // Create button with plugin-style colors
@@ -5580,7 +5557,7 @@ namespace CharacterSelectPlugin.Windows.Components
             snapshotHasClipboardImage = false;
             snapshotIsProcessing = false;
             snapshotStatusMessage = "";
-            
+
             // Start background detection tasks
             Task.Run(async () =>
             {
@@ -5588,20 +5565,20 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     snapshotIsProcessing = true;
                     snapshotStatusMessage = "Detecting Glamourer state...";
-                    
+
                     // Detect Glamourer state
                     await DetectGlamourerState();
-                    
+
                     snapshotStatusMessage = "Detecting Customize+ profile...";
-                    
+
                     // Detect Customize+ profile
                     await DetectCustomizePlusProfile();
-                    
+
                     snapshotStatusMessage = "Checking clipboard for images...";
-                    
+
                     // Check clipboard for images
                     CheckClipboardForImage();
-                    
+
                     snapshotStatusMessage = "Detection complete";
                     snapshotIsProcessing = false;
                 }
@@ -5612,7 +5589,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     snapshotIsProcessing = false;
                 }
             });
-            
+
             isSnapshotDialogOpen = true;
         }
 
@@ -5630,11 +5607,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     // Generate the appropriate macro based on CR mode
                     var snapshotMacro = GenerateSnapshotMacro(snapshotUseConflictResolution);
-                    
+
                     // For CR mode, generate different macros
                     var regularMacro = GenerateSnapshotMacro(false); // Regular macro without CR
                     var advancedMacro = snapshotUseConflictResolution ? GenerateSnapshotMacro(true) : ""; // CR macro if enabled
-                    
+
                     var newDesign = new CharacterDesign(
                         snapshotDesignName,
                         regularMacro, // Always use regular macro for base
@@ -5660,7 +5637,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     }
 
                     // Set Customize+ profile if detected (only if it's not the Character default)
-                    if (!string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) && 
+                    if (!string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) &&
                         snapshotDetectedCustomizePlusProfile != "Character")
                     {
                         newDesign.CustomizePlusProfile = snapshotDetectedCustomizePlusProfile;
@@ -5672,7 +5649,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         // Get only gear/hair mods from Currently Affecting You tab (prevents body/sculpt/eye mods from being managed)
                         var allAffectingMods = plugin.PenumbraIntegration?.GetOnScreenTabMods();
                         var currentlyAffectingMods = new HashSet<string>();
-                        
+
                         if (allAffectingMods != null)
                         {
                             foreach (var modDir in allAffectingMods)
@@ -5734,12 +5711,12 @@ namespace CharacterSelectPlugin.Windows.Components
 
                     // Add the design to the character
                     snapshotTargetCharacter.Designs.Add(newDesign);
-                    
+
                     // Save configuration
                     plugin.Configuration.Save();
 
                     snapshotStatusMessage = "Design created successfully!";
-                    
+
                     // Close dialog after a brief delay
                     await Task.Delay(1000);
                     isSnapshotDialogOpen = false;
@@ -5764,7 +5741,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // CR Mode: Generate macro that works with Secret Mode CR system
                 // No bulktag commands - CR system handles mod management automatically
-                
+
                 // Add Glamourer apply if we have a design
                 if (snapshotDetectedMods.Count > 0)
                 {
@@ -5810,21 +5787,21 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // Get current player's object index (usually 0 for local player)
                 var playerIndex = 0;
-                
+
                 // First, get the current state data from Glamourer
                 var glamourerStateIpc = Plugin.PluginInterface.GetIpcSubscriber<int, uint, (int, string?)>("Glamourer.GetStateBase64");
                 var (stateError, stateData) = await Task.Run(() => glamourerStateIpc.InvokeFunc(playerIndex, 0));
-                
+
                 if (stateError != 0 || string.IsNullOrEmpty(stateData))
                 {
                     Plugin.Log.Warning($"Failed to get Glamourer state for design creation (error: {stateError})");
                     return Guid.Empty;
                 }
-                
+
                 // Create design from the state data
                 var glamourerAddDesignIpc = Plugin.PluginInterface.GetIpcSubscriber<string, string, (int, Guid)>("Glamourer.AddDesign");
                 var (addError, designId) = await Task.Run(() => glamourerAddDesignIpc.InvokeFunc(stateData, designName));
-                
+
                 if (addError == 0 && designId != Guid.Empty) // Success
                 {
                     Plugin.Log.Information($"Created Glamourer design '{designName}' with ID {designId}");
@@ -5848,14 +5825,14 @@ namespace CharacterSelectPlugin.Windows.Components
             try
             {
                 snapshotDetectedMods.Clear();
-                
+
                 // Get current player's object index (usually 0 for local player)
                 var playerIndex = 0;
-                
+
                 // Use real Glamourer IPC to get current state
                 var glamourerStateIpc = Plugin.PluginInterface.GetIpcSubscriber<int, uint, (int, string?)>("Glamourer.GetStateBase64");
                 var (errorCode, stateData) = await Task.Run(() => glamourerStateIpc.InvokeFunc(playerIndex, 0));
-                
+
                 if (errorCode == 0 && !string.IsNullOrEmpty(stateData)) // Success
                 {
                     // We have a valid state, which means there are modifications
@@ -5880,30 +5857,30 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // Get current player's object index (usually 0 for local player)
                 var playerIndex = (ushort)0;
-                
+
                 // Use real Customize+ IPC to get active profile
                 var customizePlusIpc = Plugin.PluginInterface.GetIpcSubscriber<ushort, (int, Guid?)>("CustomizePlus.Profile.GetActiveProfileIdOnCharacter");
                 var (errorCode, profileId) = await Task.Run(() => customizePlusIpc.InvokeFunc(playerIndex));
-                
+
                 if (errorCode == 0 && profileId.HasValue && profileId.Value != Guid.Empty) // Success with profile
                 {
                     // Get profile list to find the profile name
                     var profileListIpc = Plugin.PluginInterface.GetIpcSubscriber<(Guid, string, string, List<(string, ushort, byte, ushort)>, int, bool)[]>("CustomizePlus.Profile.GetList");
                     var profileList = await Task.Run(() => profileListIpc.InvokeFunc());
-                    
+
                     // Find the active profile in the list
                     var activeProfile = profileList.FirstOrDefault(p => p.Item1 == profileId.Value);
-                    
+
                     if (activeProfile.Item1 != Guid.Empty) // Found the profile
                     {
                         var profileName = activeProfile.Item2; // The Name field from IPCProfileDataTuple
-                        
+
                         // If it's an empty name or default, treat as Character
                         if (string.IsNullOrWhiteSpace(profileName) || profileName == "Default")
                         {
                             profileName = "Character";
                         }
-                        
+
                         snapshotDetectedCustomizePlusProfile = profileName;
                         Plugin.Log.Information($"Customize+ detection completed: Profile '{profileName}' active");
                     }
@@ -5962,10 +5939,10 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // In real implementation, this would use Glamourer IPC to export current state
                 await Task.Delay(200);
-                
+
                 // Example IPC call:
                 // return await plugin.DalamudPluginInterface.GetIpcSubscriber<string>("Glamourer.ExportCurrentDesign").InvokeAsync();
-                
+
                 // Mock data for testing
                 return "MockGlamourerDesignData_" + DateTime.Now.Ticks;
             }
@@ -5982,10 +5959,10 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // In real implementation, this would use Customize+ IPC to export profile
                 await Task.Delay(200);
-                
+
                 // Example IPC call:
                 // return await plugin.DalamudPluginInterface.GetIpcSubscriber<string>("CustomizePlus.ExportProfile").InvokeAsync(profileName);
-                
+
                 // Mock data for testing
                 return $"MockCustomizePlusProfile_{profileName}_{DateTime.Now.Ticks}";
             }
@@ -6001,7 +5978,7 @@ namespace CharacterSelectPlugin.Windows.Components
             try
             {
                 string imagePath = "";
-                
+
                 // Clipboard operations need to be on STA thread
                 var thread = new Thread(() =>
                 {
@@ -6020,7 +5997,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
                         // Save image with design ID as filename
                         imagePath = Path.Combine(designsDir, $"{designId}.png");
-                        
+
                         using (var bitmap = new System.Drawing.Bitmap(image))
                         {
                             bitmap.Save(imagePath, ImageFormat.Png);
@@ -6032,7 +6009,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         imagePath = "";
                     }
                 });
-                
+
                 thread.SetApartmentState(ApartmentState.STA);
                 thread.Start();
                 thread.Join();
@@ -6074,7 +6051,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     };
 
                     await Task.WhenAll(detectionTasks);
-                    
+
                     // Create the design (same as clicking "Create Design" button)
                     CreateSnapshotDesign();
                 }
@@ -6163,7 +6140,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         {
                             var name = designJson["Name"]?.Value<string>() ?? kvp.Value;
                             var creationDate = designJson["CreationDate"]?.Value<DateTimeOffset>() ?? DateTimeOffset.MinValue;
-                            
+
                             designsWithTimestamps.Add((name, creationDate, kvp.Key));
                         }
                     }
@@ -6236,9 +6213,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 Plugin.Log.Information($"Creating smart snapshot design for character '{snapshotTargetCharacter.Name}' using Glamourer design '{recentDesign.Name}'");
 
                 // Generate the proper macro for the snapshot design
-                string snapshotMacro = GenerateSnapshotMacro(snapshotTargetCharacter, recentDesign.Name, 
-                    !string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) && snapshotDetectedCustomizePlusProfile != "Character" 
-                        ? snapshotDetectedCustomizePlusProfile 
+                string snapshotMacro = GenerateSnapshotMacro(snapshotTargetCharacter, recentDesign.Name,
+                    !string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) && snapshotDetectedCustomizePlusProfile != "Character"
+                        ? snapshotDetectedCustomizePlusProfile
                         : "");
 
                 // Create new design based on detected character state
@@ -6249,8 +6226,8 @@ namespace CharacterSelectPlugin.Windows.Components
                     advancedMacro: "",
                     glamourerDesign: recentDesign.Name, // Use the Glamourer design name
                     automation: "",
-                    customizePlusProfile: !string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) && snapshotDetectedCustomizePlusProfile != "Character" 
-                        ? snapshotDetectedCustomizePlusProfile 
+                    customizePlusProfile: !string.IsNullOrEmpty(snapshotDetectedCustomizePlusProfile) && snapshotDetectedCustomizePlusProfile != "Character"
+                        ? snapshotDetectedCustomizePlusProfile
                         : ""
                 );
 
@@ -6260,7 +6237,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     // Get only gear/hair mods from Currently Affecting You tab (prevents body/sculpt/eye mods from being managed)
                     var allAffectingMods = plugin.PenumbraIntegration?.GetOnScreenTabMods();
                     var currentlyAffectingMods = new HashSet<string>();
-                    
+
                     if (allAffectingMods != null)
                     {
                         foreach (var modDir in allAffectingMods)
@@ -6390,7 +6367,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 string localName = player.Name.TextValue;
                 string worldName = player.HomeWorld.Value.Name.ToString();
                 string fullKey = $"{localName}@{worldName}";
-                
+
                 if (plugin.Configuration.LastUsedCharacterByPlayer.TryGetValue(fullKey, out var lastUsedCharacterName))
                 {
                     // lastUsedCharacterName is in format "CharacterName@WorldName", extract just the character name
@@ -6416,27 +6393,27 @@ namespace CharacterSelectPlugin.Windows.Components
             try
             {
                 Plugin.Log.Information("Starting quick gear/hair update...");
-                
+
                 // Get all currently affecting mods using the existing method
                 var allAffectingMods = plugin.PenumbraIntegration.GetCurrentlyAffectingMods();
                 Plugin.Log.Information($"Found {allAffectingMods.Count} total affecting mods");
-                
+
                 if (!allAffectingMods.Any())
                 {
                     Plugin.Log.Warning("No affecting mods detected for quick update");
                     return;
                 }
-                
+
                 // Filter for gear and hair mods only
                 var gearHairMods = new HashSet<string>();
                 var modList = plugin.PenumbraIntegration.GetModList();
-                
+
                 foreach (var modDir in allAffectingMods)
                 {
                     // Check if mod is in categorization cache
                     if (plugin.modCategorizationCache?.TryGetValue(modDir, out var modType) == true)
                     {
-                        if (modType == CharacterSelectPlugin.Windows.ModType.Gear || 
+                        if (modType == CharacterSelectPlugin.Windows.ModType.Gear ||
                             modType == CharacterSelectPlugin.Windows.ModType.Hair)
                         {
                             gearHairMods.Add(modDir);
@@ -6458,18 +6435,18 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                     }
                 }
-                
+
                 Plugin.Log.Information($"Filtered to {gearHairMods.Count} gear/hair mods");
-                
+
                 if (!gearHairMods.Any())
                 {
                     Plugin.Log.Information("No gear/hair mods currently affecting - nothing to update");
                     return;
                 }
-                
+
                 // Create new mod state with only gear/hair mods enabled
                 var newModState = new Dictionary<string, bool>();
-                
+
                 // Get existing mod state to preserve non-gear/hair selections
                 Dictionary<string, bool> existingState = null;
                 if (isNewDesign)
@@ -6481,7 +6458,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     var currentDesign = character.Designs.FirstOrDefault(d => d.Name == originalDesignName);
                     existingState = currentDesign?.SecretModState ?? new Dictionary<string, bool>();
                 }
-                
+
                 // Preserve existing non-gear/hair mod selections
                 if (existingState != null)
                 {
@@ -6493,13 +6470,13 @@ namespace CharacterSelectPlugin.Windows.Components
                         }
                     }
                 }
-                
+
                 // Add the new gear/hair mods as enabled
                 foreach (var modDir in gearHairMods)
                 {
                     newModState[modDir] = true;
                 }
-                
+
                 // Update the design's mod state
                 if (isNewDesign)
                 {
@@ -6517,7 +6494,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         Plugin.Log.Information($"Updated design '{design.Name}' with {gearHairMods.Count} gear/hair mods");
                     }
                 }
-                
+
                 Plugin.Log.Information("Quick gear/hair update completed successfully");
             }
             catch (Exception ex)
@@ -6525,7 +6502,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 Plugin.Log.Error($"Error during quick gear/hair update: {ex}");
             }
         }
-        
+
         /// <summary>
         /// Check if a mod is a gear mod based on its changed items
         /// </summary>
@@ -6543,7 +6520,7 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             return false;
         }
-        
+
         /// <summary>
         /// Check if a mod is a hair mod based on its changed items
         /// </summary>
@@ -6552,12 +6529,12 @@ namespace CharacterSelectPlugin.Windows.Components
             foreach (var item in changedItems)
             {
                 // Check for hair-related customization items
-                if (item.Contains("Hair", StringComparison.OrdinalIgnoreCase) && 
+                if (item.Contains("Hair", StringComparison.OrdinalIgnoreCase) &&
                     item.Contains("Customization:", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
-                
+
                 // Check for hair file paths
                 if (item.Contains("/hair/", StringComparison.OrdinalIgnoreCase))
                 {

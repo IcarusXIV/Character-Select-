@@ -421,7 +421,8 @@ public class CSAchievementToast : Window, IDisposable
         ImGui.PushClipRect(new Vector2(textL, mn.Y), new Vector2(textR, mx.Y), true);
         var nameCol = U32(A(Boutique.Text, alpha));
         float nameH = 0f;
-        using (Plugin.Instance?.HeaderFont?.Push())
+        bool useClassic = Plugin.UseClassicLayout;
+        using (useClassic ? null : Plugin.Instance?.HeaderFont?.Push())
         {
             var nameSz = ImGui.CalcTextSize(ach.Name);
             nameH = nameSz.Y;
@@ -438,10 +439,6 @@ public class CSAchievementToast : Window, IDisposable
         }
         ImGui.PopClipRect();
 
-        // ── POINTS BLOCK ──
-        // "+N" uses ToastPointsFont (rasterized at 36px, sharp at that size).
-        // "PTS" uses the default font at native size (crisp, bigger than the
-        // mockup's 9px but readable).
         string ptsNumber = $"+{ach.Points}";
         const string ptsUnit = "PTS";
         float ptsRight = mx.X - 18f * s;
@@ -449,7 +446,7 @@ public class CSAchievementToast : Window, IDisposable
 
         Vector2 ptsSz;
         float ptsFontSize;
-        using (Plugin.Instance?.ToastPointsFont?.Push())
+        using (useClassic ? null : Plugin.Instance?.ToastPointsFont?.Push())
         {
             ptsSz = ImGui.CalcTextSize(ptsNumber);
             ptsFontSize = ImGui.GetFontSize();
@@ -459,11 +456,9 @@ public class CSAchievementToast : Window, IDisposable
         float blockH = ptsSz.Y + 2f * s + unitSz.Y;
         float blockTop = midY - blockH * 0.5f;
 
-        using (Plugin.Instance?.ToastPointsFont?.Push())
+        using (useClassic ? null : Plugin.Instance?.ToastPointsFont?.Push())
         {
             var ptsAnchor = new Vector2(ptsRight - ptsSz.X, blockTop);
-            // Text-shadow approximation: two faint offset copies behind the
-            // crisp number. Kept subtle so they don't bloom into a halo.
             for (int shadow = 0; shadow < 2; shadow++)
             {
                 float off = (shadow + 1) * 1.5f * s;

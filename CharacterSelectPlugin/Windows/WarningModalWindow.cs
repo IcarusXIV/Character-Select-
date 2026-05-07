@@ -59,12 +59,16 @@ public class WarningModalWindow : Window, IDisposable
             viewport.Pos.Y + (viewport.Size.Y - windowSize.Y) / 2
         );
         ImGui.SetNextWindowPos(centerPos, ImGuiCond.Always);
-        _chromeColorCount = ThemeHelper.PushWindowChromeColors(plugin.Configuration);
+        if (!Plugin.UseClassicLayout)
+            _chromeColorCount = ThemeHelper.PushWindowChromeColors(plugin.Configuration);
     }
     public override void PostDraw()
     {
-        ThemeHelper.PopWindowChromeColors(_chromeColorCount);
-        _chromeColorCount = 0;
+        if (_chromeColorCount > 0)
+        {
+            ThemeHelper.PopWindowChromeColors(_chromeColorCount);
+            _chromeColorCount = 0;
+        }
     }
 
     public override void Draw()
@@ -228,6 +232,12 @@ public class WarningModalWindow : Window, IDisposable
     private async Task AcknowledgeWarning()
     {
         if (currentWarning == null) return;
+        if (!Plugin.IsServerEnabled())
+        {
+            // Acknowledge locally so the modal stops showing.
+            IsOpen = false;
+            return;
+        }
 
         if (currentWarning.Id.StartsWith("test-"))
         {

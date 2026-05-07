@@ -1047,6 +1047,7 @@ namespace CharacterSelectPlugin.Windows
 
         private async Task RefreshLikeCountsOnlyFixed()
         {
+            if (!Plugin.IsServerEnabled()) return;
             try
             {
                 Plugin.Log.Debug($"[Gallery] Starting auto-refresh (last successful: {(DateTime.Now - lastSuccessfulRefresh).TotalMinutes:F1} minutes ago)");
@@ -2955,6 +2956,7 @@ namespace CharacterSelectPlugin.Windows
 
             Task.Run(async () =>
             {
+                if (!Plugin.IsServerEnabled()) return;
                 try
                 {
                     using var httpClient = new HttpClient();
@@ -4072,6 +4074,7 @@ namespace CharacterSelectPlugin.Windows
 
         private async Task UpdateFriendsOnServer()
         {
+            if (!Plugin.IsServerEnabled()) return;
             try
             {
                 var currentChar = GetCurrentCharacterKey();
@@ -4104,6 +4107,7 @@ namespace CharacterSelectPlugin.Windows
 
         private async Task RefreshMutualFriends()
         {
+            if (!Plugin.IsServerEnabled()) return;
             try
             {
                 var currentChar = GetCurrentCharacterKey();
@@ -4162,6 +4166,13 @@ namespace CharacterSelectPlugin.Windows
         // Data management methods
         public async Task LoadGalleryData()
         {
+            if (!Plugin.IsServerEnabled())
+            {
+                allProfiles.Clear();
+                filteredProfiles.Clear();
+                isLoading = false;
+                return;
+            }
             if (!CanMakeRequest("gallery"))
             {
                 Plugin.Log.Debug("[Gallery] Rate limited - skipping request");
@@ -4747,6 +4758,7 @@ namespace CharacterSelectPlugin.Windows
         }
         private async Task LoadAnnouncements()
         {
+            if (!Plugin.IsServerEnabled()) return;
             try
             {
                 using var http = new HttpClient();
@@ -4774,6 +4786,11 @@ namespace CharacterSelectPlugin.Windows
         // Submit a report to the server
         private async Task SubmitReport(string characterId, string characterName, ReportReason reason, string details, string customReason = "")
         {
+            if (!Plugin.IsServerEnabled())
+            {
+                Plugin.ChatGui.PrintError("[Gallery] Cannot submit report: server communication is disabled in Settings > Privacy.");
+                return;
+            }
             try
             {
                 var activeCharacter = GetActiveCharacter();

@@ -103,6 +103,8 @@ namespace CharacterSelectPlugin
         /// <summary>Process pending lookups. Call periodically.</summary>
         public async Task ProcessPendingLookups()
         {
+            if (!Plugin.IsServerEnabled())
+                return;
             if (DateTime.Now - lastLookupTime < LookupCooldown)
                 return;
 

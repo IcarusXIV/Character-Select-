@@ -13,7 +13,7 @@ using CharacterSelectPlugin.Effects;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
-    public class CharacterGrid : IDisposable
+    public partial class CharacterGrid : IDisposable
     {
         private Plugin plugin;
         private UIStyles uiStyles;
@@ -102,7 +102,7 @@ namespace CharacterSelectPlugin.Windows.Components
         // Frame limiting for animations
         private float lastAnimationUpdate = 0f;
         private const float AnimationUpdateInterval = 1f / 60f; // 60 FPS max
-        
+
         // Halloween wiggle animation state
         private readonly Dictionary<int, float> wiggleStartTimes = new();
         private readonly Dictionary<int, Vector2> wiggleOffsets = new();
@@ -235,6 +235,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             // Calculate responsive scaling using Dalamud's GlobalScale
             var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
 
@@ -247,17 +248,17 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Apply the flags to window
-            
+
             // Draw seasonal background effects behind everything (before toolbar)
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 Vector2 windowSize = ImGui.GetWindowSize();
-                
+
                 if (effectiveTheme == SeasonalTheme.Halloween)
                 {
                     DrawHalloweenSpiderWebs();
-                    
+
                     // Set fog area right before drawing
                     fogEffect?.SetEffectArea(windowSize);
                     fogEffect?.Draw(); // Draw fog on same layer as spider webs
@@ -267,7 +268,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     // Corner line decorations removed per user request
                 }
             }
-            
+
             if (!ChassisOwnsToolbar)
                 DrawToolbar(totalScale);
             DrawCharacterGridContent(totalScale);
@@ -294,13 +295,13 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 effect.Update(deltaTime);
             }
-            
+
             // Update seasonal background effects
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 Vector2 contentSize = ImGui.GetContentRegionAvail();
-                
+
                 if (effectiveTheme == SeasonalTheme.Halloween)
                 {
                     // Update fog effect for Halloween theme
@@ -318,22 +319,22 @@ namespace CharacterSelectPlugin.Windows.Components
             var drawList = ImGui.GetWindowDrawList();
             var windowPos = ImGui.GetWindowPos();
             var windowSize = ImGui.GetWindowSize();
-            
+
             // Use white color for spider webs
             var webColor = new Vector4(1.0f, 1.0f, 1.0f, 0.6f); // White with higher opacity
             uint color = ImGui.GetColorU32(webColor);
-            
+
             // Draw simple corner webs
             float webSize = 50f;
-            
+
             // Top-left corner web - positioned exactly at corner
             Vector2 cornerTL = windowPos;
             DrawSimpleWeb(drawList, cornerTL, webSize, color, 0); // Top-left
-            
+
             // Top-right corner web - positioned exactly at corner
             Vector2 cornerTR = windowPos + new Vector2(windowSize.X, 0);
             DrawSimpleWeb(drawList, cornerTR, webSize, color, 1); // Top-right
-            
+
             // Bottom-right corner web - positioned exactly at corner (skip bottom-left to avoid hiding behind character cards)
             Vector2 cornerBR = windowPos + new Vector2(windowSize.X, windowSize.Y);
             DrawSimpleWeb(drawList, cornerBR, webSize, color, 3); // Bottom-right
@@ -345,18 +346,18 @@ namespace CharacterSelectPlugin.Windows.Components
             int strands = cornerType switch
             {
                 0 => 5, // Top-left: 5 strands
-                1 => 4, // Top-right: 4 strands  
+                1 => 4, // Top-right: 4 strands
                 2 => 6, // Bottom-left: 6 strands
                 3 => 4, // Bottom-right: 4 strands
                 _ => 4
             };
-            
+
             // Draw radial strands from corner
             for (int i = 0; i < strands; i++)
             {
                 float angle = 0f;
                 Vector2 direction = Vector2.Zero;
-                
+
                 switch (cornerType)
                 {
                     case 0: // Top-left
@@ -376,27 +377,27 @@ namespace CharacterSelectPlugin.Windows.Components
                         direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
                         break;
                 }
-                
+
                 // Vary strand length for more organic look
                 float strandLength = size * (0.8f + (i % 2) * 0.2f);
                 Vector2 endPoint = corner + direction * strandLength;
-                
+
                 // Vary line thickness
                 float thickness = i == 0 || i == strands - 1 ? 1.2f : 0.8f;
                 drawList.AddLine(corner, endPoint, color, thickness);
             }
-            
+
             // Draw connecting rings with varied complexity
             int rings = cornerType == 2 ? 4 : 3; // Bottom-left gets extra ring
             for (int ring = 1; ring <= rings; ring++)
             {
                 float ringSize = size * ring / rings * 0.9f;
-                
+
                 // Add some irregularity to ring connections
                 for (int i = 0; i < strands - 1; i++)
                 {
                     float angle1 = 0f, angle2 = 0f;
-                    
+
                     switch (cornerType)
                     {
                         case 0: // Top-left
@@ -416,16 +417,16 @@ namespace CharacterSelectPlugin.Windows.Components
                             angle2 = (float)(Math.PI + Math.PI * 0.5f * (i + 1) / (strands - 1));
                             break;
                     }
-                    
+
                     // Add slight curve to connections for more organic look
                     Vector2 point1 = corner + new Vector2((float)Math.Cos(angle1), (float)Math.Sin(angle1)) * ringSize;
                     Vector2 point2 = corner + new Vector2((float)Math.Cos(angle2), (float)Math.Sin(angle2)) * ringSize;
-                    
+
                     // Draw all connections for complete web
                     drawList.AddLine(point1, point2, color, 0.6f);
                 }
             }
-            
+
             // Add small spider at corner for some webs
             if (cornerType == 0 || cornerType == 3) // Top-left and bottom-right
             {
@@ -444,14 +445,14 @@ namespace CharacterSelectPlugin.Windows.Components
             float hoverAlpha = baseAlpha + (hoverAmount * 0.3f); // Increase visibility on hover
             var webColor = new Vector4(1.0f, 1.0f, 1.0f, hoverAlpha);
             uint color = ImGui.GetColorU32(webColor);
-            
+
             float baseWebSize = 25f * scale;
             float webSize = baseWebSize * (1.0f + hoverAmount * 0.2f); // Grow on hover
-            
+
             // Only draw on top corners to not obstruct character image too much
             Vector2 topLeft = cardMin;
             Vector2 topRight = cardMin + new Vector2(cardWidth, 0);
-            
+
             // Draw small spider webs in top corners
             DrawCardWeb(drawList, topLeft, webSize, color, 0); // Top-left
             DrawCardWeb(drawList, topRight, webSize, color, 1); // Top-right
@@ -461,11 +462,11 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             // Simpler web pattern for character cards
             int strands = 3; // Fewer strands for subtlety
-            
+
             for (int i = 0; i < strands; i++)
             {
                 float angle = 0f;
-                
+
                 switch (cornerType)
                 {
                     case 0: // Top-left
@@ -475,22 +476,22 @@ namespace CharacterSelectPlugin.Windows.Components
                         angle = (float)(Math.PI * 0.5f + Math.PI * 0.5f * i / (strands - 1));
                         break;
                 }
-                
+
                 Vector2 direction = new Vector2((float)Math.Cos(angle), (float)Math.Sin(angle));
                 Vector2 endPoint = corner + direction * size;
-                
+
                 drawList.AddLine(corner, endPoint, color, 0.8f);
             }
-            
+
             // Add simple connecting rings
             for (int ring = 1; ring <= 2; ring++)
             {
                 float ringSize = size * ring / 2f * 0.8f;
-                
+
                 for (int i = 0; i < strands - 1; i++)
                 {
                     float angle1 = 0f, angle2 = 0f;
-                    
+
                     switch (cornerType)
                     {
                         case 0: // Top-left
@@ -502,10 +503,10 @@ namespace CharacterSelectPlugin.Windows.Components
                             angle2 = (float)(Math.PI * 0.5f + Math.PI * 0.5f * (i + 1) / (strands - 1));
                             break;
                     }
-                    
+
                     Vector2 point1 = corner + new Vector2((float)Math.Cos(angle1), (float)Math.Sin(angle1)) * ringSize;
                     Vector2 point2 = corner + new Vector2((float)Math.Cos(angle2), (float)Math.Sin(angle2)) * ringSize;
-                    
+
                     drawList.AddLine(point1, point2, color, 0.6f);
                 }
             }
@@ -517,28 +518,28 @@ namespace CharacterSelectPlugin.Windows.Components
             var drawList = ImGui.GetWindowDrawList();
             var windowPos = ImGui.GetWindowPos();
             var windowSize = ImGui.GetWindowSize();
-            
+
             var snowColor = new Vector4(0.95f, 0.98f, 1.0f, 0.6f);
             uint color = ImGui.GetColorU32(snowColor);
-            
+
             float snowSize = 50f;
-            
+
             // Draw simple snow decorations at window corners - same as Halloween
             Vector2 cornerTL = windowPos;
             Vector2 cornerTR = windowPos + new Vector2(windowSize.X, 0);
             Vector2 cornerBR = windowPos + new Vector2(windowSize.X, windowSize.Y);
-            
+
             // Simple icicle lines at corners
             for (int i = 0; i < 3; i++)
             {
                 float offset = (i + 1) * snowSize / 4;
-                
+
                 // Top-left icicles
                 drawList.AddLine(
                     cornerTL + new Vector2(offset, 0),
                     cornerTL + new Vector2(offset, snowSize * 0.6f + i * 3f),
                     color, 1.5f);
-                    
+
                 // Top-right icicles  
                 drawList.AddLine(
                     cornerTR + new Vector2(-offset, 0),
@@ -553,9 +554,9 @@ namespace CharacterSelectPlugin.Windows.Components
             // Draw icicle triangles hanging from bottom of character card
             var iceColor = new Vector4(0.85f, 0.95f, 1.0f, 1.0f); // More opaque for visibility
             uint iceColorU32 = ImGui.GetColorU32(iceColor);
-            
+
             var random = new Random(42); // Fixed seed for consistent icicles per card
-            
+
             // Generate 4-6 icicles distributed along the bottom edge 
             int icicleCount = 4 + random.Next(3);
             for (int i = 0; i < icicleCount; i++)
@@ -566,23 +567,23 @@ namespace CharacterSelectPlugin.Windows.Components
                 float x = cardMin.X + edgeMargin + (availableWidth * ((float)i / (icicleCount - 1)));
                 float length = 15f + random.NextSingle() * 10f; // Longer icicles
                 float width = 3f + random.NextSingle() * 2f; // Wider icicles
-                
+
                 // Create icicle triangle hanging down from bottom border of the card.
                 // Per user feedback: icicles moved up by 3px total (65 → 62).
                 float cardBottom = cardMin.Y + imageHeight + (62f * scale);
                 Vector2 topLeft = new Vector2(x - width, cardBottom);
                 Vector2 topRight = new Vector2(x + width, cardBottom);
                 Vector2 bottom = new Vector2(x, cardBottom + length);
-                
+
                 // Draw icicle triangle with bright color for testing
                 drawList.AddTriangleFilled(topLeft, topRight, bottom, iceColorU32);
-                
+
                 // Add highlight line
                 Vector2 highlight1 = topLeft + new Vector2(0.3f, 0);
                 Vector2 highlight2 = bottom + new Vector2(-0.3f, 0);
                 drawList.AddLine(highlight1, highlight2, ImGui.GetColorU32(new Vector4(1.0f, 1.0f, 1.0f, 0.8f)), 1.5f);
             }
-            
+
             // Add gentle snow particles falling from character card edges
             DrawCharacterCardSnowParticles(drawList, cardMin, cardWidth, imageHeight, scale);
         }
@@ -591,9 +592,9 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var snowColor = new Vector4(0.95f, 0.98f, 1.0f, 0.6f);
             uint snowColorU32 = ImGui.GetColorU32(snowColor);
-            
+
             var random = new Random(123); // Different seed for particles
-            
+
             // Snow particles falling from bottom edge. Spawn point matches
             // the icicle base above (+62 px) so particles fall from the right place.
             int bottomParticles = 8 + random.Next(5); // 8-12 particles
@@ -603,11 +604,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 float x = cardMin.X + (cardWidth * random.NextSingle());
                 float fallDistance = 20f + (random.NextSingle() * 30f);
                 float particleSize = 0.8f + (random.NextSingle() * 1.2f);
-                
+
                 Vector2 particlePos = new Vector2(x, cardBottom + fallDistance);
                 drawList.AddCircleFilled(particlePos, particleSize, snowColorU32);
             }
-            
+
             // Snow particles falling from left side - more particles
             int leftParticles = 8 + random.Next(5); // 8-12 particles
             for (int i = 0; i < leftParticles; i++)
@@ -615,11 +616,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 float y = cardMin.Y + (imageHeight * random.NextSingle());
                 float fallDistance = 8f + (random.NextSingle() * 25f); // Slightly wider spread
                 float particleSize = 0.6f + (random.NextSingle() * 1.0f);
-                
+
                 Vector2 particlePos = new Vector2(cardMin.X - fallDistance, y);
                 drawList.AddCircleFilled(particlePos, particleSize, snowColorU32);
             }
-            
+
             // Snow particles falling from right side - more particles
             int rightParticles = 8 + random.Next(5); // 8-12 particles
             for (int i = 0; i < rightParticles; i++)
@@ -627,7 +628,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 float y = cardMin.Y + (imageHeight * random.NextSingle());
                 float fallDistance = 8f + (random.NextSingle() * 25f); // Slightly wider spread
                 float particleSize = 0.6f + (random.NextSingle() * 1.0f);
-                
+
                 Vector2 particlePos = new Vector2(cardMin.X + cardWidth + fallDistance, y);
                 drawList.AddCircleFilled(particlePos, particleSize, snowColorU32);
             }
@@ -638,11 +639,11 @@ namespace CharacterSelectPlugin.Windows.Components
             // Load snow.png from Assets folder
             string pluginDirectory = plugin.PluginDirectory;
             string snowImagePath = Path.Combine(pluginDirectory, "Assets", "snow.png");
-            
+
             if (File.Exists(snowImagePath))
             {
                 var snowTexture = Plugin.TextureProvider.GetFromFile(snowImagePath).GetWrapOrDefault();
-                
+
                 if (snowTexture != null)
                 {
                     // Calculate snow overlay size and position for top left corner
@@ -655,7 +656,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     float extraOffsetLeft = 2f * scale; // 2px further right than the original 4px
                     Vector2 snowPos = cardMin - new Vector2(borderMargin + extraOffsetLeft, borderMargin + extraOffsetUp); // Position over the border
                     Vector2 snowPosMax = snowPos + new Vector2(snowSize, snowSize);
-                    
+
                     // Draw snow overlay with no transparency
                     drawList.AddImageRounded(
                         (ImTextureID)snowTexture.Handle,
@@ -918,15 +919,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 if (ImGui.Button("Add Character", new Vector2(0, buttonHeight)))
                 {
-                    var io = ImGui.GetIO();
-                    bool isSecretMode = io.KeyCtrl && io.KeyShift;
-
                     plugin.OpenAddCharacterWindow();
-
-                    if (isSecretMode)
-                    {
-                        plugin.IsSecretMode = isSecretMode;
-                    }
                     InvalidateCache();
                 }
 
@@ -2115,10 +2108,12 @@ namespace CharacterSelectPlugin.Windows.Components
             string displayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias! : character.Name;
             using (Plugin.Instance?.OutfitSemi15?.Push())
             {
-                var nameSize = ImGui.CalcTextSize(displayName);
+                var nameNatural = ImGui.CalcTextSize(displayName);
                 float nameLeft = favMin.X + favSize + 6f * scale;
                 float nameRight = rpMin.X - 6f * scale;
                 float nameAvailW = nameRight - nameLeft;
+                float nameFit = Boutique.ComputeFitFactor(nameNatural, new Vector2(nameAvailW, 0));
+                var nameSize = new Vector2(nameNatural.X * nameFit, nameNatural.Y * nameFit);
                 float nameX = nameLeft + (nameAvailW - nameSize.X) * 0.5f;
                 if (nameX < nameLeft) nameX = nameLeft;
                 var namePos = new Vector2(nameX, npTop + (favSize - nameSize.Y) * 0.5f);
@@ -2148,7 +2143,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 else
                 {
-                    dl.AddText(namePos, Boutique.U32(Boutique.Text), displayName);
+                    dl.AddText(ImGui.GetFont(), ImGui.GetFontSize() * nameFit, namePos, Boutique.U32(Boutique.Text), displayName);
                 }
                 dl.PopClipRect();
             }
@@ -2428,7 +2423,7 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             float hoverAmount = UpdateHoverAnimation(index, isHovered);
-            
+
             // Get Halloween wiggle offset (use plugin.Characters.Count for total character count)
             Vector2 wiggleOffset = UpdateHalloweenWiggle(index, plugin.Characters.Count);
 
@@ -2452,23 +2447,23 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 var effectiveTheme = SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration);
                 var themeColors = SeasonalThemeManager.GetCurrentThemeColors(plugin.Configuration);
-                
+
                 switch (effectiveTheme)
                 {
                     case SeasonalTheme.Halloween:
                         // Alternate between orange and purple based on character index
-                        borderColor = index % 2 == 0 
+                        borderColor = index % 2 == 0
                             ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)    // Orange
                             : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Purple
                         break;
-                        
+
                     case SeasonalTheme.Winter:
                         // Alternate between icy blue and pale white based on character index
-                        borderColor = index % 2 == 0 
+                        borderColor = index % 2 == 0
                             ? new Vector3(themeColors.PrimaryAccent.X, themeColors.PrimaryAccent.Y, themeColors.PrimaryAccent.Z)     // Icy blue
                             : new Vector3(themeColors.SecondaryAccent.X, themeColors.SecondaryAccent.Y, themeColors.SecondaryAccent.Z); // Pale white
                         break;
-                        
+
                     case SeasonalTheme.Christmas:
                         // Alternate between red and green based on character index
                         borderColor = index % 2 == 0
@@ -2482,7 +2477,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         break;
                 }
             }
-            
+
             float borderIntensity = 0.6f + hoverAmount * 0.4f;
 
             if (draggedCharacterIndex == index)
@@ -2504,7 +2499,7 @@ namespace CharacterSelectPlugin.Windows.Components
             );
 
             var drawList = ImGui.GetWindowDrawList();
-            
+
             // Draw seasonal decorations BEHIND character cards - before background is drawn
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
@@ -2516,7 +2511,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 // Valentine's - no card decorations, just falling hearts background
             }
-            
+
             uint cardBgColor = ImGui.GetColorU32(new Vector4(0.12f, 0.12f, 0.12f, 0.95f));
             drawList.AddRectFilled(wiggleCardMin, wiggleCardMax, cardBgColor, 12f * scale);
 
@@ -2567,7 +2562,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
                     float paddingX = (imageAreaSize.X - finalWidth) / 2;
                     float paddingY = (imageAreaSize.Y - finalHeight) / 2;
-                    float liftOffset = -2f * hoverAmount * scale; 
+                    float liftOffset = -2f * hoverAmount * scale;
 
                     var imagePos = imageArea + new Vector2(paddingX, paddingY + liftOffset);
                     var imagePosMax = imagePos + new Vector2(finalWidth, finalHeight);
@@ -2575,7 +2570,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     // For high-resolution images, use slightly inset UVs to improve sampling quality
                     Vector2 uvMin = new Vector2(0, 0);
                     Vector2 uvMax = new Vector2(1, 1);
-                    
+
                     // Detect very large textures that might look crunchy when downscaled
                     bool isHighRes = originalWidth > 1920 || originalHeight > 1080;
                     if (isHighRes)
@@ -2610,15 +2605,15 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Draw Halloween spider webs on character cards
-            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) && 
+            if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
                 SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Halloween)
             {
                 // Add spider webs to all character cards with hover animation
                 DrawCharacterCardSpiderWebs(drawList, wiggleCardMin, cardWidth, imageHeight, scale, hoverAmount);
             }
-            
+
             // Winter icicles now drawn behind cards earlier in the draw order
-            
+
             // Draw snow.png overlay in top left corner for Winter/Christmas themes
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
                 (SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) == SeasonalTheme.Winter ||
@@ -2985,13 +2980,13 @@ namespace CharacterSelectPlugin.Windows.Components
                 starSymbol = character.IsFavorite ? "★" : "☆"; // Default stars
                 usesFontAwesome = false;
             }
-            
+
             // Push FontAwesome font if needed
             if (usesFontAwesome)
             {
                 ImGui.PushFont(UiBuilder.IconFont);
             }
-            
+
             var starPos = new Vector2(nameplateMin.X + (8 * scale), topRowY);
             var starSize = GetCachedTextSize(starSymbol);
 
@@ -3103,7 +3098,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             uint starColor = ImGui.GetColorU32(starMainColor);
             drawList.AddText(starPos, starColor, starSymbol);
-            
+
             // Pop FontAwesome font if it was used
             if (usesFontAwesome)
             {
@@ -3391,9 +3386,6 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SameLine(0, btnSpacing);
 
-            // Declare once for both Edit and Delete buttons
-            bool isCtrlShiftPressed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
-
             // Edit button
             if (useIcons)
             {
@@ -3405,21 +3397,6 @@ namespace CharacterSelectPlugin.Windows.Components
                 int realIndex = plugin.Characters.IndexOf(character);
                 if (realIndex >= 0)
                 {
-                    if (isCtrlShiftPressed && plugin.Configuration.EnableConflictResolution)
-                    {
-                        // Enable secret mode for this character conversion
-                        plugin.IsSecretMode = true;
-
-                        // Ensure the character has secret mode data structure initialized
-                        var targetChar = plugin.Characters[realIndex];
-                        if (targetChar.SecretModState == null)
-                        {
-                            targetChar.SecretModState = new Dictionary<string, bool>();
-                        }
-
-                        Plugin.ChatGui.Print("[Character Select+] Character conversion to Secret Mode enabled. Configure mods in the Edit window.");
-                    }
-                    // Always open edit window (either with converted or original macro)
                     plugin.OpenEditCharacterWindow(realIndex);
                 }
             }
@@ -3446,7 +3423,7 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             if (ImGui.Button(useIcons ? $"{deleteIcon}##{character.Name}" : $"Delete##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
-                if (isCtrlShiftPressed)
+                if (ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift)
                 {
                     // Collect every server fileKey this character has ever been known by so the
                     // server can clean up the JSON, image, likes, and cache entries. Best-effort:
@@ -3591,7 +3568,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 ghostPos,
                 ghostPos + scaledGhostSize,
                 ghostBgColor,
-                8f * scale 
+                8f * scale
             );
 
             // Glowing border using the character's nameplate colour
@@ -3658,11 +3635,11 @@ namespace CharacterSelectPlugin.Windows.Components
 
                     // Draw image with transparency
                     uint imageColor = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, ghostImageAlpha));
-                    
+
                     // For high-resolution images, use slightly inset UVs to improve sampling quality
                     Vector2 uvMin = new Vector2(0, 0);
                     Vector2 uvMax = new Vector2(1, 1);
-                    
+
                     // Detect very large textures that might look crunchy when downscaled
                     bool isHighRes = originalWidth > 1920 || originalHeight > 1080;
                     if (isHighRes)
@@ -3672,7 +3649,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         uvMin = new Vector2(uvInset, uvInset);
                         uvMax = new Vector2(1.0f - uvInset, 1.0f - uvInset);
                     }
-                    
+
                     drawList.AddImageRounded(
                         (ImTextureID)texture.Handle,
                         imagePos,
@@ -3690,7 +3667,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var nameSize = GetCachedTextSize(draggedCharacter.Name);
             Vector2 namePos = new Vector2(
                 ghostPos.X + (scaledGhostSize.X - nameSize.X) / 2,
-                ghostPos.Y + scaledGhostSize.Y - (20 * scale) 
+                ghostPos.Y + scaledGhostSize.Y - (20 * scale)
             );
 
             // Text shadow
@@ -3715,7 +3692,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 else
                 {
                     var targetInfo = new { ObjectIndex = target.ObjectIndex, ObjectKind = target.ObjectKind, Name = target.Name?.ToString() ?? "Unknown" };
-                    
+
                     _ = System.Threading.Tasks.Task.Run(async () =>
                     {
                         try
@@ -3800,7 +3777,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             {
                                 var designIndex = character.Designs.IndexOf(design);
                                 var targetInfo = new { ObjectIndex = target.ObjectIndex, ObjectKind = target.ObjectKind, Name = target.Name?.ToString() ?? "Unknown" };
-                                
+
                                 _ = System.Threading.Tasks.Task.Run(async () =>
                                 {
                                     try
@@ -4217,7 +4194,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 plugin.SwitchPenumbraCollection(character.PenumbraCollection);
             }
-            
+
             // Apply Secret Mode mod states if configured
             if (character.SecretModState != null && character.SecretModState.Any())
             {
@@ -4423,7 +4400,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private Vector2 UpdateHalloweenWiggle(int characterIndex, int totalCharacters)
         {
-            if (!SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) || 
+            if (!SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) ||
                 SeasonalThemeManager.GetEffectiveTheme(plugin.Configuration) != SeasonalTheme.Halloween)
             {
                 return Vector2.Zero;
@@ -4435,23 +4412,23 @@ namespace CharacterSelectPlugin.Windows.Components
             if (currentTime - lastWiggleCheck >= WiggleCheckInterval)
             {
                 lastWiggleCheck = currentTime;
-                
+
                 // Random chance to start wiggles on 1-3 random characters
                 Random rand = new Random();
                 int numWiggles = rand.Next(1, 4); // 1-3 wiggles
-                
+
                 for (int i = 0; i < numWiggles; i++)
                 {
                     int randomIndex = rand.Next(0, totalCharacters);
-                    
+
                     // Don't start a new wiggle if one is already active
-                    if (!wiggleStartTimes.ContainsKey(randomIndex) || 
+                    if (!wiggleStartTimes.ContainsKey(randomIndex) ||
                         currentTime - wiggleStartTimes[randomIndex] >= WiggleDuration)
                     {
                         wiggleStartTimes[randomIndex] = currentTime;
                     }
                 }
-                
+
                 // Clean up expired wiggles
                 var expiredWiggles = wiggleStartTimes.Where(kvp => currentTime - kvp.Value >= WiggleDuration).ToList();
                 foreach (var expired in expiredWiggles)
@@ -4465,17 +4442,17 @@ namespace CharacterSelectPlugin.Windows.Components
             if (wiggleStartTimes.ContainsKey(characterIndex))
             {
                 float wiggleElapsed = currentTime - wiggleStartTimes[characterIndex];
-                
+
                 if (wiggleElapsed < WiggleDuration)
                 {
                     // Sine wave wiggle with decay
                     float progress = wiggleElapsed / WiggleDuration;
                     float intensity = (1f - progress) * WiggleIntensity; // Decay over time
                     float wiggleFreq = 15f; // Fast wiggle
-                    
+
                     float offsetX = (float)(Math.Sin(wiggleElapsed * wiggleFreq) * intensity);
                     float offsetY = (float)(Math.Sin(wiggleElapsed * wiggleFreq * 1.3f) * intensity * 0.5f); // Less Y movement
-                    
+
                     return new Vector2(offsetX, offsetY);
                 }
             }

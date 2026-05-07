@@ -84,7 +84,7 @@ namespace CharacterSelectPlugin.Windows
         public List<string> ConflictingMods { get; set; } = new();
     }
 
-    public class SecretModeModWindow : Window, IDisposable
+    public partial class SecretModeModWindow : Window, IDisposable
     {
         private Plugin plugin;
         private UIStyles uiStyles;
@@ -103,30 +103,30 @@ namespace CharacterSelectPlugin.Windows
         private Action<Dictionary<string, bool>>? onSave = null;
         private Action<HashSet<string>>? onSavePins = null;
         private Action<HashSet<string>>? onSaveInherit = null; // Callback for mods to restore inheritance
-        
+
         // Pagination
         private const int ModsPerPage = 150;
         private int currentPage = 0;
         private Dictionary<int, int> categoryPageNumbers = new(); // Track page per category
-        
+
         // Collection management
         private string currentCollectionName = "";
         private Guid currentCollectionId = Guid.Empty;
         private Dictionary<Guid, string> availableCollections = new();
         private int selectedCollectionIndex = 0;
         private bool userHasSelectedCollection = false;
-        
+
         // Category sidebar
         private int selectedCategory = 0; // 0 = Currently Affecting, 1 = Gear, 2 = Hair, etc.
-        private readonly string[] categoryNames = { 
-            "Currently Affecting You", "Gear", "Hair", "Bodies", "Tattoos", 
-            "Eyes", "Ears/Horns/Tails", "Makeup/Face Paint", "Sculpts", "Mounts/Minions", "Standing Idle", "Chair Sitting", "Ground Sitting", "Lying/Dozing", "Mixed Idle", "Emotes", "Movement", "Job VFX", "VFX", "Skeletons", "Other" 
+        private readonly string[] categoryNames = {
+            "Currently Affecting You", "Gear", "Hair", "Bodies", "Tattoos",
+            "Eyes", "Ears/Horns/Tails", "Makeup/Face Paint", "Sculpts", "Mounts/Minions", "Standing Idle", "Chair Sitting", "Ground Sitting", "Lying/Dozing", "Mixed Idle", "Emotes", "Movement", "Job VFX", "VFX", "Skeletons", "Other"
         };
         private readonly ModType[] categoryTypes = {
             ModType.Unknown, ModType.Gear, ModType.Hair, ModType.Body, ModType.Tattoos,
             ModType.Eyes, ModType.EarsTails, ModType.FacePaint, ModType.Face, ModType.Mount, ModType.StandingIdle, ModType.ChairSitting, ModType.GroundSitting, ModType.LyingDozing, ModType.MixedIdle, ModType.Emote, ModType.Movement, ModType.JobVFX, ModType.VFX, ModType.Skeleton, ModType.Other
         };
-        
+
         // Pinned mods (never disabled)
         private HashSet<string> pinnedMods = new();
 
@@ -176,10 +176,10 @@ namespace CharacterSelectPlugin.Windows
             currentPage = newPage;
             categoryPageNumbers[selectedCategory] = currentPage;
         }
-        
+
         // Contextual warning system
         private HashSet<string> dismissedWarnings = new();
-        
+
         // Mod options panel state
         private ModEntry? optionsEditingMod = null;
         private Dictionary<string, List<string>>? availableModOptions = null;
@@ -187,17 +187,17 @@ namespace CharacterSelectPlugin.Windows
         private bool shouldOpenOptionsPopup = false;
         private bool isOptionsPopupOpen = true;
         private Dictionary<string, int>? optionGroupTypes = null; // 0=Single, 1=Multi
-        
+
         // Performance cache for mod options (prevents overwhelming Penumbra with 7000+ mods)
         private Dictionary<string, bool> modOptionsCache = new();
-        
+
         // Progress tracking for async loading
         private float loadingProgress = 0f;
         private string loadingStatus = "";
         private int totalModsToLoad = 0;
         private int modsLoaded = 0;
         private CancellationTokenSource? loadingCancellation = null;
-        
+
         // Enhanced loading UI
         private string currentLoadingMessage = "";
         private DateTime lastMessageChange = DateTime.Now;
@@ -205,7 +205,7 @@ namespace CharacterSelectPlugin.Windows
         private float loadingPanelAlpha = 0f;
         private DateTime loadingStartTime = DateTime.Now;
         private readonly Random messageRandom = new Random();
-        
+
         // Multi-stage progress tracking
         private enum LoadingStage
         {
@@ -215,10 +215,10 @@ namespace CharacterSelectPlugin.Windows
             Finalizing = 3,
             Complete = 4
         }
-        
+
         private LoadingStage currentLoadingStage = LoadingStage.Initializing;
         private float stageProgress = 0f;
-        
+
         // Loading message pools
         private readonly string[] generalLoadingMessages = {
             "Convincing mods they want to be organized...",
@@ -286,7 +286,7 @@ namespace CharacterSelectPlugin.Windows
             "Organizing a intervention for hoarding behaviors...",
             "Teaching file extensions the meaning of identity..."
         };
-        
+
         private readonly string[] nearEndMessages = {
             "Just kidding, we're only 50% done...",
             "Almost there! (Narrator: They were not almost there)",
@@ -319,6 +319,7 @@ namespace CharacterSelectPlugin.Windows
         private int _chromeColorCount = 0;
         public override void PreDraw()
         {
+            if (Plugin.UseClassicLayout) return;
             // WindowBg / TitleBg commit at ImGui.Begin time, must be pushed
             // BEFORE Begin so the title bar respects the theme.
             _chromeColorCount = CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(plugin.Configuration);
@@ -326,6 +327,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void PostDraw()
         {
+            if (_chromeColorCount == 0) return;
             CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
             _chromeColorCount = 0;
         }
@@ -375,13 +377,13 @@ namespace CharacterSelectPlugin.Windows
             {
                 Plugin.Log.Information("[PIN DEBUG] No existing pins provided");
             }
-            
+
             // Initialize loading animations
             loadingStartTime = DateTime.Now;
             loadingPanelAlpha = 0f;
             currentLoadingMessage = "";
             lastMessageIndex = -1;
-            
+
             // Create new cancellation token
             loadingCancellation = new CancellationTokenSource();
             _ = LoadCurrentMods();
@@ -391,7 +393,7 @@ namespace CharacterSelectPlugin.Windows
         {
             isLoading = true;
             availableMods.Clear();
-            
+
             // Reset progress tracking
             loadingProgress = 0f;
             loadingStatus = "Initializing...";
@@ -399,33 +401,33 @@ namespace CharacterSelectPlugin.Windows
             modsLoaded = 0;
             currentLoadingStage = LoadingStage.Initializing;
             stageProgress = 0f;
-            
+
             try
             {
                 // Removed debug log to reduce spam
-                
+
                 // Check if Penumbra integration is available
                 if (plugin.PenumbraIntegration?.IsPenumbraAvailable != true)
                 {
                     Plugin.Log.Warning("[SecretMode] Penumbra integration not available");
                     return;
                 }
-                
+
                 // Get all available collections first
                 availableCollections = plugin.PenumbraIntegration.GetAvailableCollections();
                 // Available collections count logged when needed
-                
+
                 // Only auto-detect collection if user hasn't manually selected one
                 if (!userHasSelectedCollection)
                 {
                     var (success, detectedCollectionId, detectedCollectionName) = plugin.PenumbraIntegration.GetPlayerCollection();
-                    
+
                     if (success)
                     {
                         currentCollectionId = detectedCollectionId;
                         currentCollectionName = detectedCollectionName;
                         // Auto-detected player collection (log removed to prevent spam)
-                        
+
                         // Find the index in available collections for UI dropdown
                         var collectionsList = availableCollections.ToList();
                         selectedCollectionIndex = collectionsList.FindIndex(kvp => kvp.Key == currentCollectionId);
@@ -447,21 +449,21 @@ namespace CharacterSelectPlugin.Windows
                 else
                 {
                     // Using user-selected collection (log removed to prevent spam)
-                    
+
                     // Ensure the dropdown index is correct for user-selected collection
                     var collectionsList = availableCollections.ToList();
                     selectedCollectionIndex = collectionsList.FindIndex(kvp => kvp.Key == currentCollectionId);
-                    if (selectedCollectionIndex < 0) 
+                    if (selectedCollectionIndex < 0)
                     {
                         selectedCollectionIndex = 0;
                         // User-selected collection not found, defaulting to index 0 (log removed to prevent spam)
                     }
                 }
-                
+
                 // Get mod list for names
                 var modList = plugin.PenumbraIntegration.GetModList();
                 // Display mode set (reduced logging)
-                
+
                 // Always load ALL mods for proper categorization
                 if (currentCollectionId == Guid.Empty || !availableCollections.Any())
                 {
@@ -473,9 +475,9 @@ namespace CharacterSelectPlugin.Windows
                     // Load all mods and mark which ones are currently affecting
                     await LoadAllModsWithAffectingStatus(modList, currentCollectionId);
                 }
-                
+
                 // LoadCurrentMods completed (log removed to prevent spam)
-                
+
                 // Detect dependencies after all mods are loaded
                 DetectAllModDependencies();
             }
@@ -491,12 +493,12 @@ namespace CharacterSelectPlugin.Windows
                 stageProgress = 1.0f;
                 UpdateOverallProgress();
                 loadingStatus = "Finalizing...";
-                
+
                 // Small delay to show completion
                 await Task.Delay(200);
-                
+
                 isLoading = false;
-                
+
                 // Ensure pinned mods remain selected after async loading
                 foreach (var pin in pinnedMods)
                 {
@@ -504,17 +506,17 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
         }
-        
+
         private async Task LoadCurrentlyAffectingMods(Dictionary<string, string> modList, Guid collectionId)
         {
             // Loading currently affecting mods
             // Using On-Screen tab data
-            
+
             // Mod list loaded
-            
+
             // Get the mods that are ACTUALLY affecting the character right now (On-Screen tab equivalent)
             var affectingMods = plugin.PenumbraIntegration?.GetOnScreenTabMods();
-            
+
             // Debug the affecting mods result
             if (affectingMods == null)
             {
@@ -528,12 +530,12 @@ namespace CharacterSelectPlugin.Windows
                     // First 5 affecting mods (log removed to prevent spam)
                 }
             }
-            
+
             // Always show some mods - if we can't determine what's affecting, show all enabled
             if (affectingMods == null || !affectingMods.Any())
             {
                 // No currently affecting mods found, showing all enabled mods instead (log removed to prevent spam)
-                
+
                 // Fallback to the original method if the new one doesn't work yet
                 var allModsChangedItems = plugin.PenumbraIntegration?.GetAllModsChangedItems();
                 if (allModsChangedItems == null || !allModsChangedItems.Any())
@@ -541,19 +543,19 @@ namespace CharacterSelectPlugin.Windows
                     // No changed items data available from Penumbra (log removed to prevent spam)
                     return;
                 }
-                
+
                 // Fallback method active
-                
+
                 // Get mod settings to check enabled status and priorities
                 var fallbackModSettings = plugin.PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
-                
-                if (fallbackModSettings == null) 
+
+                if (fallbackModSettings == null)
                 {
                     // Could not get mod settings in fallback - using simple load (log removed to prevent spam)
                     await LoadAllModsSimple(modList);
                     return;
                 }
-                
+
                 var fallbackAffectingMods = new HashSet<string>();
                 foreach (var (modDir, changedItems) in allModsChangedItems)
                 {
@@ -564,58 +566,58 @@ namespace CharacterSelectPlugin.Windows
                         // Mod affecting items (reduced logging)
                     }
                 }
-                
+
                 // Fallback affecting mods found
-                
+
                 // Create entries for affecting mods using fallback data
                 await CreateModEntries(modList, fallbackModSettings, fallbackAffectingMods, true);
                 return;
             }
-            
+
             // Found currently affecting mods via On-Screen tab data (log removed to prevent spam)
-            
+
             var modListKeys = modList.Keys.ToHashSet();
             var intersection = affectingMods.Intersect(modListKeys).ToList();
             // On-Screen tab found affecting mods (log removed to prevent spam)
-            
+
             // Get mod settings to get priorities and other info
             var modSettings = plugin.PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
-            
+
             if (modSettings == null)
             {
                 // Could not get mod settings - using simple load (log removed to prevent spam)
                 await LoadAllModsSimple(modList);
                 return;
             }
-            
+
             // Create entries for the mods that are actually affecting the character
             await CreateModEntries(modList, modSettings, affectingMods, true);
         }
-        
+
         private async Task LoadEnabledMods(Dictionary<string, string> modList, Guid collectionId)
         {
             try
             {
                 // Get mod settings using robust method
                 var modSettings = plugin.PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
-                
-                if (modSettings == null) 
+
+                if (modSettings == null)
                 {
                     // Could not get mod settings for collection (log removed to prevent spam)
                     await LoadAllModsSimple(modList);
                     return;
                 }
-                
+
                 // Mod settings retrieved
-                
+
                 // Only show mods that are ENABLED in this specific collection
                 var enabledMods = modSettings
                     .Where(kvp => kvp.Value.Item1) // Only enabled mods
                     .Select(kvp => kvp.Key)
                     .ToHashSet();
-                
+
                 // Found enabled mods in collection (log removed to prevent spam)
-                
+
                 await CreateModEntries(modList, modSettings, enabledMods, false);
             }
             catch (Exception ex)
@@ -625,21 +627,21 @@ namespace CharacterSelectPlugin.Windows
                 await LoadAllModsSimple(modList);
             }
         }
-        
+
         private async Task LoadAllModsWithAffectingStatus(Dictionary<string, string> modList, Guid collectionId)
         {
             try
             {
                 // Loading all mods with affecting status
-                
+
                 // Update loading status
                 loadingStatus = "Getting currently affecting mods...";
                 await Task.Yield(); // Allow UI to update
-                
+
                 // Get what mods are currently affecting the character
                 var affectingMods = plugin.PenumbraIntegration?.GetCurrentlyAffectingMods(collectionId) ?? new HashSet<string>();
                 // Found currently affecting mods (log removed to prevent spam)
-                
+
                 // Debug: Log first few affecting mods
                 if (affectingMods.Any())
                 {
@@ -650,28 +652,28 @@ namespace CharacterSelectPlugin.Windows
                 {
                     // No affecting mods detected (log removed to prevent spam)
                 }
-                
+
                 // Update loading status
                 loadingStatus = "Getting mod settings...";
                 await Task.Yield(); // Allow UI to update
-                
+
                 // Get mod settings using robust method
                 var modSettings = plugin.PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
-                
+
                 if (modSettings == null)
                 {
                     // Could not get mod settings for all mods (log removed to prevent spam)
                     await LoadAllModsSimple(modList);
                     return;
                 }
-                
+
                 // All mod settings retrieved
-                
+
                 // For the category system, we want to show ALL mods from the mod list
                 var allMods = modList.Keys.ToHashSet();
                 totalModsToLoad = allMods.Count;
                 loadingStatus = $"Processing {totalModsToLoad} mods...";
-                
+
                 await CreateModEntriesWithAffectingStatus(modList, modSettings, allMods, affectingMods);
             }
             catch (Exception ex)
@@ -681,27 +683,27 @@ namespace CharacterSelectPlugin.Windows
                 await LoadAllModsSimple(modList);
             }
         }
-        
+
         private async Task LoadAllMods(Dictionary<string, string> modList, Guid collectionId)
         {
             try
             {
                 // Get mod settings using robust method
                 var modSettings = plugin.PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
-                
+
                 if (modSettings == null)
                 {
                     // Could not get mod settings for all mods (log removed to prevent spam)
                     await LoadAllModsSimple(modList);
                     return;
                 }
-                
+
                 // Loading all mods - got settings (log removed to prevent spam)
-                
+
                 // For "All Mods" mode, we want to show ALL mods from the mod list, not just ones with settings
                 var allMods = modList.Keys.ToHashSet();
                 // Total mods in mod list (log removed to prevent spam)
-                
+
                 await CreateModEntries(modList, modSettings, allMods, false);
             }
             catch (Exception ex)
@@ -711,7 +713,7 @@ namespace CharacterSelectPlugin.Windows
                 await LoadAllModsSimple(modList);
             }
         }
-        
+
         private async Task LoadAllModsSimple(Dictionary<string, string> modList)
         {
             // Simple fallback when we can't get collection information - show ALL mods
@@ -719,7 +721,7 @@ namespace CharacterSelectPlugin.Windows
             {
                 // Determine mod type using path-based detection only
                 var modType = DetermineModTypeFromPaths(modDir, modName, null);
-                
+
                 var entry = new ModEntry
                 {
                     Directory = modDir,
@@ -731,7 +733,7 @@ namespace CharacterSelectPlugin.Windows
                     IsCurrentlyAffecting = false, // We don't know this either
                     ModType = modType
                 };
-                
+
                 availableMods.Add(entry);
 
                 // Don't add to selectedMods - mods not in selectedMods = "Don't Change"
@@ -740,15 +742,15 @@ namespace CharacterSelectPlugin.Windows
 
             await Task.CompletedTask;
         }
-        
+
         private async Task CreateModEntriesWithAffectingStatus(Dictionary<string, string> modList, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)> modSettings, HashSet<string> allMods, HashSet<string> affectingMods)
         {
             // Creating mod entries with affecting status
-            
+
             var modsList = allMods.ToList();
             var batchSize = 25; // Process 25 mods at a time for better performance
             var processedCount = 0;
-            
+
             for (int i = 0; i < modsList.Count; i += batchSize)
             {
                 // Check for cancellation
@@ -757,13 +759,13 @@ namespace CharacterSelectPlugin.Windows
                     // Mod loading cancelled (log removed to prevent spam)
                     return;
                 }
-                
+
                 var batch = modsList.Skip(i).Take(batchSize).ToList();
-                
+
                 foreach (var modDir in batch)
                 {
                     var modName = modList.ContainsKey(modDir) ? modList[modDir] : modDir;
-                    
+
                     // Use cached categorization if available, otherwise analyze
                     var modType = ModType.Unknown;
                     if (plugin.modCategorizationCache != null && plugin.modCategorizationCache.ContainsKey(modDir))
@@ -775,20 +777,20 @@ namespace CharacterSelectPlugin.Windows
                         // Fallback to expensive method only if not in cache
                         modType = DetermineModTypeFromPaths(modDir, modName, null);
                     }
-                    
+
                     // Debug log only first 5 mods for categorization consistency - removed to reduce spam
-                    
+
                     // Check if this mod has settings in the current collection
                     bool hasSettings = modSettings.ContainsKey(modDir);
                     var settings = hasSettings ? modSettings[modDir] : (false, 0, new Dictionary<string, List<string>>(), false, false);
-                    
+
                     // Check if this mod is currently affecting the character
                     bool isCurrentlyAffecting = affectingMods.Contains(modDir);
-                    
+
                     // Analyze for dependencies and conflicts
                     var conflictAnalysis = plugin.PenumbraIntegration?.AnalyzeModForDependenciesAndConflicts(
                         modDir, modName, modType, selectedMods);
-                    
+
                     var entry = new ModEntry
                     {
                         Directory = modDir,
@@ -831,14 +833,14 @@ namespace CharacterSelectPlugin.Windows
         private async Task CreateModEntries(Dictionary<string, string> modList, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)> modSettings, HashSet<string> modsToInclude, bool markAsAffecting)
         {
             // Creating mod entries
-            
+
             var modsList = modsToInclude.ToList();
             var batchSize = 25; // Process 25 mods at a time for better performance
             var processedCount = 0;
-            
+
             // Update total if not already set
             if (totalModsToLoad == 0) totalModsToLoad = modsList.Count;
-            
+
             for (int i = 0; i < modsList.Count; i += batchSize)
             {
                 // Check for cancellation
@@ -847,13 +849,13 @@ namespace CharacterSelectPlugin.Windows
                     // Mod loading cancelled (log removed to prevent spam)
                     return;
                 }
-                
+
                 var batch = modsList.Skip(i).Take(batchSize).ToList();
-                
+
                 foreach (var modDir in batch)
                 {
                     var modName = modList.ContainsKey(modDir) ? modList[modDir] : modDir;
-                    
+
                     // Use cached categorization if available, otherwise analyze
                     var modType = ModType.Unknown;
                     if (plugin.modCategorizationCache != null && plugin.modCategorizationCache.ContainsKey(modDir))
@@ -865,15 +867,15 @@ namespace CharacterSelectPlugin.Windows
                         // Fallback to expensive method only if not in cache
                         modType = DetermineModTypeFromPaths(modDir, modName, null);
                     }
-                    
+
                     // Check if this mod has settings in the current collection
                     bool hasSettings = modSettings.ContainsKey(modDir);
                     var settings = hasSettings ? modSettings[modDir] : (false, 0, new Dictionary<string, List<string>>(), false, false);
-                    
+
                     // Analyze for dependencies and conflicts
                     var conflictAnalysis = plugin.PenumbraIntegration?.AnalyzeModForDependenciesAndConflicts(
                         modDir, modName, modType, selectedMods);
-                    
+
                     var entry = new ModEntry
                     {
                         Directory = modDir,
@@ -919,25 +921,25 @@ namespace CharacterSelectPlugin.Windows
             if (categoryIndex == 0) // Currently Affecting You
             {
                 // Count must match the filtering logic in GetFilteredModsForSelectedCategory
-                return availableMods.Count(m => m.IsCurrentlyAffecting && 
-                    (m.ModType == ModType.Gear || m.ModType == ModType.Hair || 
-                     m.ModType == ModType.Eyes || m.ModType == ModType.Tattoos || 
+                return availableMods.Count(m => m.IsCurrentlyAffecting &&
+                    (m.ModType == ModType.Gear || m.ModType == ModType.Hair ||
+                     m.ModType == ModType.Eyes || m.ModType == ModType.Tattoos ||
                      m.ModType == ModType.EarsTails || m.ModType == ModType.FacePaint));
             }
-            
+
             var categoryType = categoryTypes[categoryIndex];
             return GetModsForCategory(categoryType).Count();
         }
-        
+
         private List<ModEntry> GetModsForCategory(ModType categoryType)
         {
-            return availableMods.Where(m => 
-                categoryType == ModType.Unknown || 
+            return availableMods.Where(m =>
+                categoryType == ModType.Unknown ||
                 m.ModType == categoryType ||
                 (categoryType == ModType.Other && (m.ModType == ModType.Unknown || m.ModType == ModType.Other))
             ).ToList();
         }
-        
+
         private Vector4 GetTypeColor(ModType modType)
         {
             return modType switch
@@ -965,7 +967,7 @@ namespace CharacterSelectPlugin.Windows
                 _ => ColorSchemes.Dark.TextMuted
             };
         }
-        
+
         private string GetTypeIcon(ModType modType)
         {
             return modType switch
@@ -996,6 +998,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             // Update window title based on current context
             var contextTitle = GetContextualWindowTitle();
             if (WindowName != contextTitle)
@@ -1030,12 +1033,12 @@ namespace CharacterSelectPlugin.Windows
                 CharacterSelectPlugin.Windows.Styles.Boutique.PopFormStyle();
             }
         }
-        
+
         private string GetContextualWindowTitle()
         {
             return "Mod Manager";
         }
-        
+
         private void DrawLoadingState()
         {
             UpdateLoadingAnimations();
@@ -1175,14 +1178,14 @@ namespace CharacterSelectPlugin.Windows
             // No Dummy(availSize), that was forcing the content to span the
             // full region and triggering a phantom scrollbar.
         }
-        
+
         private void UpdateLoadingAnimations()
         {
             var timeSinceStart = (float)(DateTime.Now - loadingStartTime).TotalSeconds;
-            
+
             // Fade in panel
             loadingPanelAlpha = Math.Min(1.0f, timeSinceStart * 3.0f); // Fade in over ~0.33 seconds
-            
+
             // Update loading message every 3 seconds
             var timeSinceMessage = (DateTime.Now - lastMessageChange).TotalSeconds;
             if (timeSinceMessage >= 3.0 || string.IsNullOrEmpty(currentLoadingMessage))
@@ -1191,11 +1194,11 @@ namespace CharacterSelectPlugin.Windows
                 lastMessageChange = DateTime.Now;
             }
         }
-        
+
         private void UpdateLoadingMessage()
         {
             string[] messagePool;
-            
+
             // Use near-end messages when progress is high
             if (loadingProgress >= 0.95f)
             {
@@ -1205,24 +1208,24 @@ namespace CharacterSelectPlugin.Windows
             {
                 messagePool = generalLoadingMessages;
             }
-            
+
             // Get a random message different from the last one
             int newIndex;
             do
             {
                 newIndex = messageRandom.Next(messagePool.Length);
             } while (newIndex == lastMessageIndex && messagePool.Length > 1);
-            
+
             lastMessageIndex = newIndex;
             currentLoadingMessage = messagePool[newIndex];
         }
-        
+
         private void UpdateOverallProgress()
         {
             // Multi-stage progress calculation
             // Stage weights: Initializing (5%), LoadingMods (80%), AnalyzingDependencies (10%), Finalizing (5%)
             float overallProgress = 0f;
-            
+
             switch (currentLoadingStage)
             {
                 case LoadingStage.Initializing:
@@ -1241,10 +1244,10 @@ namespace CharacterSelectPlugin.Windows
                     overallProgress = 1.0f;
                     break;
             }
-            
+
             loadingProgress = Math.Min(1.0f, overallProgress);
         }
-        
+
         private void DrawHeader()
         {
             float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
@@ -1792,7 +1795,7 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.BulletText("Penumbra is not installed or running");
                 ImGui.BulletText("Penumbra has no mods in the current collection");
                 ImGui.BulletText("No mods are currently affecting your character");
-                
+
                 ImGui.Separator();
                 if (ImGui.Button("Retry Loading Mods"))
                 {
@@ -1800,7 +1803,7 @@ namespace CharacterSelectPlugin.Windows
                 }
                 return;
             }
-            
+
             float scaleSb = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
             scaleSb = MathF.Max(0.85f, MathF.Min(scaleSb, 2.0f));
 
@@ -1854,26 +1857,26 @@ namespace CharacterSelectPlugin.Windows
             // space at the bottom for the boutique pagination row (32px) plus
             // a small gap, so the page-btns aren't clipped.
             ImGui.BeginChild("ModList", new Vector2(-1, -36 * scaleSb), false);
-            
+
             // Get filtered mods and handle pagination
             var categoryMods = GetFilteredModsForSelectedCategory();
             var totalMods = categoryMods.Count;
             var totalPages = (int)Math.Ceiling((double)totalMods / ModsPerPage);
-            
+
             // Ensure current page is valid for this category
             if (!categoryPageNumbers.ContainsKey(selectedCategory))
                 categoryPageNumbers[selectedCategory] = 0;
-            
+
             currentPage = categoryPageNumbers[selectedCategory];
             if (currentPage >= totalPages && totalPages > 0)
                 currentPage = totalPages - 1;
-            
+
             // Get mods for current page
             var pagedMods = categoryMods
                 .Skip(currentPage * ModsPerPage)
                 .Take(ModsPerPage)
                 .ToList();
-            
+
             // Boutique tracked-caps caption when searching.
             if (!string.IsNullOrWhiteSpace(searchFilter))
             {
@@ -1937,7 +1940,7 @@ namespace CharacterSelectPlugin.Windows
                 if (selectedCategory == 0 && !hasDrawnDivider && hasPreviousGearHair)
                 {
                     bool isCurrentGearHair = mod.ModType == ModType.Gear || mod.ModType == ModType.Hair;
-                    
+
                     // If we transition from Gear/Hair to other types, draw the
                     // boutique restricted divider (amber dashed top + tracked-caps copy).
                     if (!isCurrentGearHair)
@@ -1958,12 +1961,12 @@ namespace CharacterSelectPlugin.Windows
                         hasDrawnDivider = true;
                     }
                 }
-                
+
                 // Check if this mod requires Ctrl+click (other mods after divider in Currently Affecting You tab)
-                bool requiresCtrlClick = selectedCategory == 0 && hasDrawnDivider && 
+                bool requiresCtrlClick = selectedCategory == 0 && hasDrawnDivider &&
                                         mod.ModType != ModType.Gear && mod.ModType != ModType.Hair;
                 DrawModEntry(mod, requiresCtrlClick);
-                
+
                 // Track if this mod is Gear/Hair for next iteration
                 if (selectedCategory == 0)
                 {
@@ -2187,9 +2190,9 @@ namespace CharacterSelectPlugin.Windows
             if (elapsed >= ModMgrSheenDuration) return -1f;
             return elapsed / ModMgrSheenDuration;
         }
-        
+
         // Path-based mod type analysis implemented below
-        
+
         private void SaveSelection()
         {
             // Build selection: include both Enable (true) AND Disable (false)
@@ -2235,17 +2238,17 @@ namespace CharacterSelectPlugin.Windows
                 onSaveInherit?.Invoke(modsToInherit);
             }
         }
-        
+
         // Helper methods for new UI
         private List<ModEntry> GetFilteredModsForSelectedCategory()
         {
             List<ModEntry> categoryMods;
-            
+
             // Check if global search is active
             if (!string.IsNullOrEmpty(globalSearchFilter))
             {
                 // Global search: search across ALL mods regardless of category
-                categoryMods = availableMods.Where(m => 
+                categoryMods = availableMods.Where(m =>
                     m.Name.Contains(globalSearchFilter, StringComparison.OrdinalIgnoreCase) ||
                     m.Directory.Contains(globalSearchFilter, StringComparison.OrdinalIgnoreCase)
                 ).ToList();
@@ -2257,16 +2260,16 @@ namespace CharacterSelectPlugin.Windows
                 {
                     // Display: Show all currently affecting customization mods for visibility
                     // Note: Snapshot feature still only includes Gear/Hair for safety
-                    categoryMods = availableMods.Where(m => m.IsCurrentlyAffecting && 
-                        (m.ModType == ModType.Gear || m.ModType == ModType.Hair || 
-                         m.ModType == ModType.Eyes || m.ModType == ModType.Tattoos || 
+                    categoryMods = availableMods.Where(m => m.IsCurrentlyAffecting &&
+                        (m.ModType == ModType.Gear || m.ModType == ModType.Hair ||
+                         m.ModType == ModType.Eyes || m.ModType == ModType.Tattoos ||
                          m.ModType == ModType.EarsTails || m.ModType == ModType.FacePaint)).ToList();
                 }
                 else
                 {
                     // Get mods for this specific category
                     var targetType = categoryTypes[selectedCategory];
-                    
+
                     // Special case for Mounts/Minions category (includes both Mount and Minion types)
                     if (targetType == ModType.Mount)
                     {
@@ -2282,17 +2285,17 @@ namespace CharacterSelectPlugin.Windows
                         categoryMods = availableMods.Where(m => m.ModType == targetType).ToList();
                     }
                 }
-                
+
                 // Apply category-specific search filter if present
                 if (!string.IsNullOrEmpty(searchFilter))
                 {
-                    categoryMods = categoryMods.Where(m => 
+                    categoryMods = categoryMods.Where(m =>
                         m.Name.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ||
                         m.Directory.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
                     ).ToList();
                 }
             }
-            
+
             // Sort with currently affecting mods at the top
             // For "Currently Affecting You" category, prioritize Gear/Hair over other mod types
             if (selectedCategory == 0) // Currently Affecting You
@@ -2312,7 +2315,7 @@ namespace CharacterSelectPlugin.Windows
                     .ToList();
             }
         }
-        
+
         private void DrawModEntry(ModEntry mod, bool requiresCtrlClick = false)
         {
             float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
@@ -2630,13 +2633,13 @@ namespace CharacterSelectPlugin.Windows
         {
             var modIdentifier = $"{mod.Name}|{mod.Directory}";
             var isManuallyOverridden = plugin.UserOverrideManager.HasOverride(modIdentifier);
-            
+
             // Use standard context menu on the invisible button
             if (ImGui.BeginPopupContextItem($"ModCategoryMenu_{mod.Directory}"))
             {
                 ImGui.Text($"Move '{mod.Name}' to:");
                 ImGui.Separator();
-                
+
                 // Get all category types and names
                 var categoryTypes = new ModType[]
                 {
@@ -2647,24 +2650,24 @@ namespace CharacterSelectPlugin.Windows
                     ModType.MixedIdle, ModType.Movement, ModType.JobVFX, ModType.VFX,
                     ModType.Skeleton, ModType.Other
                 };
-                
+
                 var categoryDisplayNames = new string[]
                 {
-                    "Gear", "Hair", "Bodies", "Tattoos", "Eyes", "Ears/Horns/Tails", 
+                    "Gear", "Hair", "Bodies", "Tattoos", "Eyes", "Ears/Horns/Tails",
                     "Sculpts", "Makeup/Face Paint", "Mounts", "Minions", "Emotes", "Standing Idle",
-                    "Chair Sitting", "Ground Sitting", "Lying/Dozing", "Mixed Idle", 
+                    "Chair Sitting", "Ground Sitting", "Lying/Dozing", "Mixed Idle",
                     "Movement", "Job VFX", "VFX", "Skeletons", "Other"
                 };
-                
+
                 for (int i = 0; i < categoryTypes.Length; i++)
                 {
                     var categoryType = categoryTypes[i];
                     var displayName = categoryDisplayNames[i];
-                    
+
                     // Show current category with checkmark
                     var isCurrent = mod.ModType == categoryType;
                     var text = isCurrent ? $"✓ {displayName}" : displayName;
-                    
+
                     if (ImGui.MenuItem(text, "", isCurrent))
                     {
                         if (!isCurrent)
@@ -2672,41 +2675,41 @@ namespace CharacterSelectPlugin.Windows
                             // Set override and update mod type
                             plugin.UserOverrideManager.SetOverride(modIdentifier, categoryType);
                             mod.ModType = categoryType;
-                            
+
                             // Also update the cache so future loads use the correct category
                             if (plugin.modCategorizationCache != null)
                             {
                                 plugin.modCategorizationCache[mod.Directory] = categoryType;
                             }
-                            
+
                             Plugin.Log.Info($"[UserOverride] Moved '{mod.Name}' to {displayName} category");
-                            
+
                             // Save cache to disk immediately to prevent loss on crash
                             plugin.UpdateModCache(mod.Directory, mod.Name, categoryType);
                         }
                     }
                 }
-                
+
                 ImGui.Separator();
-                
+
                 // Reset to automatic option
                 if (isManuallyOverridden)
                 {
                     if (ImGui.MenuItem("Reset to Automatic"))
                     {
                         plugin.UserOverrideManager.RemoveOverride(modIdentifier);
-                        
+
                         // Re-analyze mod type automatically
                         mod.ModType = DetermineModTypeFromPaths(mod.Directory, mod.Name, null);
-                        
+
                         // Also update the cache with the automatic categorization
                         if (plugin.modCategorizationCache != null)
                         {
                             plugin.modCategorizationCache[mod.Directory] = mod.ModType;
                         }
-                        
+
                         Plugin.Log.Info($"[UserOverride] Reset '{mod.Name}' to automatic categorization: {mod.ModType}");
-                        
+
                         // Save cache to disk immediately to prevent loss on crash
                         plugin.UpdateModCache(mod.Directory, mod.Name, mod.ModType);
                     }
@@ -2715,7 +2718,7 @@ namespace CharacterSelectPlugin.Windows
                 {
                     ImGui.TextDisabled("(Automatically categorized)");
                 }
-                
+
                 ImGui.EndPopup();
             }
         }
@@ -2738,7 +2741,7 @@ namespace CharacterSelectPlugin.Windows
                         return overrideType.Value;
                     }
                 }
-                
+
                 // Try to get actual file paths by reading mod JSON files directly
                 // Get the full mod directory path from Penumbra
                 var penumbraModPath = plugin.PenumbraIntegration?.GetModDirectory();
@@ -2748,13 +2751,13 @@ namespace CharacterSelectPlugin.Windows
                     var fetchedChangedItems = plugin.PenumbraIntegration?.GetModChangedItems(modDir, modName);
                     return AnalyzeModFromItemNames(modName, fetchedChangedItems ?? new Dictionary<string, object?>());
                 }
-                
+
                 var fullModPath = Path.Combine(penumbraModPath, modDir);
                 var modFiles = GetModFilePathsFromJson(fullModPath, modName);
                 if (!modFiles.Any())
                 {
                     // No file paths found in mod JSON - falling back to changed items (log removed to prevent spam)
-                    
+
                     // Fallback to changed items (which gives item names)
                     var fetchedItems = plugin.PenumbraIntegration?.GetModChangedItems(modDir, modName);
                     if (fetchedItems == null || !fetchedItems.Any())
@@ -2762,11 +2765,11 @@ namespace CharacterSelectPlugin.Windows
                         // No changed items for mod - falling back to name-based detection (log removed to prevent spam)
                         return DetermineModTypeFromName(modDir, modName);
                     }
-                    
+
                     return AnalyzeModFromItemNames(modName, fetchedItems);
                 }
-                
-                
+
+
                 // Count different types of changes to determine primary purpose
                 var typeCounts = new Dictionary<ModType, int>
                 {
@@ -2791,19 +2794,19 @@ namespace CharacterSelectPlugin.Windows
                     [ModType.Skeleton] = 0,
                     [ModType.Other] = 0
                 };
-                
+
                 var hasBodyPaths = false;
                 var hasSmallclothesPaths = false;
                 var hasAnimationPaths = false;
                 var hasVfxPaths = false;
                 var uncategorizedTextures = 0;
-                
+
                 // Analyze each file path using proper FFXIV file path patterns
                 foreach (var filePath in modFiles)
                 {
                     var pathLower = filePath.ToLowerInvariant();
-                    
-                    
+
+
                     // Eyes - iris/eye textures
                     if (pathLower.Contains("_iri_") || pathLower.Contains("/eye/"))
                     {
@@ -2827,13 +2830,13 @@ namespace CharacterSelectPlugin.Windows
                         typeCounts[ModType.FacePaint]++;
                     }
                     // Tattoos vs Scales distinction - check mod name and description OR direct tattoo paths
-                    else if (pathLower.Contains("/tattoo/") || 
-                            ((pathLower.Contains("_base.tex") || pathLower.Contains("_b_d.tex")) && 
-                             (pathLower.Contains("bibo") || pathLower.Contains("tbse") || pathLower.Contains("gen3") || 
+                    else if (pathLower.Contains("/tattoo/") ||
+                            ((pathLower.Contains("_base.tex") || pathLower.Contains("_b_d.tex")) &&
+                             (pathLower.Contains("bibo") || pathLower.Contains("tbse") || pathLower.Contains("gen3") ||
                               pathLower.Contains("eve") || pathLower.Contains("nyaughty"))))
                     {
                         var modNameLower = modName.ToLowerInvariant();
-                        
+
                         // Direct tattoo path = tattoos
                         if (pathLower.Contains("/tattoo/"))
                         {
@@ -2860,7 +2863,7 @@ namespace CharacterSelectPlugin.Windows
                         typeCounts[ModType.Other]++;
                     }
                     // Body modifications - actual body models (not just textures)
-                    else if (pathLower.Contains("_bdy.mdl") || 
+                    else if (pathLower.Contains("_bdy.mdl") ||
                              (pathLower.Contains("chara/human/") && pathLower.Contains("/obj/body/") && pathLower.Contains(".mdl")))
                     {
                         hasBodyPaths = true;
@@ -2895,9 +2898,9 @@ namespace CharacterSelectPlugin.Windows
                         typeCounts[ModType.EarsTails]++;
                     }
                     // Equipment ears/tails ONLY (actual ear/tail equipment)
-                    else if ((pathLower.Contains("chara/accessory/") || pathLower.Contains("chara/equipment/")) && 
-                             (pathLower.Contains("_ear_") || 
-                              (pathLower.Contains("tail") && !pathLower.Contains("_til_") && 
+                    else if ((pathLower.Contains("chara/accessory/") || pathLower.Contains("chara/equipment/")) &&
+                             (pathLower.Contains("_ear_") ||
+                              (pathLower.Contains("tail") && !pathLower.Contains("_til_") &&
                                (modName.ToLowerInvariant().Contains("tail") || pathLower.Contains("tail")))))
                     {
                         typeCounts[ModType.EarsTails]++;
@@ -2927,21 +2930,21 @@ namespace CharacterSelectPlugin.Windows
                         typeCounts[ModType.Hair]++;
                     }
                     // Mount/Minion/NPC detection - check for mount-specific paths and names
-                    else if (pathLower.Contains("chara/mount/") || pathLower.Contains("chara/demihuman/") || 
+                    else if (pathLower.Contains("chara/mount/") || pathLower.Contains("chara/demihuman/") ||
                              pathLower.Contains("chara/monster/") || pathLower.Contains("chara/minion/") ||
                              (pathLower.Contains("bg/ffxiv/") && pathLower.Contains("/obj/")))
                     {
                         var modNameLower = modName.ToLowerInvariant();
                         // Check for mount indicators: dedicated mount paths, mount animations, or mount keywords
-                        if (pathLower.Contains("chara/mount/") || 
+                        if (pathLower.Contains("chara/mount/") ||
                             pathLower.Contains("/mt_m") && pathLower.Contains("/resident/mount.pap") ||
-                            modNameLower.Contains("mount") || modNameLower.Contains("chocobo") || 
+                            modNameLower.Contains("mount") || modNameLower.Contains("chocobo") ||
                             modNameLower.Contains("horse") || modNameLower.Contains("riding"))
                         {
                             typeCounts[ModType.Mount]++;
                         }
                         // Check for minion indicators: dedicated minion paths or minion keywords
-                        else if (pathLower.Contains("chara/minion/") || 
+                        else if (pathLower.Contains("chara/minion/") ||
                                  modNameLower.Contains("minion") || modNameLower.Contains("pet") ||
                                  modNameLower.Contains("loft") || modNameLower.Contains("companion"))
                         {
@@ -2957,7 +2960,7 @@ namespace CharacterSelectPlugin.Windows
                     {
                         hasAnimationPaths = true;
                         var modNameLower = modName.ToLowerInvariant();
-                        
+
                         // Standing Idle - pose##_loop.pap, pose##_start.pap
                         if (pathLower.Contains("/emote/pose") && !pathLower.Contains("s_pose") && !pathLower.Contains("j_pose") && !pathLower.Contains("l_pose"))
                         {
@@ -2979,11 +2982,11 @@ namespace CharacterSelectPlugin.Windows
                             typeCounts[ModType.LyingDozing]++;
                         }
                         // Movement animations
-                        else if (pathLower.Contains("walk") || 
+                        else if (pathLower.Contains("walk") ||
                                  pathLower.Contains("run") ||
                                  pathLower.Contains("movement") ||
-                                 modNameLower.Contains("walk") || 
-                                 modNameLower.Contains("movement") || 
+                                 modNameLower.Contains("walk") ||
+                                 modNameLower.Contains("movement") ||
                                  modNameLower.Contains("run"))
                         {
                             typeCounts[ModType.Movement]++;
@@ -2999,14 +3002,14 @@ namespace CharacterSelectPlugin.Windows
                     {
                         hasVfxPaths = true;
                         var modNameLower = modName.ToLowerInvariant();
-                        
+
                         // Check if it's job-related VFX
-                        var jobKeywords = new[] { "ast", "whm", "sch", "sage", "blm", "rdm", "smn", "pct", "war", "pld", "drk", "gnb", 
+                        var jobKeywords = new[] { "ast", "whm", "sch", "sage", "blm", "rdm", "smn", "pct", "war", "pld", "drk", "gnb",
                                                 "nin", "drg", "mnk", "sam", "rpr", "vpr", "brd", "mch", "dnc" };
-                        var isJobVFX = jobKeywords.Any(job => modNameLower.Contains(job)) || 
-                                      modNameLower.Contains("skill") || modNameLower.Contains("ability") || 
+                        var isJobVFX = jobKeywords.Any(job => modNameLower.Contains(job)) ||
+                                      modNameLower.Contains("skill") || modNameLower.Contains("ability") ||
                                       modNameLower.Contains("spell") || modNameLower.Contains("weapon");
-                        
+
                         if (isJobVFX)
                         {
                             typeCounts[ModType.JobVFX]++;
@@ -3022,12 +3025,12 @@ namespace CharacterSelectPlugin.Windows
                         typeCounts[ModType.Skeleton]++;
                     }
                     // Supporting textures - if mod already has clear gear indicators, count textures as gear too
-                    else if ((pathLower.Contains(".tex") || pathLower.Contains(".mtrl")) && 
+                    else if ((pathLower.Contains(".tex") || pathLower.Contains(".mtrl")) &&
                              (typeCounts[ModType.Gear] > 0 || // Already detected gear files
-                              modName.ToLowerInvariant().Contains("cardigan") || modName.ToLowerInvariant().Contains("dress") || 
+                              modName.ToLowerInvariant().Contains("cardigan") || modName.ToLowerInvariant().Contains("dress") ||
                               modName.ToLowerInvariant().Contains("shirt") || modName.ToLowerInvariant().Contains("pants") ||
                               modName.ToLowerInvariant().Contains("armor") || modName.ToLowerInvariant().Contains("coat") ||
-                              pathLower.Contains("cardigan") || pathLower.Contains("dress") || 
+                              pathLower.Contains("cardigan") || pathLower.Contains("dress") ||
                               pathLower.Contains("shirt") || pathLower.Contains("pants")))
                     {
                         typeCounts[ModType.Gear]++;
@@ -3042,19 +3045,19 @@ namespace CharacterSelectPlugin.Windows
                         typeCounts[ModType.Other]++;
                     }
                 }
-                
+
                 // Log the type counts for debugging
                 // Removed type analysis debug logging
-                
+
                 // Check if this is a creature-type mod and classify via changed items
                 var hasCreaturePaths = modFiles.Any(path => {
                     var pathLower = path.ToLowerInvariant();
-                    return pathLower.Contains("chara/mount/") || pathLower.Contains("chara/demihuman/") || 
+                    return pathLower.Contains("chara/mount/") || pathLower.Contains("chara/demihuman/") ||
                            pathLower.Contains("chara/monster/") || pathLower.Contains("chara/minion/") ||
                            (pathLower.Contains("bg/ffxiv/") && pathLower.Contains("/obj/")) ||
                            pathLower.Contains("/mt_m") && pathLower.Contains("/resident/mount.pap");
                 });
-                
+
                 ModType result;
                 if (hasCreaturePaths)
                 {
@@ -3067,7 +3070,7 @@ namespace CharacterSelectPlugin.Windows
                     // Determine primary type with smart logic
                     result = DeterminePrimaryModType(modName, typeCounts, hasBodyPaths, hasSmallclothesPaths, hasAnimationPaths, hasVfxPaths, uncategorizedTextures);
                 }
-                
+
                 return result;
             }
             catch (Exception ex)
@@ -3076,83 +3079,83 @@ namespace CharacterSelectPlugin.Windows
                 return DetermineModTypeFromName(modDir, modName);
             }
         }
-        
+
         /// <summary>
         /// Determine the primary mod type using smart logic that considers primary vs secondary purposes
         /// </summary>
         private ModType DeterminePrimaryModType(string modName, Dictionary<ModType, int> typeCounts, bool hasBodyPaths, bool hasSmallclothesPaths, bool hasAnimationPaths, bool hasVfxPaths, int uncategorizedTextures)
         {
             var modNameLower = modName.ToLowerInvariant();
-            
+
             // Body + Smallclothes = Body mod (body frameworks like Neolithe, Bibo, etc.)
             if (hasBodyPaths && hasSmallclothesPaths)
             {
                 return ModType.Body;
             }
-            
+
             // Face Sculpts vs Makeup - if both Face and FacePaint are present, prioritize Face (sculpts include textures)
             if (typeCounts[ModType.Face] > 0 && typeCounts[ModType.FacePaint] > 0)
             {
                 return ModType.Face;
             }
-            
+
             // Hair + uncategorized textures = Hair mod (if Hair is primary detected content)
-            if (typeCounts[ModType.Hair] > 0 && uncategorizedTextures > 0 && 
+            if (typeCounts[ModType.Hair] > 0 && uncategorizedTextures > 0 &&
                 typeCounts[ModType.Hair] >= typeCounts[ModType.EarsTails] && // Don't override ears/tails mods
                 typeCounts[ModType.Hair] >= typeCounts[ModType.Gear] && // Don't override gear mods
                 typeCounts[ModType.Hair] >= typeCounts[ModType.Body]) // Don't override body mods
             {
                 return ModType.Hair;
             }
-            
+
             // COMPREHENSIVE MOD ANALYSIS: Determine primary purpose for mods with multiple content types
             var bodyScore = typeCounts[ModType.Body] + (hasBodyPaths ? 5 : 0);
             var gearScore = typeCounts[ModType.Gear];
             var hairScore = typeCounts[ModType.Hair];
             var tattooScore = typeCounts[ModType.Tattoos];
-            
+
             // Known body mod frameworks - these should be Body even if they include gear
-            var isBodyFramework = modNameLower.Contains("bibo") || modNameLower.Contains("rue") || modNameLower.Contains("gen3") || 
+            var isBodyFramework = modNameLower.Contains("bibo") || modNameLower.Contains("rue") || modNameLower.Contains("gen3") ||
                                  modNameLower.Contains("tbse") || modNameLower.Contains("yab") || modNameLower.Contains("the_body");
-            
+
             // If it's a body framework with substantial body content, prioritize Body over gear
             if (isBodyFramework && bodyScore >= 3)
             {
                 return ModType.Body;
             }
-            
+
             // If gear heavily outweighs body content and it's not a known body framework
             if (!isBodyFramework && gearScore >= 4 && gearScore > (bodyScore + tattooScore))
             {
                 return ModType.Gear;
             }
-            
+
             // Traditional body mods (non-framework but body-focused)
             if (hasBodyPaths && (modNameLower.Contains("body") && !modNameLower.Contains("armor") && !modNameLower.Contains("gear")))
             {
                 return ModType.Body;
             }
-            
+
             // If it's primarily animations, classify by animation type
             if (hasAnimationPaths)
             {
                 // Check for mixed idle animations first
-                var idleTypes = new[] { 
+                var idleTypes = new[] {
                     typeCounts[ModType.StandingIdle],
                     typeCounts[ModType.ChairSitting],
                     typeCounts[ModType.GroundSitting],
                     typeCounts[ModType.LyingDozing]
                 };
                 var idleTypeCount = idleTypes.Count(count => count > 0);
-                
+
                 // If it affects multiple idle types, classify as Mixed Idle
                 if (idleTypeCount > 1)
                 {
                     return ModType.MixedIdle;
                 }
-                
+
                 // Otherwise, return the most prominent animation type
-                var animationTypes = new[] { 
+                var animationTypes = new[] {
                     (ModType.Emote, typeCounts[ModType.Emote]),
                     (ModType.StandingIdle, typeCounts[ModType.StandingIdle]),
                     (ModType.ChairSitting, typeCounts[ModType.ChairSitting]),
@@ -3163,7 +3166,7 @@ namespace CharacterSelectPlugin.Windows
                 var topAnimationType = animationTypes.OrderByDescending(t => t.Item2).First().Item1;
                 return topAnimationType;
             }
-            
+
             // If it's primarily VFX, classify by VFX type
             if (hasVfxPaths && (typeCounts[ModType.VFX] > 0 || typeCounts[ModType.JobVFX] > 0))
             {
@@ -3177,21 +3180,21 @@ namespace CharacterSelectPlugin.Windows
                     return ModType.VFX;
                 }
             }
-            
+
             // Find the type with the most changes
             var dominantType = typeCounts.OrderByDescending(kvp => kvp.Value).First();
-            
+
             // Only classify if we have significant evidence
             if (dominantType.Value > 0)
             {
                 return dominantType.Key;
             }
-            
+
             // Final fallback
             return ModType.Unknown;
         }
-        
-        
+
+
         /// <summary>
         /// Fallback method: determine mod type from name when path analysis isn't available
         /// Very conservative approach to avoid false positives
@@ -3199,23 +3202,23 @@ namespace CharacterSelectPlugin.Windows
         private ModType DetermineModTypeFromName(string modDir, string modName)
         {
             var nameToCheck = modName.ToLowerInvariant();
-            
-            
+
+
             // Only very specific and unambiguous patterns
-            
+
             // Known body mods (exact matches only)
             if (nameToCheck == "bibo+" || nameToCheck == "bibo" || nameToCheck == "ivcs")
             {
                 return ModType.Body;
             }
-                
+
             // Very obvious hair mods
-            if (nameToCheck.StartsWith("hair ") || nameToCheck.EndsWith(" hair") || 
+            if (nameToCheck.StartsWith("hair ") || nameToCheck.EndsWith(" hair") ||
                 (nameToCheck.Contains("hair") && !nameToCheck.Contains("gear") && !nameToCheck.Contains("outfit")))
             {
                 return ModType.Hair;
             }
-                
+
             // Animation/emote keywords - try to distinguish idle types
             if (nameToCheck.Contains("emote") || nameToCheck.Contains("animation") || nameToCheck.Contains("pose"))
             {
@@ -3240,13 +3243,13 @@ namespace CharacterSelectPlugin.Windows
                     return ModType.Emote;
                 }
             }
-            
+
             // VFX keywords
             if (nameToCheck.Contains("vfx") || nameToCheck.Contains("effect"))
             {
                 return ModType.VFX;
             }
-                
+
             // When in doubt, classify as Unknown rather than guessing
             // Mod could not be classified by name, using Unknown (log removed to prevent spam)
             return ModType.Unknown;
@@ -3258,7 +3261,7 @@ namespace CharacterSelectPlugin.Windows
         private List<string> GetModFilePathsFromJson(string modDirectory, string modName)
         {
             var filePaths = new List<string>();
-            
+
             try
             {
                 if (!Directory.Exists(modDirectory))
@@ -3271,11 +3274,11 @@ namespace CharacterSelectPlugin.Windows
                 foreach (string file in Directory.EnumerateFiles(modDirectory, "*.json"))
                 {
                     if (file.EndsWith("meta.json")) continue; // Skip meta.json files
-                    
+
                     try
                     {
                         string jsonContent = File.ReadAllText(file);
-                        
+
                         // Try to parse as either default_mod.json or group JSON
                         if (file.EndsWith("default_mod.json"))
                         {
@@ -3319,14 +3322,14 @@ namespace CharacterSelectPlugin.Windows
                         // Failed to parse JSON file (log removed to prevent spam)
                     }
                 }
-                
+
                 // Extracted file paths from mod JSON files (log removed to prevent spam)
             }
             catch (Exception ex)
             {
                 Plugin.Log.Error($"[SecretMode] Error reading mod JSON files for '{modName}': {ex}");
             }
-            
+
             return filePaths;
         }
 
@@ -3353,14 +3356,14 @@ namespace CharacterSelectPlugin.Windows
                 [ModType.Skeleton] = 0,
                 [ModType.Other] = 0
             };
-            
+
             foreach (var (itemName, itemData) in changedItems)
             {
                 var itemNameLower = itemName.ToLowerInvariant();
                 var itemDataStr = itemData?.ToString()?.ToLowerInvariant() ?? "";
-                
+
                 // Remove debug logging for performance
-                
+
                 // Hair - Customization items with "hair" or "hairstyle"
                 if (itemNameLower.Contains("hair") || itemDataStr.Contains("hairstyle") || itemDataStr.Contains("hair"))
                 {
@@ -3377,51 +3380,51 @@ namespace CharacterSelectPlugin.Windows
                     typeCounts[ModType.Mount]++;
                 }
                 // Minion - look for "minion" in item names  
-                else if (itemNameLower.Contains("(companion)") || itemNameLower.Contains("companion") || 
+                else if (itemNameLower.Contains("(companion)") || itemNameLower.Contains("companion") ||
                          itemNameLower.Contains("minion") || itemNameLower.Contains("(minion)"))
                 {
                     typeCounts[ModType.Minion]++;
                 }
                 // Face Paint - look for face decal or face paint
-                else if (itemNameLower.Contains("face decal") || itemNameLower.Contains("face paint") || 
+                else if (itemNameLower.Contains("face decal") || itemNameLower.Contains("face paint") ||
                          itemNameLower.Contains("facepaint") || itemNameLower.Contains("decal"))
                 {
                     typeCounts[ModType.FacePaint]++;
                 }
                 // Tattoo - look for customization with tattoo, overlay or body decal patterns
-                else if ((itemNameLower.Contains("customization") || itemNameLower.Contains("skin")) && 
-                         (itemNameLower.Contains("tattoo") || itemNameLower.Contains("overlay") || 
+                else if ((itemNameLower.Contains("customization") || itemNameLower.Contains("skin")) &&
+                         (itemNameLower.Contains("tattoo") || itemNameLower.Contains("overlay") ||
                           itemNameLower.Contains("body decal") || itemNameLower.Contains("skin material")))
                 {
                     typeCounts[ModType.Tattoos]++;
                 }
                 // Face - look for "face" but not decal, paint, iris or hair (like "Customization: Midlander Female Face 5")
-                else if (itemNameLower.Contains("face") && !itemNameLower.Contains("iris") && 
-                         !itemNameLower.Contains("hair") && !itemNameLower.Contains("decal") && 
+                else if (itemNameLower.Contains("face") && !itemNameLower.Contains("iris") &&
+                         !itemNameLower.Contains("hair") && !itemNameLower.Contains("decal") &&
                          !itemNameLower.Contains("paint"))
                 {
                     typeCounts[ModType.Face]++;
                 }
                 // Emotes - look for emote patterns in item names
-                else if (itemNameLower.Contains("emote") || itemNameLower.Contains("/emote/") || 
+                else if (itemNameLower.Contains("emote") || itemNameLower.Contains("/emote/") ||
                          itemNameLower.Contains("pose") || itemNameLower.Contains("animation") ||
                          itemNameLower.Contains("idle") || itemNameLower.Contains("expression"))
                 {
                     typeCounts[ModType.Emote]++;
                 }
                 // Ears/Tails
-                else if (itemNameLower.Contains("tail") || itemNameLower.Contains("ear") || 
+                else if (itemNameLower.Contains("tail") || itemNameLower.Contains("ear") ||
                          itemNameLower.Contains("horn"))
                 {
                     typeCounts[ModType.EarsTails]++;
                 }
                 // Body/Customization - look for body-related customization (but not tattoos)
-                else if (itemNameLower.Contains("customization") && 
+                else if (itemNameLower.Contains("customization") &&
                          (itemNameLower.Contains("body") || itemNameLower.Contains("skin")) &&
                          !itemNameLower.Contains("tattoo") && !itemNameLower.Contains("overlay"))
                 {
                     // Check if it's a body mod or a tattoo based on other context
-                    if (itemDataStr.Contains("body") || itemDataStr.Contains("smallclothes") || 
+                    if (itemDataStr.Contains("body") || itemDataStr.Contains("smallclothes") ||
                         itemDataStr.Contains("undergarment"))
                     {
                         typeCounts[ModType.Body]++;
@@ -3441,7 +3444,7 @@ namespace CharacterSelectPlugin.Windows
                     typeCounts[ModType.Other]++;
                 }
             }
-            
+
             // Check mod name for specific patterns
             var modNameLower = modName.ToLowerInvariant();
             if (modNameLower.Contains("tattoo") || modNameLower.Contains("bibo") || modNameLower.Contains("gen3") || modNameLower.Contains("tbse"))
@@ -3460,14 +3463,14 @@ namespace CharacterSelectPlugin.Windows
             {
                 typeCounts[ModType.Eyes] += 3;
             }
-            
+
             // Find the dominant type
             var dominantType = typeCounts.OrderByDescending(kvp => kvp.Value).First();
-            
-            
+
+
             return dominantType.Value > 0 ? dominantType.Key : ModType.Unknown;
         }
-        
+
         /// <summary>
         /// Classifies creature-type mods as Mount, Minion, or Other using changed items
         /// </summary>
@@ -3481,25 +3484,25 @@ namespace CharacterSelectPlugin.Windows
                     // No changed items for creature mod - defaulting to Other (log removed to prevent spam)
                     return ModType.Other;
                 }
-                
+
                 foreach (var (itemName, itemData) in changedItems)
                 {
                     var itemNameLower = itemName.ToLowerInvariant();
-                    
-                    
+
+
                     if (itemNameLower.Contains("(mount)") || itemNameLower.Contains("mount"))
                     {
                         // Creature mod classified as Mount from item (log removed to prevent spam)
                         return ModType.Mount;
                     }
-                    
+
                     if (itemNameLower.Contains("(companion)") || itemNameLower.Contains("companion"))
                     {
                         // Creature mod classified as Minion from item (log removed to prevent spam)
                         return ModType.Minion;
                     }
                 }
-                
+
                 // Creature mod has no mount/companion indicators - defaulting to Other (log removed to prevent spam)
                 return ModType.Other;
             }
@@ -3519,17 +3522,17 @@ namespace CharacterSelectPlugin.Windows
             try
             {
                 // Detecting dependencies for mods (log removed to prevent spam)
-                
+
                 foreach (var mod in availableMods)
                 {
                     mod.Dependencies = DetectModDependencies(mod, availableMods);
-                    
+
                     if (mod.Dependencies.Any())
                     {
                         // Mod has dependencies (log removed to prevent spam)
                     }
                 }
-                
+
                 // Update dependency flags for each mod
                 UpdateModDependencyFlags();
             }
@@ -3538,7 +3541,7 @@ namespace CharacterSelectPlugin.Windows
                 Plugin.Log.Error($"[SecretMode] Error detecting mod dependencies: {ex}");
             }
         }
-        
+
         /// <summary>
         /// Updates the dependency flags (HasOnlyModels, HasOnlyTextures) for each mod by checking their file contents
         /// </summary>
@@ -3549,14 +3552,14 @@ namespace CharacterSelectPlugin.Windows
                 var penumbraModPath = plugin.PenumbraIntegration?.GetModDirectory();
                 if (string.IsNullOrEmpty(penumbraModPath))
                     return;
-                
+
                 foreach (var mod in availableMods)
                 {
                     var fullModPath = Path.Combine(penumbraModPath, mod.Directory);
                     var (hasOnlyModels, hasOnlyTextures) = CheckModDependencyType(fullModPath);
                     mod.HasOnlyModels = hasOnlyModels;
                     mod.HasOnlyTextures = hasOnlyTextures;
-                    
+
                     if (hasOnlyModels)
                     {
                         // Mod contains only model files (no textures) (log removed to prevent spam)
@@ -3568,7 +3571,7 @@ namespace CharacterSelectPlugin.Windows
                 // Error updating HasOnlyModels flags (log removed to prevent spam)
             }
         }
-        
+
         /// <summary>
         /// Checks if a mod contains only model files and no texture files
         /// </summary>
@@ -3576,29 +3579,29 @@ namespace CharacterSelectPlugin.Windows
         {
             var hasModels = false;
             var hasTextures = false;
-            
+
             try
             {
                 if (!Directory.Exists(modDirectory))
                     return (false, false);
-                
+
                 // Check all JSON files for file references
                 foreach (string file in Directory.EnumerateFiles(modDirectory, "*.json"))
                 {
                     if (file.EndsWith("meta.json")) continue;
-                    
+
                     try
                     {
                         string jsonContent = File.ReadAllText(file);
-                        
+
                         // Simple check for file extensions in the JSON content
                         if (jsonContent.Contains(".mdl", StringComparison.OrdinalIgnoreCase))
                             hasModels = true;
-                        
+
                         if (jsonContent.Contains(".tex", StringComparison.OrdinalIgnoreCase) ||
                             jsonContent.Contains(".mtrl", StringComparison.OrdinalIgnoreCase))
                             hasTextures = true;
-                        
+
                         // If we found both, no need to continue checking
                         if (hasModels && hasTextures)
                             break;
@@ -3614,11 +3617,11 @@ namespace CharacterSelectPlugin.Windows
                 // Ignore errors and assume false
                 return (false, false);
             }
-            
+
             // Determine the dependency type
             var hasOnlyModels = hasModels && !hasTextures;
             var hasOnlyTextures = hasTextures && !hasModels;
-            
+
             return (hasOnlyModels, hasOnlyTextures);
         }
 
@@ -3629,21 +3632,21 @@ namespace CharacterSelectPlugin.Windows
         {
             var dependencies = new List<ModDependency>();
             var modNameLower = mod.Name.ToLowerInvariant();
-            
+
             // ONLY check dependencies for gear mods that have no textures
             if (mod.ModType != ModType.Gear || !mod.HasOnlyModels)
             {
                 return dependencies; // Early return for non-gear or mods with textures
             }
-            
+
             // Body mods should never have dependencies - they ARE the dependency
             if (mod.ModType == ModType.Body)
             {
                 return dependencies;
             }
-            
+
             // Checking dependencies for texture-less gear mod (log removed to prevent spam)
-            
+
             // Pattern 1: Check for body type indicators in gear mod names
             // e.g., "[Koko] Anno's Santa's Helper YAB/Rue" depends on "[Anno] Santa's Helper"
             var bodyTypes = new[] { "bibo", "bibo+", "tbse", "yab", "rue", "gen3", "citrus", "yas" };
@@ -3660,12 +3663,12 @@ namespace CharacterSelectPlugin.Windows
                         potentialOriginalName = potentialOriginalName.Replace($" for {bt}", "", StringComparison.OrdinalIgnoreCase);
                         potentialOriginalName = potentialOriginalName.Replace($"/{bt}", "", StringComparison.OrdinalIgnoreCase);
                     }
-                    
+
                     // Search for the original mod
-                    var originalMod = allMods.FirstOrDefault(m => 
-                        m.Name != mod.Name && 
+                    var originalMod = allMods.FirstOrDefault(m =>
+                        m.Name != mod.Name &&
                         m.Name.Contains(potentialOriginalName.Trim(), StringComparison.OrdinalIgnoreCase));
-                    
+
                     if (originalMod != null)
                     {
                         // Detected dependency (log removed to prevent spam)
@@ -3679,7 +3682,7 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
             }
-            
+
             // Pattern 2: Check if mod has "[Models Only]" in name
             if (modNameLower.Contains("[models only]") || modNameLower.Contains("models only"))
             {
@@ -3687,13 +3690,13 @@ namespace CharacterSelectPlugin.Windows
                 var baseName = mod.Name.Replace("[Models Only]", "", StringComparison.OrdinalIgnoreCase)
                                       .Replace("Models Only", "", StringComparison.OrdinalIgnoreCase)
                                       .Trim();
-                
+
                 // Look for the texture provider mod
-                var textureMod = allMods.FirstOrDefault(m => 
-                    m.Name != mod.Name && 
+                var textureMod = allMods.FirstOrDefault(m =>
+                    m.Name != mod.Name &&
                     m.Name.Contains(baseName, StringComparison.OrdinalIgnoreCase) &&
                     !m.Name.Contains("[Models Only]", StringComparison.OrdinalIgnoreCase));
-                
+
                 if (textureMod != null)
                 {
                     // Models-only mod depends on another mod for textures (log removed to prevent spam)
@@ -3705,7 +3708,7 @@ namespace CharacterSelectPlugin.Windows
                     });
                 }
             }
-            
+
             // Pattern 3: Check meta.json for explicit dependencies mentioned in description
             try
             {
@@ -3717,11 +3720,11 @@ namespace CharacterSelectPlugin.Windows
                     {
                         var metaContent = File.ReadAllText(metaPath);
                         var metaJson = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(metaContent);
-                        
+
                         if (metaJson != null && metaJson.TryGetValue("Description", out var descObj))
                         {
                             var description = descObj?.ToString() ?? "";
-                            
+
                             // Look for phrases like "requires", "depends on", "needs"
                             if (description.Contains("requires", StringComparison.OrdinalIgnoreCase) ||
                                 description.Contains("depends on", StringComparison.OrdinalIgnoreCase) ||
@@ -3751,7 +3754,7 @@ namespace CharacterSelectPlugin.Windows
             {
                 // Error checking meta.json for dependencies (log removed to prevent spam)
             }
-            
+
             return dependencies;
         }
 
@@ -3763,10 +3766,10 @@ namespace CharacterSelectPlugin.Windows
             var unmetDependencies = mod.Dependencies
                 .Where(d => d.IsFound && (!selectedMods.ContainsKey(d.RequiredModPath) || !selectedMods[d.RequiredModPath]))
                 .ToList();
-            
+
             if (!unmetDependencies.Any())
                 return;
-            
+
             // Auto-enable dependencies
             foreach (var dep in unmetDependencies)
             {
@@ -3962,18 +3965,18 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.Dummy(new Vector2(availW, rowH));
         }
-        
+
         /// <summary>
         /// Draw contextual warning for a selected mod showing dependency or conflict information
         /// </summary>
         private void DrawContextualWarning(ModEntry mod)
         {
             if (mod.Analysis == null) return;
-            
+
             var showWarning = false;
             var warningText = "";
             var warningColor = ColorSchemes.Dark.AccentYellow;
-            
+
             // Check for dependency warnings
             if (mod.Analysis.HasDependency)
             {
@@ -3989,37 +3992,37 @@ namespace CharacterSelectPlugin.Windows
                     .Select(path => availableMods.FirstOrDefault(m => m.Directory == path)?.Name ?? Path.GetFileName(path))
                     .Take(3) // Limit to 3 names to avoid huge warnings
                     .ToList();
-                
+
                 var nameList = string.Join(", ", conflictNames);
                 if (mod.Analysis.ConflictingMods.Count > 3)
                     nameList += $" and {mod.Analysis.ConflictingMods.Count - 3} more";
-                
+
                 warningText = $"Conflicts with: {nameList}"; // Remove emoji, will use FontAwesome icon instead
                 warningColor = ColorSchemes.Dark.AccentRed;
             }
-            
+
             if (showWarning)
             {
                 ImGui.Indent(30); // Indent to align with mod name
-                
+
                 // Warning icon using FontAwesome
                 ImGui.PushFont(UiBuilder.IconFont);
                 ImGui.PushStyleColor(ImGuiCol.Text, warningColor);
                 ImGui.Text(FontAwesomeIcon.ExclamationTriangle.ToIconString());
                 ImGui.PopStyleColor();
                 ImGui.PopFont();
-                
+
                 ImGui.SameLine();
                 ImGui.Spacing();
                 ImGui.SameLine();
-                
+
                 // Warning text
                 ImGui.PushStyleColor(ImGuiCol.Text, warningColor);
                 ImGui.Text(warningText);
                 ImGui.PopStyleColor();
-                
+
                 ImGui.SameLine();
-                
+
                 // Dismiss button
                 ImGui.PushFont(UiBuilder.IconFont);
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.5f, 0.5f, 0.5f, 0.3f));
@@ -4030,16 +4033,16 @@ namespace CharacterSelectPlugin.Windows
                 }
                 ImGui.PopStyleColor(2);
                 ImGui.PopFont();
-                
+
                 if (ImGui.IsItemHovered())
                 {
                     ImGui.SetTooltip("Dismiss this warning");
                 }
-                
+
                 ImGui.Unindent(30);
             }
         }
-        
+
         /// <summary>
         /// Open the mod options configuration panel
         /// </summary>
@@ -4097,7 +4100,7 @@ namespace CharacterSelectPlugin.Windows
                         {
                             var groupType = optionGroupTypes?.ContainsKey(groupName) == true ? optionGroupTypes[groupName] : 0;
                             var isMultiSelect = groupType == 1 || groupType == 2;
-                            
+
                             if (isMultiSelect)
                             {
                                 // Multi-select: start with empty selection
@@ -4122,7 +4125,7 @@ namespace CharacterSelectPlugin.Windows
                     {
                         var groupType = optionGroupTypes?.ContainsKey(groupName) == true ? optionGroupTypes[groupName] : 0;
                         var isMultiSelect = groupType == 1 || groupType == 2;
-                        
+
                         if (isMultiSelect)
                         {
                             // Multi-select: start with empty selection
@@ -4136,10 +4139,10 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
             }
-            
+
             shouldOpenOptionsPopup = true;
         }
-        
+
         /// <summary>
         /// Draw the mod options configuration popup
         /// </summary>
@@ -4183,7 +4186,7 @@ namespace CharacterSelectPlugin.Windows
                 return;
             if (currentModOptions == null)
                 return;
-            
+
             // If optionGroupTypes is null, we need to reload it
             if (optionGroupTypes == null)
             {
@@ -4194,9 +4197,9 @@ namespace CharacterSelectPlugin.Windows
                     optionGroupTypes[groupName] = groupType;
                 }
             }
-            
+
             var popupId = $"ModOptions_{optionsEditingMod.Directory}";
-            
+
             // Open popup if flag is set
             if (shouldOpenOptionsPopup)
             {
@@ -4204,11 +4207,10 @@ namespace CharacterSelectPlugin.Windows
                 shouldOpenOptionsPopup = false;
                 isOptionsPopupOpen = true;
             }
-            
+
             ImGui.SetNextWindowSize(new Vector2(560, 600), ImGuiCond.Always);
             // Boutique styling: dark velvet bg + gold border. NoScrollbar on
             // the popup itself so the OptionsArea child handles all scrolling
-            //, otherwise the parent popup auto-scrolls and clips the footer.
             ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(0.04f, 0.05f, 0.08f, 0.97f));
             ImGui.PushStyleColor(ImGuiCol.Border, Boutique.WithAlpha(Boutique.Gold, 0.55f));
             ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f);
@@ -4318,19 +4320,19 @@ namespace CharacterSelectPlugin.Windows
                 {
                     // Filter and organize options by type to match Penumbra's layout
                     var filteredOptions = availableModOptions
-                        .Where(kvp => kvp.Value.Any() && 
-                               kvp.Key != "Necessary Files" && 
+                        .Where(kvp => kvp.Value.Any() &&
+                               kvp.Key != "Necessary Files" &&
                                kvp.Key != "Done!")
                         .ToList();
-                    
+
                     // Group by type for consistent layout
                     var comboGroups = new List<(string name, string[] options)>();
                     var radioGroups = new List<(string name, string[] options)>();
                     var checkboxGroups = new List<(string name, string[] options)>();
-                    
+
                     // Get fresh type information right when we need it
                     var rawOptionsForTypes = plugin.PenumbraIntegration.GetModOptionsRaw(optionsEditingMod.Directory, optionsEditingMod.Name);
-                    
+
                     foreach (var (groupName, optionNames) in filteredOptions)
                     {
                         // Look up the type from fresh data
@@ -4339,9 +4341,9 @@ namespace CharacterSelectPlugin.Windows
                         {
                             groupType = rawOptionsForTypes[groupName].Item2;
                         }
-                        
+
                         var isMultiSelect = groupType == 1 || groupType == 2;
-                        
+
                         if (isMultiSelect)
                         {
                             checkboxGroups.Add((groupName, optionNames.ToArray()));
@@ -4355,18 +4357,18 @@ namespace CharacterSelectPlugin.Windows
                             radioGroups.Add((groupName, optionNames.ToArray()));
                         }
                     }
-                    
-                    
+
+
                     // Draw dropdown combos first (single-choice, >2 options)
                     foreach (var (groupName, optionNames) in comboGroups)
                     {
                         var currentSelection = currentModOptions.ContainsKey(groupName) && currentModOptions[groupName].Any()
                             ? currentModOptions[groupName].First()
                             : optionNames.First();
-                        
+
                         var currentIndex = Array.IndexOf(optionNames, currentSelection);
                         if (currentIndex < 0) currentIndex = 0;
-                        
+
                         DrawModOptionGroupHeader(groupName);
 
                         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 12f);
@@ -4407,11 +4409,11 @@ namespace CharacterSelectPlugin.Windows
                     {
                         DrawModOptionGroupHeader(groupName);
                         ImGui.Indent(12f);
-                        
-                        var currentSelections = currentModOptions.ContainsKey(groupName) 
-                            ? currentModOptions[groupName] 
+
+                        var currentSelections = currentModOptions.ContainsKey(groupName)
+                            ? currentModOptions[groupName]
                             : new List<string>();
-                        
+
                         foreach (var optionName in optionNames)
                         {
                             var isSelected = currentSelections.Contains(optionName);
@@ -4506,7 +4508,7 @@ namespace CharacterSelectPlugin.Windows
             }
             ImGui.PopStyleVar(2);
             ImGui.PopStyleColor(2);
-            
+
             // Only clean up when popup is actually closed
             if (!ImGui.IsPopupOpen(popupId) && !shouldOpenOptionsPopup)
             {
@@ -4518,7 +4520,7 @@ namespace CharacterSelectPlugin.Windows
                 isOptionsPopupOpen = false;
             }
         }
-        
+
         /// <summary>Save the current mod options to the design or character.</summary>
         private void SaveModOptions()
         {
@@ -4555,7 +4557,7 @@ namespace CharacterSelectPlugin.Windows
                 });
             }
         }
-        
+
         /// <summary>Clear custom mod options (revert to Penumbra defaults).</summary>
         private void ClearModOptions()
         {
@@ -4576,24 +4578,24 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
         }
-        
+
         /// <summary>
         /// Cached check for whether a mod has configurable options (performance optimization)
         /// </summary>
         private bool ModHasOptionsCache(string modDirectory, string modName)
         {
             var key = $"{modDirectory}|{modName}";
-            
+
             if (modOptionsCache.ContainsKey(key))
                 return modOptionsCache[key];
-            
+
             // Check if this mod actually has options by trying to get them
             // Add small delay to prevent overwhelming Penumbra with rapid queries
             try
             {
                 var options = plugin.PenumbraIntegration?.GetModOptions(modDirectory, modName) ?? new Dictionary<string, List<string>>();
                 var hasOptions = options.Any();
-                
+
                 // Fallback: check for multiple group JSON files if Penumbra API didn't find options
                 if (!hasOptions)
                 {
@@ -4608,12 +4610,12 @@ namespace CharacterSelectPlugin.Windows
                         }
                     }
                 }
-                
+
                 modOptionsCache[key] = hasOptions;
-                
+
                 // Small delay to space out Penumbra API calls
                 Thread.Sleep(1);
-                
+
                 return hasOptions;
             }
             catch (Exception ex)
@@ -4623,10 +4625,10 @@ namespace CharacterSelectPlugin.Windows
                 return false;
             }
         }
-        
+
         // Static cache for mod type determination to avoid creating windows
         private static SecretModeModWindow? _staticInstance = null;
-        
+
         /// <summary>Determines a mod's type via path analysis. Shared with non-UI callers so categorisation matches what the UI shows.</summary>
         public static ModType DetermineModType(string modDir, string modName, Plugin plugin)
         {
@@ -4637,7 +4639,7 @@ namespace CharacterSelectPlugin.Windows
             }
             return _staticInstance.DetermineModTypeFromPaths(modDir, modName, null);
         }
-        
+
         public void Dispose()
         {
             // Cleanup if needed
@@ -4649,13 +4651,13 @@ namespace CharacterSelectPlugin.Windows
         public HashSet<string> GetCurrentlyAffectingGearAndHairMods()
         {
             if (availableMods == null) return new HashSet<string>();
-            
+
             // Use the same filtering logic as the "Currently Affecting You" tab
-            var gearAndHairMods = availableMods.Where(m => m.IsCurrentlyAffecting && 
+            var gearAndHairMods = availableMods.Where(m => m.IsCurrentlyAffecting &&
                 (m.ModType == ModType.Gear || m.ModType == ModType.Hair))
                 .Select(m => m.Directory)
                 .ToHashSet();
-                
+
             return gearAndHairMods;
         }
     }

@@ -102,4 +102,65 @@ public static partial class Boutique
         }
         return ell;
     }
+
+    /// <summary>Minimum shrink factor for fit-to-bounds helpers.</summary>
+    public const float TextFitFloor = 0.65f;
+
+    /// <summary>Uniform shrink factor (0..1) so text fits within maxSize. Returns 1 when no shrink needed.</summary>
+    public static float ComputeFitFactor(Vector2 textSize, Vector2 maxSize, float floor = TextFitFloor)
+    {
+        float fit = 1f;
+        if (maxSize.X > 0 && textSize.X > maxSize.X) fit = Math.Min(fit, maxSize.X / textSize.X);
+        if (maxSize.Y > 0 && textSize.Y > maxSize.Y) fit = Math.Min(fit, maxSize.Y / textSize.Y);
+        return Math.Max(floor, fit);
+    }
+
+    /// <summary>Renders text via dl.AddText, shrinking to fit maxSize. Pass maxSize.Y = 0 for width-only fit.</summary>
+    public static void DrawTextFit(ImDrawListPtr dl, ImFontPtr font, float baseFontSize,
+        Vector2 pos, Vector2 maxSize, uint colour, string text, float floor = TextFitFloor)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        var natural = ImGui.CalcTextSize(text);
+        float fit = ComputeFitFactor(natural, maxSize, floor);
+        dl.AddText(font, baseFontSize * fit, pos, colour, text);
+    }
+
+    /// <summary>Tracked-caps variant of DrawTextFit.</summary>
+    public static float DrawTrackedTextFit(ImDrawListPtr dl, Vector2 pos, string text, uint colour,
+        float baseTrackPx, float maxWidth, float floor = TextFitFloor)
+    {
+        if (string.IsNullOrEmpty(text)) return 0f;
+        float natural = MeasureTrackedText(text, baseTrackPx);
+        float fit = (maxWidth > 0 && natural > maxWidth) ? Math.Max(floor, maxWidth / natural) : 1f;
+        if (fit >= 0.999f)
+            return DrawTrackedText(dl, pos, text, colour, baseTrackPx);
+
+        ImGui.PushFont(ImGui.GetFont());
+        float scaledTrack = baseTrackPx * fit;
+        float x = pos.X;
+        for (int i = 0; i < text.Length; i++)
+        {
+            string g = text.Substring(i, 1);
+            float gw = ImGui.CalcTextSize(g).X * fit;
+            dl.AddText(ImGui.GetFont(), ImGui.GetFontSize() * fit, new Vector2(x, pos.Y), colour, g);
+            x += gw;
+            if (i < text.Length - 1) x += scaledTrack;
+        }
+        ImGui.PopFont();
+        return x - pos.X;
+    }
+
+    /// <summary>Uniform shrink factor for a row of concatenated tracked-caps segments.</summary>
+    public static float MeasureRibbonFitFactor(string[] segments, float trackPx, float interSegmentGap, float maxWidth, float floor = TextFitFloor)
+    {
+        if (segments == null || segments.Length == 0 || maxWidth <= 0) return 1f;
+        float total = 0f;
+        for (int i = 0; i < segments.Length; i++)
+        {
+            total += MeasureTrackedText(segments[i] ?? "", trackPx);
+            if (i < segments.Length - 1) total += interSegmentGap;
+        }
+        if (total <= maxWidth) return 1f;
+        return Math.Max(floor, maxWidth / total);
+    }
 }

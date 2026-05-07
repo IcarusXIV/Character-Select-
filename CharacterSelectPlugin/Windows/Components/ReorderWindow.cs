@@ -10,7 +10,7 @@ using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
-    public class ReorderWindow : IDisposable
+    public partial class ReorderWindow : IDisposable
     {
         private Plugin plugin;
         private UIStyles uiStyles;
@@ -49,6 +49,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             if (!IsOpen) return;
 
             float scale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);

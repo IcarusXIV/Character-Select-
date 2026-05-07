@@ -19,6 +19,106 @@ namespace CharacterSelectPlugin.Windows.Utils
         private static readonly Dictionary<string, string> _filterTexts = new();
         private static readonly Dictionary<string, bool> _focusFilterOnNext = new();
 
+        // Plain ImGui combo for classic mode: no boutique chrome.
+        // allowCustomInput=true: editable InputText + small arrow button that pops up the option list.
+        // allowCustomInput=false: standard ImGui.BeginCombo with no typing.
+        private static bool DrawClassicCombo(string id, ref string value, IReadOnlyList<string> options,
+            float width, string placeholder, bool allowCustomInput)
+        {
+            bool changed = false;
+
+            if (allowCustomInput)
+            {
+                float arrowW = ImGui.GetFrameHeight();
+                float spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+                float inputW = width - arrowW - spacing;
+                if (inputW < 40f) inputW = 40f;
+
+                ImGui.SetNextItemWidth(inputW);
+                if (ImGui.InputTextWithHint($"{id}_input", placeholder, ref value, 200))
+                    changed = true;
+
+                ImGui.SameLine(0, spacing);
+                string popupId = $"{id}_popup";
+                if (ImGui.ArrowButton($"{id}_btn", ImGuiDir.Down))
+                {
+                    ImGui.OpenPopup(popupId);
+                    _focusFilterOnNext[id] = true;
+                    _filterTexts[id] = "";
+                }
+
+                ImGui.SetNextWindowSizeConstraints(new Vector2(width, 0), new Vector2(width, 280));
+
+                if (ImGui.BeginPopup(popupId))
+                {
+                    string filter = _filterTexts.GetValueOrDefault(id, "");
+                    ImGui.SetNextItemWidth(width - 16);
+                    if (ImGui.InputTextWithHint($"##classic_filter_{id}", "Search...", ref filter, 256))
+                        _filterTexts[id] = filter;
+
+                    if (_focusFilterOnNext.GetValueOrDefault(id, false))
+                    {
+                        ImGui.SetKeyboardFocusHere(-1);
+                        _focusFilterOnNext[id] = false;
+                    }
+
+                    ImGui.Separator();
+
+                    string lower = filter.ToLowerInvariant().Trim();
+                    if (ImGui.BeginChild($"##classic_list_{id}", new Vector2(width - 16, 200), false))
+                    {
+                        if (ImGui.Selectable("(None)", string.IsNullOrEmpty(value)))
+                        {
+                            value = "";
+                            changed = true;
+                            _filterTexts[id] = "";
+                            ImGui.CloseCurrentPopup();
+                        }
+
+                        foreach (var opt in options)
+                        {
+                            if (!string.IsNullOrEmpty(lower) && !opt.ToLowerInvariant().Contains(lower)) continue;
+                            bool isSel = opt.Equals(value, StringComparison.OrdinalIgnoreCase);
+                            if (ImGui.Selectable(opt, isSel))
+                            {
+                                value = opt;
+                                changed = true;
+                                _filterTexts[id] = "";
+                                ImGui.CloseCurrentPopup();
+                            }
+                        }
+                    }
+                    ImGui.EndChild();
+                    ImGui.EndPopup();
+                }
+            }
+            else
+            {
+                ImGui.SetNextItemWidth(width);
+                string display = string.IsNullOrEmpty(value) ? placeholder : value;
+                if (ImGui.BeginCombo(id, display))
+                {
+                    if (ImGui.Selectable("(None)", string.IsNullOrEmpty(value)))
+                    {
+                        value = "";
+                        changed = true;
+                    }
+                    foreach (var opt in options)
+                    {
+                        bool isSel = opt.Equals(value, StringComparison.OrdinalIgnoreCase);
+                        if (ImGui.Selectable(opt, isSel))
+                        {
+                            value = opt;
+                            changed = true;
+                        }
+                        if (isSel) ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+            }
+            return changed;
+        }
+
         public static bool Draw(
             string id,
             ref string value,
@@ -29,6 +129,9 @@ namespace CharacterSelectPlugin.Windows.Utils
             string? currentActive = null,
             bool allowCustomInput = true)
         {
+            if (Plugin.UseClassicLayout)
+                return DrawClassicCombo(id, ref value, options, width, placeholder, allowCustomInput);
+
             bool valueChanged = false;
             float fs = Boutique.FormScale;
 

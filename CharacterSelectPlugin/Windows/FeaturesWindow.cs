@@ -12,7 +12,7 @@ using Dalamud.Interface.Windowing;
 
 namespace CharacterSelectPlugin.Windows;
 
-public class FeaturesWindow : Window, IDisposable
+public partial class FeaturesWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
 
@@ -375,6 +375,14 @@ public class FeaturesWindow : Window, IDisposable
                 FontAwesomeIcon.Palette, purple,
                 new[] { "theme", "colour", "customize" }),
 
+            new("Classic Mode",
+                "Reverts most CS+ windows to their pre-redesign look.",
+                "Settings > Visual",
+                "Customize CS+",
+                FontAwesomeIcon.History, purple,
+                new[] { "theme", "classic", "old", "revert", "layout", "mode", "pre-redesign" },
+                IsNew: true),
+
             new("Seasonal Themes",
                 "Halloween, Winter, Christmas, Valentine's, with special visual effects.",
                 "Settings > Visual",
@@ -488,6 +496,22 @@ public class FeaturesWindow : Window, IDisposable
                 "Chat Commands",
                 FontAwesomeIcon.Walking, slate,
                 new[] { "command", "pose", "shorthand" }),
+
+            new("Disable all server communication",
+                "Master switch that stops every outbound request CS+ would make to the gallery server (uploads, lookups, gallery, reports). Existing data on the server is unaffected; use the delete button below to wipe it.",
+                "Settings > Account & Data",
+                "Account & Data",
+                FontAwesomeIcon.PlugCircleXmark, slate,
+                new[] { "privacy", "opt-out", "offline", "disable", "server", "off" },
+                IsNew: true),
+
+            new("Delete my data from server",
+                "Wipes every CS+ profile this installation has uploaded (RP profile data, image, likes). Only touches data owned by this install.",
+                "Settings > Account & Data",
+                "Account & Data",
+                FontAwesomeIcon.Trash, slate,
+                new[] { "privacy", "delete", "wipe", "data", "server" },
+                IsNew: true),
         };
     }
 
@@ -525,6 +549,7 @@ public class FeaturesWindow : Window, IDisposable
             { "Capturing Looks", new("Capturing Looks", "CAPTURING LOOKS",FontAwesomeIcon.Camera,       cyan2)  },
             { "Backup & Safety", new("Backup & Safety", "BACKUP & SAFETY",FontAwesomeIcon.ShieldAlt,    mint)   },
             { "Chat Commands",   new("Chat Commands",   "CHAT COMMANDS",  FontAwesomeIcon.Terminal,     slate)  },
+            { "Account & Data",  new("Account & Data",  "ACCOUNT & DATA", FontAwesomeIcon.UserShield,   slate)  },
         };
 
         categoryMeta = categoryNames
@@ -537,10 +562,12 @@ public class FeaturesWindow : Window, IDisposable
     private int _chromeColorCount = 0;
     public override void PreDraw()
     {
+        if (Plugin.UseClassicLayout) return;
         _chromeColorCount = CharacterSelectPlugin.Windows.Styles.ThemeHelper.PushWindowChromeColors(plugin.Configuration);
     }
     public override void PostDraw()
     {
+        if (_chromeColorCount == 0) return;
         CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
         _chromeColorCount = 0;
     }
@@ -548,6 +575,7 @@ public class FeaturesWindow : Window, IDisposable
     // ── Draw entry ──────────────────────────────────────────────────────
     public override void Draw()
     {
+        if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
         var scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
         // Encore chassis pattern: zero outer padding so the ribbon, header, and

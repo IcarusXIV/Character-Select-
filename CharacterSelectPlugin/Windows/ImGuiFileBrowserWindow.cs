@@ -16,7 +16,7 @@ namespace CharacterSelectPlugin.Windows
     /// ImGui-based file browser window for selecting image files.
     /// Alternative to Windows file dialog for Linux/Wine users.
     /// </summary>
-    public class ImGuiFileBrowserWindow : Window
+    public partial class ImGuiFileBrowserWindow : Window
     {
         public string? SelectedPath { get; private set; }
         public bool Confirmed { get; private set; }
@@ -257,6 +257,7 @@ namespace CharacterSelectPlugin.Windows
         private int _chromeColorCount = 0;
         public override void PreDraw()
         {
+            if (Plugin.UseClassicLayout) return;
             // Chrome (WindowBg / TitleBg / TitleBgActive / MenuBarBg) follows
             // the active theme so the file browser blends with the rest of the
             // plugin. Border + scrollbar accents stay gold to match the
@@ -281,6 +282,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void PostDraw()
         {
+            if (_chromeColorCount == 0) return;
             ImGui.PopStyleVar(3);
             ImGui.PopStyleColor(9);
             CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
@@ -289,6 +291,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             float scale = (Plugin.Instance?.Configuration?.UIScaleMultiplier ?? 1f);
             scale = MathF.Max(0.85f, MathF.Min(scale, 2.0f));
             var dl = ImGui.GetWindowDrawList();

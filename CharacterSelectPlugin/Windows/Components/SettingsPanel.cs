@@ -14,7 +14,7 @@ using System.Threading;
 
 namespace CharacterSelectPlugin.Windows.Components
 {
-    public class SettingsPanel : IDisposable
+    public partial class SettingsPanel : IDisposable
     {
         private Plugin plugin;
         private UIStyles uiStyles;
@@ -25,6 +25,14 @@ namespace CharacterSelectPlugin.Windows.Components
         private string manualMigrationPhysicalName = "";
         private string manualMigrationStatusMessage = "";
         private DateTime manualMigrationStatusTime = DateTime.MinValue;
+
+        // Holds in-flight UI Scale slider value during drag, applied on release.
+        private float _pendingUIScale = float.NaN;
+
+        // Delete-my-data flow state
+        private bool deleteDataInProgress;
+        private string deleteDataStatusMessage = "";
+        private DateTime deleteDataStatusTime = DateTime.MinValue;
         private string? pendingExpandSection = null; // Section to force-expand on next draw
         private int selectedBlockedUserIndex = -1;
         private string newRealCharacterBuffer = "";
@@ -67,7 +75,7 @@ namespace CharacterSelectPlugin.Windows.Components
             { "Name Sync",             10 },
             { "Conflict Resolution",   11 },
             { "Backup & Restore",      12 },
-            { "Rename Migration",      13 },
+            { "Account & Data",        13 },
             { "Community & Moderation", 2 }, // legacy alias → Behavior
         };
         // Short labels for the rail so long category names don't clip the
@@ -76,7 +84,7 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             "VISUAL", "AUTOMATIONS", "BEHAVIOUR", "ACHIEVEMENTS", "RANDOM",
             "HONORIFIC", "MAIN CHAR", "CHAR ASSIGN", "JOB ASSIGN", "DIALOGUE",
-            "NAME SYNC", "CONFLICT", "BACKUP", "MIGRATION",
+            "NAME SYNC", "CONFLICT", "BACKUP", "ACCOUNT",
         };
         // Each category: display name, rainbow tint, FontAwesome glyph.
         private static readonly (string name, Vector4 tint, string icon)[] Categories =
@@ -94,7 +102,7 @@ namespace CharacterSelectPlugin.Windows.Components
             ("Name Sync",             new Vector4(0.55f, 0.40f, 1.00f, 1f), ""),  // indigo, id-card
             ("Conflict Resolution",   new Vector4(0.80f, 0.40f, 1.00f, 1f), ""),  // purple, hammer
             ("Backup & Restore",      new Vector4(1.00f, 0.45f, 0.70f, 1f), ""),  // pink, archive
-            ("Rename Migration",      new Vector4(1.00f, 0.55f, 0.55f, 1f), ""),  // mauve, sync
+            ("Account & Data",        new Vector4(1.00f, 0.55f, 0.55f, 1f), ""),  // mauve, sync
         };
 
         // Key capture for reveal names
@@ -146,6 +154,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             if (!plugin.IsSettingsOpen)
                 return;
 
@@ -844,7 +853,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 case 10: DrawNameSyncSettings(); break;
                 case 11: DrawConflictResolutionSettings(); break;
                 case 12: DrawBackupSettings(); break;
-                case 13: DrawRenameMigrationSettings(); break;
+                case 13: DrawAccountAndDataSettings(); break;
             }
         }
 
@@ -855,6 +864,23 @@ namespace CharacterSelectPlugin.Windows.Components
             float scale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
             float sliderW = 220f * scale;
             float dropW = 200f * scale;
+
+            Boutique.SettingRow("vis.uiScale", "UI Scale",
+                "Scales the entire CS+ UI up or down. 1.0 is the default. Heads up: text can take a couple of seconds to adjust after changing.",
+                sliderW, scale,
+                () =>
+                {
+                    float v = float.IsNaN(_pendingUIScale) ? plugin.Configuration.UIScaleMultiplier : _pendingUIScale;
+                    if (Boutique.SliderTrack("vis.uiScale", ref v, 0.7f, 1.5f, "%.2f", sliderW, scale))
+                        _pendingUIScale = v;
+                    if (ImGui.IsItemDeactivated() && !float.IsNaN(_pendingUIScale))
+                    {
+                        plugin.Configuration.UIScaleMultiplier = Math.Clamp(_pendingUIScale, 0.7f, 1.5f);
+                        _pendingUIScale = float.NaN;
+                        plugin.SaveConfiguration();
+                        mainWindow.InvalidateLayout();
+                    }
+                });
 
             // Profile Image Scale
             Boutique.SettingRow("vis.profileScale", "Profile Image Scale",
@@ -932,6 +958,22 @@ namespace CharacterSelectPlugin.Windows.Components
                     {
                         plugin.Configuration.EnableCharacterHoverEffects = v;
                         plugin.SaveConfiguration();
+                    }
+                });
+
+            // Classic layout toggle. Reverts pre-rework rendering on most
+            // windows. Themes still apply colour palette over top.
+            Boutique.SettingRow("vis.classicLayout", "Classic Mode",
+                "Reverts most CS+ windows to their pre-redesign look.",
+                46f * scale, scale,
+                () =>
+                {
+                    bool v = plugin.Configuration.UseClassicLayout;
+                    if (Boutique.TogglePill("vis.classicLayout", ref v, scale))
+                    {
+                        plugin.Configuration.UseClassicLayout = v;
+                        plugin.SaveConfiguration();
+                        mainWindow.InvalidateLayout();
                     }
                 });
 
@@ -2721,7 +2763,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var min = origin;
             var max = origin + new Vector2(availW, plateH);
 
-            // Card silhouette
+            // ── Card silhouette ──
             Boutique.FillSlip(dl, min, max, chamfer,
                 Boutique.U32(Boutique.WithAlpha(Boutique.Surface1, 0.60f)));
             Span<Vector2> pts = stackalloc Vector2[6];
@@ -2921,7 +2963,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var min = origin;
             var max = origin + new Vector2(availW, plateH);
 
-            // Card silhouette (slightly brighter than composer to read as "live edit")
+            // ── Card silhouette ── (slightly brighter than composer to read as "live edit")
             Boutique.FillSlip(dl, min, max, chamfer,
                 Boutique.U32(Boutique.WithAlpha(Boutique.Surface1, 0.75f)));
             Span<Vector2> pts = stackalloc Vector2[6];
@@ -3122,7 +3164,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var min = origin;
             var max = origin + new Vector2(availW, plateH);
 
-            // Card silhouette (one notch darker than saved cards, "draft")
+            // ── Card silhouette ── (one notch darker than saved cards, "draft")
             Boutique.FillSlip(dl, min, max, chamfer,
                 Boutique.U32(Boutique.WithAlpha(Boutique.Surface0, 0.55f)));
             Span<Vector2> pts = stackalloc Vector2[6];
@@ -3210,7 +3252,7 @@ namespace CharacterSelectPlugin.Windows.Components
             DrawBondBinding(dl, centerMidX, min.Y + 18f * scale, max.Y - pillsRowH - 6f * scale,
                 bothSet, time, scale);
 
-            // ── RIGHT half: CS+ SortPill at row1, optional Design SortPill at row2 ──
+            // ── RIGHT half: CS+ SortPill at row1, optional Design SortPill at row2
             var csOptions = new List<string> { "None" };
             foreach (var c in plugin.Characters.OrderBy(c => c.Name))
                 csOptions.Add(c.Name);
@@ -3751,7 +3793,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var min = origin;
             var max = origin + new Vector2(availW, plateH);
 
-            // Card silhouette
+            // ── Card silhouette ──
             Boutique.FillSlip(dl, min, max, chamfer,
                 Boutique.U32(Boutique.WithAlpha(Boutique.Surface1, 0.55f)));
             Span<Vector2> pts = stackalloc Vector2[6];
@@ -4209,7 +4251,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var min = origin;
             var max = origin + new Vector2(availW, plateH);
 
-            // Card silhouette
+            // ── Card silhouette ──
             Boutique.FillSlip(dl, min, max, chamfer,
                 Boutique.U32(Boutique.WithAlpha(Boutique.Surface0, 0.55f)));
             Span<Vector2> pts = stackalloc Vector2[6];
@@ -5442,11 +5484,12 @@ namespace CharacterSelectPlugin.Windows.Components
         }
 
 
-        private void DrawRenameMigrationSettings()
+        private void DrawAccountAndDataSettings()
         {
             float scale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
             float dropW = 200f * scale;
             float inputW = 200f * scale;
+            float toggleW = 80f * scale;
 
             // Intro callouts
             Boutique.Callout(Boutique.CalloutKind.Info, FontAwesomeIcon.InfoCircle,
@@ -5538,7 +5581,129 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
 
+            ImGui.Dummy(new Vector2(0, 14f * scale));
+
+            DrawServerCommunicationSection(scale, toggleW);
+
+            ImGui.Dummy(new Vector2(0, 14f * scale));
+
+            DrawDeleteMyDataSection(scale);
+
             ImGui.Dummy(new Vector2(0, 6f * scale));
+        }
+
+        private void DrawServerCommunicationSection(float scale, float toggleW)
+        {
+            Boutique.SubSectionHeader("SERVER COMMUNICATION", null, scale);
+
+            Boutique.SettingRow("acct.disableServer", "Disable all server communication",
+                "When on, CS+ stops uploading profiles, looking up other users, fetching the gallery, and submitting reports. Existing data on the server is unaffected (use the delete button below to wipe it).",
+                toggleW, scale,
+                () =>
+                {
+                    bool v = plugin.Configuration.DisableAllServerCommunication;
+                    if (Boutique.TogglePill("acct.disableServer", ref v, scale))
+                    {
+                        plugin.Configuration.DisableAllServerCommunication = v;
+                        plugin.Configuration.Save();
+                    }
+                });
+        }
+
+        private void DrawDeleteMyDataSection(float scale)
+        {
+            Boutique.SubSectionHeader("MY DATA ON THE SERVER", null, scale);
+
+            using (Plugin.Instance?.OutfitMed12?.Push())
+            {
+                ImGui.PushTextWrapPos();
+                ImGui.TextColored(Boutique.TextDim,
+                    "Wipe every CS+ profile this installation has uploaded to the server (RP profile data, image, likes). The server keeps a record of which install owns each profile slot, so this only touches your own data.");
+                ImGui.PopTextWrapPos();
+            }
+
+            ImGui.Dummy(new Vector2(0, 6f * scale));
+
+            if (deleteDataInProgress) ImGui.BeginDisabled();
+            if (ImGui.Button("Delete my data from server", new Vector2(220f * scale, 28f * scale)))
+            {
+                ImGui.OpenPopup("DeleteMyDataConfirm");
+            }
+            if (deleteDataInProgress) ImGui.EndDisabled();
+
+            DrawDeleteMyDataConfirmPopup(scale);
+
+            if (!string.IsNullOrEmpty(deleteDataStatusMessage)
+                && (DateTime.Now - deleteDataStatusTime).TotalSeconds < 15)
+            {
+                ImGui.Dummy(new Vector2(0, 8f * scale));
+                using (Plugin.Instance?.OutfitMed12?.Push())
+                {
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    ImGui.TextColored(Boutique.Green, FontAwesomeIcon.Check.ToIconString());
+                    ImGui.PopFont();
+                    ImGui.SameLine(0, 6f * scale);
+                    ImGui.PushTextWrapPos();
+                    ImGui.TextColored(Boutique.TextDim, deleteDataStatusMessage);
+                    ImGui.PopTextWrapPos();
+                }
+            }
+        }
+
+        private void DrawDeleteMyDataConfirmPopup(float scale)
+        {
+            ImGui.SetNextWindowSize(new Vector2(420f * scale, 0));
+            if (!ImGui.BeginPopupModal("DeleteMyDataConfirm", ImGuiWindowFlags.AlwaysAutoResize)) return;
+
+            using (Plugin.Instance?.OutfitMed12?.Push())
+            {
+                ImGui.PushTextWrapPos();
+                ImGui.TextColored(Boutique.TextDim,
+                    "This permanently deletes every profile you've uploaded from this installation. The data cannot be recovered from the server.");
+                ImGui.PopTextWrapPos();
+            }
+
+            ImGui.Dummy(new Vector2(0, 8f * scale));
+
+            if (ImGui.Button("Cancel", new Vector2(120f * scale, 28f * scale)))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine(0, 8f * scale);
+            if (ImGui.Button("Delete my data", new Vector2(160f * scale, 28f * scale)))
+            {
+                ImGui.CloseCurrentPopup();
+                _ = RunDeleteMyServerDataAsync();
+            }
+
+            ImGui.EndPopup();
+        }
+
+        private async System.Threading.Tasks.Task RunDeleteMyServerDataAsync()
+        {
+            deleteDataInProgress = true;
+            deleteDataStatusMessage = "";
+            try
+            {
+                var (deleted, slots, error) = await Plugin.DeleteAllMyServerDataAsync();
+                if (error != null)
+                {
+                    deleteDataStatusMessage = $"Error: {error}";
+                }
+                else if (deleted == 0)
+                {
+                    deleteDataStatusMessage = "Nothing to delete. The server has no profiles claimed by this installation.";
+                }
+                else
+                {
+                    deleteDataStatusMessage = $"Deleted {deleted} profile(s) across {slots} slot(s).";
+                }
+                deleteDataStatusTime = DateTime.Now;
+            }
+            finally
+            {
+                deleteDataInProgress = false;
+            }
         }
 
         private void ApplyCSRenameMigration()
@@ -5647,7 +5812,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // Create emergency backup before restoring
                 BackupManager.CreateEmergencyBackup(plugin.Configuration);
-                
+
                 var restoredConfig = BackupManager.ImportConfiguration(backupPath);
                 if (restoredConfig != null)
                 {
@@ -5655,20 +5820,20 @@ namespace CharacterSelectPlugin.Windows.Components
                     var pluginInterfaceField = restoredConfig.GetType()
                         .GetField("pluginInterface", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                     pluginInterfaceField?.SetValue(restoredConfig, Plugin.PluginInterface);
-                    
+
                     // Copy all the important configuration data back to the current config
                     // This preserves the plugin instance while updating the data
                     var currentConfig = plugin.Configuration;
-                    
+
                     // Copy character data
                     currentConfig.Characters.Clear();
                     currentConfig.Characters.AddRange(restoredConfig.Characters);
-                    
+
                     // Copy all configuration properties using reflection
                     var configType = typeof(Configuration);
                     var properties = configType.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
                         .Where(p => p.CanWrite && p.Name != "Characters");
-                    
+
                     foreach (var prop in properties)
                     {
                         try
@@ -5681,13 +5846,13 @@ namespace CharacterSelectPlugin.Windows.Components
                             Plugin.Log.Warning($"[Settings] Could not restore property {prop.Name}: {propEx.Message}");
                         }
                     }
-                    
+
                     // Save the updated configuration
                     currentConfig.Save();
-                    
+
                     lastBackupStatusMessage = $"✓ Configuration restored from {Path.GetFileName(backupPath)}";
                     lastBackupStatusTime = DateTime.Now;
-                    
+
                     Plugin.Log.Info($"[Settings] Successfully restored configuration from {backupPath}");
                 }
                 else
@@ -6290,15 +6455,18 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.Spacing();
 
                 var buttonOpacity = customTheme.CompactQuickSwitchButtonOpacity;
-                ImGui.Text("Button Opacity");
+                ImGui.Text("Background Opacity");
                 ImGui.SameLine();
                 ImGui.SetNextItemWidth(150 * totalScale);
                 if (ImGui.SliderFloat("##CompactButtonOpacity", ref buttonOpacity, 0.0f, 1.0f, "%.2f"))
                 {
                     customTheme.CompactQuickSwitchButtonOpacity = buttonOpacity;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                {
                     plugin.Configuration.Save();
                 }
-                DrawTooltip("Adjusts the transparency of buttons in the compact Quick Switch bar.\n0 = fully transparent, 1 = fully opaque.");
+                DrawTooltip("Adjusts the transparency of the compact Quick Switch bar background.\n0 = fully transparent, 1 = fully opaque.");
 
                 if (Math.Abs(customTheme.CompactQuickSwitchButtonOpacity - 1.0f) > 0.01f)
                 {
@@ -6310,6 +6478,68 @@ namespace CharacterSelectPlugin.Windows.Components
                     if (ImGui.SmallButton("RESET##CompactOpacity"))
                     {
                         customTheme.CompactQuickSwitchButtonOpacity = 1.0f;
+                        plugin.Configuration.Save();
+                    }
+                    ImGui.PopStyleColor(4);
+                }
+
+                ImGui.Spacing();
+
+                bool useNameplateColor = customTheme.CompactQuickSwitchUseNameplateColor;
+                if (ImGui.Checkbox("Use Nameplate Colour##CompactQSUseNp", ref useNameplateColor))
+                {
+                    customTheme.CompactQuickSwitchUseNameplateColor = useNameplateColor;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("On: chassis + Apply button colour follows the active character's nameplate colour.\nOff: use the manual colour below.");
+
+                if (!customTheme.CompactQuickSwitchUseNameplateColor)
+                {
+                    var accentDefault = new Vector3(0.40f, 0.42f, 0.48f);
+                    Vector3 accent = accentDefault;
+                    if (customTheme.ColorOverrides.TryGetValue("custom.compactQS.accent", out var packedAccent) && packedAccent.HasValue)
+                    {
+                        var unpacked = CustomThemeDefinitions.UnpackColor(packedAccent.Value);
+                        accent = new Vector3(unpacked.X, unpacked.Y, unpacked.Z);
+                    }
+                    ImGui.Text("Bar Colour");
+                    ImGui.SameLine(180f * totalScale);
+                    ImGui.SetNextItemWidth(150 * totalScale);
+                    if (ImGui.ColorEdit3("##CompactQSAccent", ref accent, ImGuiColorEditFlags.NoInputs))
+                    {
+                        customTheme.ColorOverrides["custom.compactQS.accent"] = CustomThemeDefinitions.PackColor(new Vector4(accent, 1f));
+                        plugin.Configuration.Save();
+                    }
+                    DrawTooltip("Manual chassis + Apply button colour for the compact bar.");
+                }
+
+                var applyTextDefault = new Vector3(0.05f, 0.05f, 0.08f);
+                Vector3 applyText = applyTextDefault;
+                if (customTheme.ColorOverrides.TryGetValue("custom.compactQS.applyText", out var packedAt) && packedAt.HasValue)
+                {
+                    var unpacked = CustomThemeDefinitions.UnpackColor(packedAt.Value);
+                    applyText = new Vector3(unpacked.X, unpacked.Y, unpacked.Z);
+                }
+                ImGui.Text("Apply Button Text");
+                ImGui.SameLine(180f * totalScale);
+                ImGui.SetNextItemWidth(150 * totalScale);
+                if (ImGui.ColorEdit3("##CompactQSApplyText", ref applyText, ImGuiColorEditFlags.NoInputs))
+                {
+                    customTheme.ColorOverrides["custom.compactQS.applyText"] = CustomThemeDefinitions.PackColor(new Vector4(applyText, 1f));
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Apply button label colour. Default is near-black for contrast against the bar colour.");
+
+                if (customTheme.ColorOverrides.ContainsKey("custom.compactQS.applyText"))
+                {
+                    ImGui.SameLine();
+                    ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Boutique.WithAlpha(Boutique.Gold, 0.18f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, Boutique.WithAlpha(Boutique.Gold, 0.30f));
+                    ImGui.PushStyleColor(ImGuiCol.Text, Boutique.GoldWarm);
+                    if (ImGui.SmallButton("RESET##CompactQSApplyText"))
+                    {
+                        customTheme.ColorOverrides.Remove("custom.compactQS.applyText");
                         plugin.Configuration.Save();
                     }
                     ImGui.PopStyleColor(4);

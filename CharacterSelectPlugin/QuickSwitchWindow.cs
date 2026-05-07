@@ -11,7 +11,7 @@ using CharacterSelectPlugin.Windows.Styles;
 
 namespace CharacterSelectPlugin.Windows
 {
-    public class QuickSwitchWindow : Window
+    public partial class QuickSwitchWindow : Window
     {
         private readonly Plugin plugin;
         private int selectedCharacterIndex = -1;
@@ -34,6 +34,7 @@ namespace CharacterSelectPlugin.Windows
         private int chromeColorCount = 0;
         public override void PreDraw()
         {
+            if (Plugin.UseClassicLayout) { chromeColorCount = 0; return; }
             chromeColorCount = ThemeHelper.PushWindowChromeColors(plugin.Configuration);
         }
         public override void PostDraw()
@@ -44,6 +45,8 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
+
             bool compact = plugin.Configuration.QuickSwitchCompact;
             float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
@@ -86,6 +89,11 @@ namespace CharacterSelectPlugin.Windows
             int themeStyleVarCount = ThemeHelper.PushThemeStyleVars(plugin.Configuration.UIScaleMultiplier);
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
 
+            // Background opacity only multiplies into the chassis fill + colour bar.
+            float bgOpacity = 1f;
+            if (compact && plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
+                bgOpacity = plugin.Configuration.CustomTheme.CompactQuickSwitchButtonOpacity;
+
             try
             {
                 var winMin = ImGui.GetWindowPos();
@@ -101,7 +109,17 @@ namespace CharacterSelectPlugin.Windows
                     ? GetNameplateColor(selectedCharacter)
                     : new Vector4(0.40f, 0.42f, 0.48f, 1f); // muted neutral when no selection
 
-                DrawMoodRingChassis(dl, winMin, winMax, npColor, scale);
+                // Compact + Custom theme + nameplate-colour toggle off: replace npColor with the user's manual override.
+                if (compact && plugin.Configuration.SelectedTheme == ThemeSelection.Custom
+                    && !plugin.Configuration.CustomTheme.CompactQuickSwitchUseNameplateColor
+                    && plugin.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.compactQS.accent", out var packedAccent)
+                    && packedAccent.HasValue)
+                {
+                    var manual = Windows.Styles.CustomThemeDefinitions.UnpackColor(packedAccent.Value);
+                    npColor = new Vector4(manual.X, manual.Y, manual.Z, npColor.W);
+                }
+
+                DrawMoodRingChassis(dl, winMin, winMax, npColor, scale, bgOpacity);
 
                 if (!compact)
                     DrawMoodRingHeader(dl, winMin, winMax, scale, selectedCharacter, npColor);
@@ -122,7 +140,7 @@ namespace CharacterSelectPlugin.Windows
                 if (!compact)
                     DrawCloseButton(dl, winMin, winMax, scale);
 
-                DrawMoodRingColorBar(dl, winMin, winMax, scale, npColor, selectedCharacter);
+                DrawMoodRingColorBar(dl, winMin, winMax, scale, npColor, selectedCharacter, bgOpacity);
             }
             finally
             {
@@ -138,21 +156,21 @@ namespace CharacterSelectPlugin.Windows
         // colour with the character, with the 3 px nameplate bar as the
         // saturation peak at the very bottom.
         private void DrawMoodRingChassis(ImDrawListPtr dl, Vector2 min, Vector2 max,
-            Vector4 np, float scale)
+            Vector4 np, float scale, float bgOpacity = 1f)
         {
-            var topCol = new Vector4(0.024f, 0.027f, 0.035f, 0.96f);
+            var topCol = new Vector4(0.024f, 0.027f, 0.035f, 0.96f * bgOpacity);
             // Bottom is dark + a small fraction of NP colour mixed in.
             var botCol = new Vector4(
                 MathF.Min(1f, 0.06f + np.X * 0.18f),
                 MathF.Min(1f, 0.06f + np.Y * 0.18f),
                 MathF.Min(1f, 0.06f + np.Z * 0.18f),
-                0.96f);
+                0.96f * bgOpacity);
             uint topU = ImGui.ColorConvertFloat4ToU32(topCol);
             uint botU = ImGui.ColorConvertFloat4ToU32(botCol);
             dl.AddRectFilledMultiColor(min, max, topU, topU, botU, botU);
 
             // Soft outer border, neutral grey (no gold for this option).
-            uint borderU = ImGui.ColorConvertFloat4ToU32(new Vector4(0.13f, 0.14f, 0.18f, 1f));
+            uint borderU = ImGui.ColorConvertFloat4ToU32(new Vector4(0.13f, 0.14f, 0.18f, bgOpacity));
             dl.AddRect(min, max, borderU, 0f, ImDrawFlags.None, 1f);
         }
 
@@ -436,7 +454,15 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.PushStyleColor(ImGuiCol.Button, applyBg);
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, applyHov);
                 ImGui.PushStyleColor(ImGuiCol.ButtonActive, applyAct);
-                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.05f, 0.05f, 0.08f, 1f));
+                Vector4 applyTextColor = new Vector4(0.05f, 0.05f, 0.08f, 1f);
+                if (Plugin.Instance?.Configuration?.SelectedTheme == ThemeSelection.Custom
+                    && Plugin.Instance.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.compactQS.applyText", out var packedAt)
+                    && packedAt.HasValue)
+                {
+                    var t = Windows.Styles.CustomThemeDefinitions.UnpackColor(packedAt.Value);
+                    applyTextColor = new Vector4(t.X, t.Y, t.Z, 1f);
+                }
+                ImGui.PushStyleColor(ImGuiCol.Text, applyTextColor);
 
                 if (selectedCharacter != null)
                 {
@@ -473,12 +499,13 @@ namespace CharacterSelectPlugin.Windows
 
         // 3 px nameplate colour bar at the bottom (this surface's signature).
         private void DrawMoodRingColorBar(ImDrawListPtr dl, Vector2 winMin, Vector2 winMax,
-            float scale, Vector4 np, Character selectedCharacter)
+            float scale, Vector4 np, Character selectedCharacter, float bgOpacity = 1f)
         {
             float barH = 3f * scale;
             var bMin = new Vector2(winMin.X, winMax.Y - barH);
             var bMax = winMax;
             Vector4 col = selectedCharacter != null ? np : new Vector4(0.4f, 0.4f, 0.45f, 1f);
+            col.W *= bgOpacity;
             dl.AddRectFilled(bMin, bMax, ImGui.ColorConvertFloat4ToU32(col));
         }
 

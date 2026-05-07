@@ -17,7 +17,7 @@ using DalamudSeStringBuilder = Dalamud.Game.Text.SeStringHandling.SeStringBuilde
 
 namespace CharacterSelectPlugin.Windows.Components
 {
-    public class CharacterForm : IDisposable
+    public partial class CharacterForm : IDisposable
     {
         private Plugin plugin;
         private UIStyles uiStyles;
@@ -166,6 +166,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             if (!plugin.IsAddCharacterWindowOpen && !IsEditWindowOpen)
             {
                 wasFormVisibleLastFrame = false;
@@ -189,26 +190,19 @@ namespace CharacterSelectPlugin.Windows.Components
             // Check if Conflict Resolution is enabled and determine secret mode
             if (plugin.Configuration.EnableConflictResolution)
             {
-                // Check if plugin.IsSecretMode is set (from Ctrl+Shift+Edit or Add)
-                if (plugin.IsSecretMode && !isSecretMode)
-                {
-                    isSecretMode = true;
-                    plugin.IsSecretMode = false; // Reset the flag
-                }
-                
                 // For editing existing characters, check if they already have secret mode data
                 if (IsEditWindowOpen && selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
                 {
                     var character = plugin.Characters[selectedCharacterIndex];
-                    bool hasSecretModeData = character.SecretModState != null || 
+                    bool hasSecretModeData = character.SecretModState != null ||
                                            (character.Designs?.Any(d => d.SecretModState != null) == true);
-                    
+
                     if (hasSecretModeData && !isSecretMode)
                     {
                         isSecretMode = true;
                     }
                 }
-                
+
                 if (!IsEditWindowOpen && isSecretMode)
                 {
                     plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
@@ -1140,7 +1134,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             plugin.SecretModeModWindow = new SecretModeModWindow(plugin);
                             plugin.WindowSystem.AddWindow(plugin.SecretModeModWindow);
                         }
-                        
+
                         Dictionary<string, bool>? currentSelection = null;
                         HashSet<string>? currentPins = null;
                         if (IsEditWindowOpen)
@@ -1155,7 +1149,7 @@ namespace CharacterSelectPlugin.Windows.Components
                             currentPins = plugin.NewSecretModPins != null ? new HashSet<string>(plugin.NewSecretModPins) : null;
                             Plugin.Log.Information($"[PIN DEBUG] Character form loading pins for new character: {currentPins?.Count ?? 0} pins - {string.Join(", ", currentPins ?? new HashSet<string>())}");
                         }
-                        
+
                         Plugin.Log.Information($"[PIN DEBUG] About to pass pins to mod manager: {currentPins?.Count ?? 0} pins - {string.Join(", ", currentPins ?? new HashSet<string>())}");
                         plugin.SecretModeModWindow.Open(
                             IsEditWindowOpen ? selectedCharacterIndex : null,
@@ -1200,7 +1194,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         );
                     }
                 }
-                
+
                 if (!hasValidName)
                 {
                     ImGui.EndDisabled();
@@ -1376,7 +1370,7 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             return false;
         }
-        
+
         private void DrawHonorificSection(float labelWidth, float inputWidth, float inputOffset, float scale)
         {
             bool changed = false;
@@ -1878,7 +1872,8 @@ namespace CharacterSelectPlugin.Windows.Components
             Func<float> getOffX, Action<float> setOffX,
             Func<float> getOffY, Action<float> setOffY,
             Func<float> getZoom, Action<float> setZoom,
-            string idSuffix)
+            string idSuffix,
+            bool showResetButtons = false)
         {
             // Tighten label column to the widest label + small gap so the
             // sliders sit right next to their labels.
@@ -1886,8 +1881,20 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.CalcTextSize("Offset X").X,
                 ImGui.CalcTextSize("Offset Y").X),
                 ImGui.CalcTextSize("Zoom").X) + 8f * fs;
-            float sliderW = MathF.Max(40f, rowWidth - labelW);
+            float resetW = showResetButtons ? ImGui.GetFrameHeight() + 4f * fs : 0f;
+            float sliderW = MathF.Max(40f, rowWidth - labelW - resetW);
             float startX = ImGui.GetCursorPosX();
+
+            void DrawResetButton(string id, Action onReset)
+            {
+                ImGui.SameLine();
+                ImGui.PushFont(UiBuilder.IconFont);
+                bool clicked = ImGui.Button($"{FontAwesomeIcon.Undo.ToIconString()}##{id}",
+                    new Vector2(ImGui.GetFrameHeight(), ImGui.GetFrameHeight()));
+                ImGui.PopFont();
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset");
+                if (clicked) onReset();
+            }
 
             // Offset X
             ImGui.AlignTextToFramePadding();
@@ -1899,6 +1906,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 float v = getOffX();
                 if (ImGui.SliderFloat($"##{idSuffix}OffX", ref v, -1f, 1f, "%.2f")) setOffX(v);
             }
+            if (showResetButtons) DrawResetButton($"{idSuffix}OffX_reset", () => setOffX(0f));
 
             // Offset Y
             ImGui.AlignTextToFramePadding();
@@ -1910,6 +1918,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 float v = getOffY();
                 if (ImGui.SliderFloat($"##{idSuffix}OffY", ref v, -1f, 1f, "%.2f")) setOffY(v);
             }
+            if (showResetButtons) DrawResetButton($"{idSuffix}OffY_reset", () => setOffY(0f));
 
             // Zoom
             ImGui.AlignTextToFramePadding();
@@ -1921,6 +1930,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 float v = getZoom();
                 if (ImGui.SliderFloat($"##{idSuffix}Zoom", ref v, 0.5f, 3.0f, "%.2f×")) setZoom(v);
             }
+            if (showResetButtons) DrawResetButton($"{idSuffix}Zoom_reset", () => setZoom(1f));
         }
 
         // Apply any pending pasted/picked image path (called from DrawImageSelection)
@@ -2288,12 +2298,54 @@ namespace CharacterSelectPlugin.Windows.Components
         }
 
         // 96x96 chamfered slip-polygon preview with inset gilt frame.
+        private static void DrawFramedZoomedImage(ImDrawListPtr dl, Vector2 boxMin, Vector2 boxMax,
+            Dalamud.Interface.Textures.TextureWraps.IDalamudTextureWrap texture,
+            float zoom, float offsetX, float offsetY)
+        {
+            var size = boxMax - boxMin;
+            float aspect = (float)texture.Width / texture.Height;
+            float drawW, drawH;
+            if (aspect > 1f) { drawW = size.X; drawH = size.X / aspect; }
+            else { drawH = size.Y; drawW = size.Y * aspect; }
+            drawW *= zoom;
+            drawH *= zoom;
+            var off = new Vector2(size.X * offsetX, size.Y * offsetY);
+            var drawMin = boxMin + new Vector2((size.X - drawW) * 0.5f, (size.Y - drawH) * 0.5f) + off;
+            var drawMax = drawMin + new Vector2(drawW, drawH);
+            dl.PushClipRect(boxMin, boxMax, true);
+            dl.AddImage(texture.Handle, drawMin, drawMax);
+            dl.PopClipRect();
+        }
+
         private void DrawPortraitPreviewBox(Vector2 origin, float side, float scale)
         {
-            float fs = Boutique.FormScale;
             var dl = ImGui.GetWindowDrawList();
             var min = origin;
             var max = origin + new Vector2(side, side);
+
+            string pluginDirectory = plugin.PluginDirectory;
+            string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
+            string? imagePath = IsEditWindowOpen ? editedCharacterImagePath : plugin.NewCharacterImagePath;
+            string finalImagePath = !string.IsNullOrEmpty(imagePath) && File.Exists(imagePath)
+                ? imagePath
+                : defaultImagePath;
+
+            if (Plugin.UseClassicLayout)
+            {
+                uiStyles.DrawGlowingBorder(
+                    min - new Vector2(2 * scale, 2 * scale),
+                    max + new Vector2(2 * scale, 2 * scale),
+                    new Vector3(0.5f, 0.5f, 0.5f), 0.3f, false, scale);
+                if (File.Exists(finalImagePath))
+                {
+                    var tex = Plugin.TextureProvider.GetFromFile(finalImagePath).GetWrapOrDefault();
+                    if (tex != null)
+                        DrawFramedZoomedImage(dl, min, max, tex, editedPortraitZoom, editedPortraitOffsetX, editedPortraitOffsetY);
+                }
+                return;
+            }
+
+            float fs = Boutique.FormScale;
             float chamfer = 6f * fs;
 
             // Background slip polygon (dark velvet with diagonal stripe)
@@ -2307,14 +2359,6 @@ namespace CharacterSelectPlugin.Windows.Components
                     dl.AddConvexPolyFilled(p, 6, bgCol);
             }
 
-            // Image (drawn as a smaller inset rect inside the chamfered slip)
-            string pluginDirectory = plugin.PluginDirectory;
-            string defaultImagePath = Path.Combine(pluginDirectory, "Assets", "Default.png");
-            string? imagePath = IsEditWindowOpen ? editedCharacterImagePath : plugin.NewCharacterImagePath;
-            string finalImagePath = !string.IsNullOrEmpty(imagePath) && File.Exists(imagePath)
-                ? imagePath
-                : defaultImagePath;
-
             float inset = 4f * fs;
             var imgMin = min + new Vector2(inset, inset);
             var imgMax = max - new Vector2(inset, inset);
@@ -2323,33 +2367,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 var texture = Plugin.TextureProvider.GetFromFile(finalImagePath).GetWrapOrDefault();
                 if (texture != null)
-                {
-                    float aspect = (float)texture.Width / texture.Height;
-                    var imgSize = imgMax - imgMin;
-                    float drawW, drawH;
-                    if (aspect > 1f)
-                    {
-                        drawW = imgSize.X;
-                        drawH = imgSize.X / aspect;
-                    }
-                    else
-                    {
-                        drawH = imgSize.Y;
-                        drawW = imgSize.Y * aspect;
-                    }
-                    // Apply per-character zoom + offset so the preview matches
-                    // what the live card will render.
-                    drawW *= editedPortraitZoom;
-                    drawH *= editedPortraitZoom;
-                    var off = new Vector2(imgSize.X * editedPortraitOffsetX, imgSize.Y * editedPortraitOffsetY);
-                    var drawMin = imgMin + new Vector2((imgSize.X - drawW) * 0.5f, (imgSize.Y - drawH) * 0.5f) + off;
-                    var drawMax = drawMin + new Vector2(drawW, drawH);
-
-                    // Clip so a zoomed image stays inside the preview frame
-                    dl.PushClipRect(imgMin, imgMax, true);
-                    dl.AddImage((ImTextureID)texture.Handle, drawMin, drawMax);
-                    dl.PopClipRect();
-                }
+                    DrawFramedZoomedImage(dl, imgMin, imgMax, texture, editedPortraitZoom, editedPortraitOffsetX, editedPortraitOffsetY);
             }
             else
             {
@@ -2382,10 +2400,27 @@ namespace CharacterSelectPlugin.Windows.Components
         // animated image is framed before saving.
         private void DrawAnimatedPreviewBox(Vector2 origin, float side, float scale)
         {
-            float fs = Boutique.FormScale;
             var dl = ImGui.GetWindowDrawList();
             var min = origin;
             var max = origin + new Vector2(side, side);
+            string? gifPath = GetAnimatedPath();
+
+            if (Plugin.UseClassicLayout)
+            {
+                uiStyles.DrawGlowingBorder(
+                    min - new Vector2(2 * scale, 2 * scale),
+                    max + new Vector2(2 * scale, 2 * scale),
+                    new Vector3(0.5f, 0.5f, 0.5f), 0.3f, false, scale);
+                if (!string.IsNullOrEmpty(gifPath) && File.Exists(gifPath))
+                {
+                    var tex = Plugin.TextureProvider.GetFromFile(gifPath).GetWrapOrDefault();
+                    if (tex != null && tex.Width > 0 && tex.Height > 0)
+                        DrawFramedZoomedImage(dl, min, max, tex, editedAnimatedZoom, editedAnimatedOffsetX, editedAnimatedOffsetY);
+                }
+                return;
+            }
+
+            float fs = Boutique.FormScale;
             float chamfer = 6f * fs;
 
             // Background slip polygon
@@ -2398,7 +2433,6 @@ namespace CharacterSelectPlugin.Windows.Components
             var imgMin = min + new Vector2(inset, inset);
             var imgMax = max - new Vector2(inset, inset);
 
-            string? gifPath = GetAnimatedPath();
             if (!string.IsNullOrEmpty(gifPath) && File.Exists(gifPath))
             {
                 // For preview we use the static-texture loader rather than the
@@ -2406,30 +2440,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 // and avoids spinning up the cache for a tuning preview.
                 var texture = Plugin.TextureProvider.GetFromFile(gifPath).GetWrapOrDefault();
                 if (texture != null && texture.Width > 0 && texture.Height > 0)
-                {
-                    float aspect = (float)texture.Width / texture.Height;
-                    var imgSize = imgMax - imgMin;
-                    float drawW, drawH;
-                    if (aspect > 1f)
-                    {
-                        drawW = imgSize.X;
-                        drawH = imgSize.X / aspect;
-                    }
-                    else
-                    {
-                        drawH = imgSize.Y;
-                        drawW = imgSize.Y * aspect;
-                    }
-                    drawW *= editedAnimatedZoom;
-                    drawH *= editedAnimatedZoom;
-                    var off = new Vector2(imgSize.X * editedAnimatedOffsetX, imgSize.Y * editedAnimatedOffsetY);
-                    var drawMin = imgMin + new Vector2((imgSize.X - drawW) * 0.5f, (imgSize.Y - drawH) * 0.5f) + off;
-                    var drawMax = drawMin + new Vector2(drawW, drawH);
-
-                    dl.PushClipRect(imgMin, imgMax, true);
-                    dl.AddImage(texture.Handle, drawMin, drawMax);
-                    dl.PopClipRect();
-                }
+                    DrawFramedZoomedImage(dl, imgMin, imgMax, texture, editedAnimatedZoom, editedAnimatedOffsetX, editedAnimatedOffsetY);
             }
             else
             {
@@ -3795,7 +3806,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private void ValidateCharacterName(string name)
         {
             nameValidationError = "";
-            
+
             if (string.IsNullOrWhiteSpace(name))
                 return;
 
@@ -3805,8 +3816,8 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 // When editing, exclude the current character from the check
                 var currentCharName = plugin.Characters[selectedCharacterIndex].Name;
-                nameExists = plugin.Characters.Any(c => 
-                    !c.Name.Equals(currentCharName, StringComparison.OrdinalIgnoreCase) && 
+                nameExists = plugin.Characters.Any(c =>
+                    !c.Name.Equals(currentCharName, StringComparison.OrdinalIgnoreCase) &&
                     c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             }
             else

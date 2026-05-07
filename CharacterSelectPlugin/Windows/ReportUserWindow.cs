@@ -176,6 +176,12 @@ public class ReportUserWindow : Window, IDisposable
 
     private async Task SubmitReport()
     {
+        if (!Plugin.IsServerEnabled())
+        {
+            submitResult = "Cannot submit: server communication is disabled in Settings > Privacy.";
+            isSubmitting = false;
+            return;
+        }
         isSubmitting = true;
         submitResult = null;
 

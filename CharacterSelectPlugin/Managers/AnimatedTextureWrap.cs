@@ -115,6 +115,8 @@ namespace CharacterSelectPlugin.Managers
 
         private async Task DecodeFramesAsync(ITextureProvider textureProvider, CancellationToken token)
         {
+            int stride = Width * 4;
+            byte[] pixelBuffer = new byte[stride * Height];
             for (int i = 0; i < totalFrames; i++)
             {
                 if (token.IsCancellationRequested) return;
@@ -124,17 +126,21 @@ namespace CharacterSelectPlugin.Managers
                     frameImage.Frames.AddFrame(image.Frames[i]);
                     frameImage.Frames.RemoveFrame(0);
 
-                    using var ms = new MemoryStream();
-                    await frameImage.SaveAsPngAsync(ms, token).ConfigureAwait(false);
+                    frameImage.CopyPixelDataTo(pixelBuffer);
 
-                    var bytes = new ReadOnlyMemory<byte>(ms.ToArray());
-                    var wrap = await textureProvider.CreateFromImageAsync(bytes, null, token).ConfigureAwait(false);
+                    if (token.IsCancellationRequested) return;
+
+                    var wrap = textureProvider.CreateFromRaw(
+                        RawImageSpecification.Rgba32(Width, Height),
+                        pixelBuffer,
+                        $"CSPlus_AnimFrame_{i}");
                     if (token.IsCancellationRequested)
                     {
                         wrap?.Dispose();
                         return;
                     }
                     frames[i] = wrap;
+                    await Task.Yield();
                 }
                 catch (OperationCanceledException) { return; }
                 catch (Exception ex)

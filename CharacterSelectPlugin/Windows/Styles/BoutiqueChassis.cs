@@ -393,9 +393,10 @@ public static class BoutiqueChassis
                     break;
             }
         }
-        Vector4 fillCol = hovered
-            ? Boutique.SlotOrDefault("color.buttonHovered", goldHoverDefault)
-            : Boutique.SlotOrDefault("color.button",        goldDefault);
+        // Gold pill follows the Primary Accent slot; hover lerps the resolved primary 18% toward white.
+        Vector4 primary = Boutique.SlotOrDefault("custom.accent.primary", goldDefault);
+        Vector4 hoverFromPrimary = CodexChassis.Lerp(primary, new Vector4(1f, 1f, 1f, 1f), 0.18f);
+        Vector4 fillCol = hovered ? hoverFromPrimary : primary;
         Span<Vector2> pts = stackalloc Vector2[6];
         CodexChassis.BuildSlipPolygon(min, max, cham, pts);
         unsafe
@@ -404,9 +405,8 @@ public static class BoutiqueChassis
                 dl.AddConvexPolyFilled(p, 6, CodexChassis.U32(fillCol));
         }
 
-        // 1px top highlight along the inner top edge for depth. Lifts toward
-        // white from the resolved button colour so it follows the override.
-        Vector4 highlightCol = Boutique.SlotOrDefault("color.button", goldWarmDefault);
+        // 1px top-edge highlight, lerped from the resolved primary toward white.
+        Vector4 highlightCol = primary;
         Vector4 brightHighlight = CodexChassis.Lerp(highlightCol, new Vector4(1f, 1f, 1f, 1f), 0.30f);
         var hlMin = new Vector2(min.X + cham, min.Y);
         var hlMax = new Vector2(max.X - cham, min.Y + 1f * scale);
@@ -537,11 +537,8 @@ public static class BoutiqueChassis
 
         if (isActive)
         {
-            // Active sort tab underline + glow follows the Buttons category
-            // (the user reads sort tabs as "buttons" and explicitly does NOT
-            // want them tinted by Accent). Hardcoded gold default keeps the
-            // unset experience identical to before.
-            Vector4 tabActive = Boutique.SlotOrDefault("color.button",
+            // Active sort tab underline + glow follows the Primary Accent slot.
+            Vector4 tabActive = Boutique.SlotOrDefault("custom.accent.primary",
                 new Vector4(1f, 214f / 255f, 0f, 1f));
 
             float underY = pos.Y + h - 1f * scale;

@@ -1036,6 +1036,7 @@ namespace CharacterSelectPlugin.Windows
 
         private async System.Threading.Tasks.Task SyncNSFWFromServerAsync(Character character, string? playerName, string? worldName)
         {
+            if (!Plugin.IsServerEnabled()) return;
             try
             {
                 // Check gallery for current NSFW status

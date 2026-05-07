@@ -12,7 +12,7 @@ namespace CharacterSelectPlugin.Windows
     /// <summary>
     /// A window for picking FontAwesome icons, used by the Custom Theme editor.
     /// </summary>
-    public class FontAwesomeIconPickerWindow : Window
+    public partial class FontAwesomeIconPickerWindow : Window
     {
         public FontAwesomeIcon? SelectedIcon { get; private set; }
         public bool Confirmed { get; private set; }
@@ -204,6 +204,7 @@ namespace CharacterSelectPlugin.Windows
         private int _chromeColorCount = 0;
         public override void PreDraw()
         {
+            if (Plugin.UseClassicLayout) return;
             // Chrome (WindowBg / TitleBg / TitleBgActive / MenuBarBg) follows
             // the active theme. Border + scrollbar accents stay gold.
             var cfg = Plugin.Instance?.Configuration;
@@ -227,6 +228,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void PostDraw()
         {
+            if (_chromeColorCount == 0) return;
             ImGui.PopStyleVar(3);
             ImGui.PopStyleColor(10);
             CharacterSelectPlugin.Windows.Styles.ThemeHelper.PopWindowChromeColors(_chromeColorCount);
@@ -235,6 +237,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             // Inner content colours (frames, buttons, separators, text).
             ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.65f));
             ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.85f));

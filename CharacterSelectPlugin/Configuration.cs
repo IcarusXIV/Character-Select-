@@ -100,6 +100,10 @@ namespace CharacterSelectPlugin
         public List<ThemePreset> ThemePresets { get; set; } = new();
         public string? ActivePresetName { get; set; } = null;
 
+        // Use pre-rework window rendering instead of boutique
+        [JsonPropertyName("useClassicLayout")]
+        public bool UseClassicLayout { get; set; } = false;
+
         // Legacy (use SelectedTheme)
         [Obsolete("Use SelectedTheme instead")]
         public bool UseSeasonalTheme { get; set; } = false;
@@ -221,6 +225,13 @@ namespace CharacterSelectPlugin
 
         [JsonPropertyName("allowOthersToSeeMyCSName")]
         public bool AllowOthersToSeeMyCSName { get; set; } = false;
+
+        // Master switch for server traffic.
+        [JsonPropertyName("disableAllServerCommunication")]
+        public bool DisableAllServerCommunication { get; set; } = false;
+
+        [JsonPropertyName("hasSeenPrivacyConsent")]
+        public bool HasSeenPrivacyConsent { get; set; } = false;
 
         // Reveal actual names keybind
         [JsonPropertyName("enableRevealActualNamesKeybind")]
@@ -462,6 +473,9 @@ namespace CharacterSelectPlugin
         /// <summary>Button opacity for Compact Quick Switch (0.0-1.0).</summary>
         public float CompactQuickSwitchButtonOpacity { get; set; } = 1.0f;
 
+        /// <summary>Use nameplate colour for the compact Quick Switch chassis + Apply button.</summary>
+        public bool CompactQuickSwitchUseNameplateColor { get; set; } = true;
+
         /// <summary>Wardrobe background image path.</summary>
         public string? WardrobeBackgroundImagePath { get; set; }
         /// <summary>Wardrobe background opacity (0.0-1.0).</summary>
@@ -487,6 +501,7 @@ namespace CharacterSelectPlugin
                 FavoriteIconId = this.FavoriteIconId,
                 UseNameplateColorForCardGlow = this.UseNameplateColorForCardGlow,
                 CompactQuickSwitchButtonOpacity = this.CompactQuickSwitchButtonOpacity,
+                CompactQuickSwitchUseNameplateColor = this.CompactQuickSwitchUseNameplateColor,
                 WardrobeBackgroundImagePath = this.WardrobeBackgroundImagePath,
                 WardrobeBackgroundImageOpacity = this.WardrobeBackgroundImageOpacity,
                 WardrobeBackgroundImageZoom = this.WardrobeBackgroundImageZoom,
@@ -507,6 +522,7 @@ namespace CharacterSelectPlugin
             this.FavoriteIconId = other.FavoriteIconId;
             this.UseNameplateColorForCardGlow = other.UseNameplateColorForCardGlow;
             this.CompactQuickSwitchButtonOpacity = other.CompactQuickSwitchButtonOpacity;
+            this.CompactQuickSwitchUseNameplateColor = other.CompactQuickSwitchUseNameplateColor;
             this.WardrobeBackgroundImagePath = other.WardrobeBackgroundImagePath;
             this.WardrobeBackgroundImageOpacity = other.WardrobeBackgroundImageOpacity;
             this.WardrobeBackgroundImageZoom = other.WardrobeBackgroundImageZoom;

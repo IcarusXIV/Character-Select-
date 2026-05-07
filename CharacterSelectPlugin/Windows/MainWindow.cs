@@ -15,7 +15,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
 namespace CharacterSelectPlugin.Windows
 {
-    public class MainWindow : Window, IDisposable
+    public partial class MainWindow : Window, IDisposable
     {
         private Plugin plugin;
         private CharacterGrid characterGrid;
@@ -51,7 +51,7 @@ namespace CharacterSelectPlugin.Windows
         public bool IsDesignPanelOpen => designPanel?.IsOpen ?? false;
         public bool IsEditCharacterWindowOpen => characterForm?.IsEditWindowOpen ?? false;
         public bool IsReorderWindowOpen => reorderWindow?.IsOpen ?? false;
-        
+
         public DesignPanel? GetDesignPanel() => designPanel;
 
         public MainWindow(Plugin plugin)
@@ -79,6 +79,11 @@ namespace CharacterSelectPlugin.Windows
 
         public override void PreDraw()
         {
+            if (Plugin.UseClassicLayout)
+            {
+                uiStyles.PushCustomWindowBgIfNeeded();
+                return;
+            }
             uiStyles.PushCustomWindowBgIfNeeded();
             // WindowBg must be pushed BEFORE Begin (committed at Begin time).
             // Use the same theme-aware colour the chassis paints with so any
@@ -88,6 +93,11 @@ namespace CharacterSelectPlugin.Windows
 
         public override void PostDraw()
         {
+            if (Plugin.UseClassicLayout)
+            {
+                uiStyles.PopCustomWindowBgIfNeeded();
+                return;
+            }
             ImGui.PopStyleColor();
             uiStyles.PopCustomWindowBgIfNeeded();
         }
@@ -105,7 +115,7 @@ namespace CharacterSelectPlugin.Windows
             settingsPanel?.Dispose();
             reorderWindow?.Dispose();
         }
-        
+
         private void DrawSeasonalBackgroundEffects(float deltaTime)
         {
             if (!SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
@@ -268,6 +278,7 @@ namespace CharacterSelectPlugin.Windows
 
         public override void Draw()
         {
+            if (Plugin.UseClassicLayout) { DrawClassicLayout(); return; }
             plugin.MainWindowPos = ImGui.GetWindowPos();
             plugin.MainWindowSize = ImGui.GetWindowSize();
 
@@ -386,7 +397,6 @@ namespace CharacterSelectPlugin.Windows
             var pipCentre = new Vector2(min.X + padX + 3f * scale, midY);
             Boutique.DrawGoldPip(dl, pipCentre, scale, time);
 
-            // Meta text, tracked-caps. Numbers in gold (HTML: .ribbon-meta .soft b { color: gold; }).
             int total = plugin.Characters?.Count ?? 0;
             int favs = plugin.Characters?.Count(c => c.IsFavorite) ?? 0;
             var activeChar = plugin.GetActiveCharacter() ?? plugin.activeCharacter;
@@ -395,48 +405,93 @@ namespace CharacterSelectPlugin.Windows
             string totalNum = total.ToString();
             string favNum = favs.ToString();
 
+            string appliedSeg = !string.IsNullOrWhiteSpace(activeName)
+                ? $"{activeName.ToUpperInvariant()} APPLIED" : "";
+            byte currentIdle = 7;
+            if (Plugin.ObjectTable.LocalPlayer != null)
+            {
+                unsafe
+                {
+                    var charPtr = (FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)Plugin.ObjectTable.LocalPlayer.Address;
+                    currentIdle = charPtr->EmoteController.CPoseState;
+                }
+            }
+            string idleText = currentIdle < 7 ? currentIdle.ToString() : "NONE";
+
             using (Plugin.Instance?.OswaldMed11?.Push())
             {
+                float dotW = ImGui.CalcTextSize("·").X;
+                float leftStart = pipCentre.X + 14f * scale;
+                float natW = Boutique.MeasureTrackedText("CHARACTERS", trackPx)
+                    + 10f * scale + dotW + 10f * scale
+                    + Boutique.MeasureTrackedText(totalNum, trackPx) + 4f * scale
+                    + Boutique.MeasureTrackedText("TOTAL", trackPx)
+                    + 10f * scale + dotW + 10f * scale
+                    + Boutique.MeasureTrackedText(favNum, trackPx) + 4f * scale
+                    + Boutique.MeasureTrackedText("FAVOURITES", trackPx);
+                if (appliedSeg.Length > 0)
+                    natW += 10f * scale + dotW + 10f * scale + 14f * scale
+                        + Boutique.MeasureTrackedText(appliedSeg, trackPx);
+                if (Plugin.ObjectTable.LocalPlayer != null)
+                    natW += 10f * scale + dotW + 10f * scale
+                        + Boutique.MeasureTrackedText(idleText, trackPx) + 4f * scale
+                        + Boutique.MeasureTrackedText("IDLE", trackPx);
+                float rightReserve = 120f * scale;
+                float availW = (max.X - padX - rightReserve) - leftStart;
+                float fit = (availW > 0 && natW > availW) ? Math.Max(0.65f, availW / natW) : 1f;
+                if (fit < 1f) ImGui.SetWindowFontScale(fit);
+
                 float yText = midY - ImGui.GetFontSize() * 0.5f;
-                float x = pipCentre.X + 14f * scale;
+                float x = leftStart;
+                float tp = trackPx * fit;
+                float g10 = 10f * scale * fit;
+                float g4 = 4f * scale * fit;
+                float g14 = 14f * scale * fit;
+                float dW = ImGui.CalcTextSize("·").X;
 
-                // "CHARACTERS"
                 x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), "CHARACTERS",
-                    Boutique.U32(Boutique.Text), trackPx);
-                x += 10f * scale;
-                // sep
-                dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextGhost), "·");
-                x += ImGui.CalcTextSize("·").X + 10f * scale;
-                // "<gold>X</gold> TOTAL"
+                    Boutique.U32(Boutique.Text), tp);
+                x += g10;
+                dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextFaint), "·");
+                x += dW + g10;
                 x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), totalNum,
-                    Boutique.U32(Boutique.Gold), trackPx);
-                x += 4f * scale;
+                    Boutique.U32(Boutique.Gold), tp);
+                x += g4;
                 x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), "TOTAL",
-                    Boutique.U32(Boutique.TextDim), trackPx);
-                x += 10f * scale;
-                // sep
-                dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextGhost), "·");
-                x += ImGui.CalcTextSize("·").X + 10f * scale;
-                // "<gold>Y</gold> FAVOURITES"
+                    Boutique.U32(Boutique.TextDim), tp);
+                x += g10;
+                dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextFaint), "·");
+                x += dW + g10;
                 x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), favNum,
-                    Boutique.U32(Boutique.Gold), trackPx);
-                x += 4f * scale;
+                    Boutique.U32(Boutique.Gold), tp);
+                x += g4;
                 x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), "FAVOURITES",
-                    Boutique.U32(Boutique.TextDim), trackPx);
+                    Boutique.U32(Boutique.TextDim), tp);
 
-                // Active applied (if any), to the right of the meta text
-                if (!string.IsNullOrWhiteSpace(activeName))
+                if (appliedSeg.Length > 0)
                 {
-                    x += 14f * scale;
-                    dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextGhost), "·");
-                    x += ImGui.CalcTextSize("·").X + 10f * scale;
-                    // np-cyan SQUARE pip (matches patch notes / achievements / wardrobe)
-                    Boutique.DrawSquarePip(dl, new Vector2(x + 3f * scale, midY), 3f * scale, Boutique.NpCyan);
-                    x += 14f * scale;
-                    string appliedSeg = $"{activeName.ToUpperInvariant()} APPLIED";
-                    Boutique.DrawTrackedText(dl, new Vector2(x, yText), appliedSeg,
-                        Boutique.U32(Boutique.Text), trackPx);
+                    x += g10;
+                    dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextFaint), "·");
+                    x += dW + g10;
+                    Boutique.DrawSquarePip(dl, new Vector2(x + 3f * scale * fit, midY), 3f * scale * fit, Boutique.NpCyan);
+                    x += g14;
+                    x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), appliedSeg,
+                        Boutique.U32(Boutique.Text), tp);
                 }
+
+                if (Plugin.ObjectTable.LocalPlayer != null)
+                {
+                    x += g10;
+                    dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextFaint), "·");
+                    x += dW + g10;
+                    x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), idleText,
+                        Boutique.U32(Boutique.Gold), tp);
+                    x += g4;
+                    x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), "IDLE",
+                        Boutique.U32(Boutique.TextDim), tp);
+                }
+
+                if (fit < 1f) ImGui.SetWindowFontScale(1f);
 
                 // Right side: page indicator with gold numbers
                 int totalPages = characterGrid?.TotalPageCount ?? 1;
@@ -505,10 +560,7 @@ namespace CharacterSelectPlugin.Windows
 
             if (addClicked)
             {
-                var io = ImGui.GetIO();
-                bool isSecretMode = io.KeyCtrl && io.KeyShift;
                 plugin.OpenAddCharacterWindow();
-                if (isSecretMode) plugin.IsSecretMode = isSecretMode;
                 characterGrid.InvalidateCache();
             }
 
@@ -635,10 +687,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleVar(2);
         }
 
-        // 4-point sparkle star, drawn as 4 thin triangles meeting at the
-        // centre. Outer tip distance = size (matches the circle radius the
-        // particles used to draw at). ImGui's AddConvexPolyFilled can't do
-        // concave shapes, so triangles are the cheapest path.
+        // 4-point sparkle star (4 thin triangles meeting at the centre).
         private static void DrawSparkleStar(ImDrawListPtr dl, Vector2 c, float size, uint col)
         {
             float r = size;
@@ -661,10 +710,6 @@ namespace CharacterSelectPlugin.Windows
             float side = 26f * scale;
             ImGui.SetCursorScreenPos(min);
             bool clicked = ImGui.InvisibleButton($"##icbtn_{key}", new Vector2(side, side));
-            // Use rect check for hover so the tooltip is bulletproof against
-            // any later-submitted item shadowing the InvisibleButton's hover
-            // state. IsItemHovered() was apparently not firing for these
-            // icons even though the source had the new tooltip strings.
             bool hovered = ImGui.IsMouseHoveringRect(min, min + new Vector2(side, side));
             if (hovered && !string.IsNullOrEmpty(tooltip)) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(tooltip);
 
@@ -679,10 +724,7 @@ namespace CharacterSelectPlugin.Windows
                     Boutique.DrawNewDot(dl, min + new Vector2(side, side), scale, time);
             }
 
-            // Trophy with unseen unlocks: override the rest-state icon ink
-            // from grey to gold so the button itself signals "something
-            // waiting" even before the particles read. Hover state is already
-            // gold via hoverInk, so only repaint when not hovered.
+            // Trophy with unseen unlocks: gold ink + sparkle particles.
             if (key == "trophy" && plugin.Configuration.EnableAchievementSystem)
             {
                 bool hasUnseen = plugin.Configuration.AchievementData?.HasUnseenAchievements == true;
@@ -704,10 +746,10 @@ namespace CharacterSelectPlugin.Windows
                     var rng = Random.Shared;
 
                     trophySpawnTimer += dt;
-                    while (trophySpawnTimer > 0.04f) // ~25 spawns/sec
+                    while (trophySpawnTimer > 0.08f)
                     {
-                        trophySpawnTimer -= 0.04f;
-                        if (trophyParticles.Count > 60) break;
+                        trophySpawnTimer -= 0.08f;
+                        if (trophyParticles.Count >= 20) break;
 
                         float angle = (float)(rng.NextDouble() * Math.PI * 2);
                         float speed = 18f + (float)(rng.NextDouble() * 35f);
@@ -742,15 +784,8 @@ namespace CharacterSelectPlugin.Windows
 
                     foreach (var p in trophyParticles)
                     {
-                        uint col32 = ImGui.GetColorU32(p.Color);
-                        if (p.Color.W > 0.4f)
-                        {
-                            // Soft circular halo behind the sparkle - kept as a
-                            // circle (not a star) so the glow stays diffuse.
-                            var glow = new Vector4(p.Color.X, p.Color.Y, p.Color.Z, p.Color.W * 0.25f);
-                            dl.AddCircleFilled(p.Position, p.Size * 2f, ImGui.GetColorU32(glow), 8);
-                        }
-                        DrawSparkleStar(dl, p.Position, p.Size, col32);
+                        if (p.Color.W < 0.15f) continue;
+                        DrawSparkleStar(dl, p.Position, p.Size, ImGui.GetColorU32(p.Color));
                     }
                 }
                 else if (trophyParticles.Count > 0)

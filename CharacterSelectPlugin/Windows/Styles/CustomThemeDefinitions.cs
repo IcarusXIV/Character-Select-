@@ -147,21 +147,22 @@ namespace CharacterSelectPlugin.Windows.Styles
             // === BUTTONS ===
             new ColorOption(
                 "color.button",
-                "Button",
+                "Menu Button",
                 "Buttons",
                 new Vector4(0.16f, 0.16f, 0.16f, 0.9f),
-                ImGuiCol.Button
+                ImGuiCol.Button,
+                "Standard utility buttons (Cancel, Reset, dropdown picks, etc.). NOT the primary action buttons like ADD CHARACTER or SAVE -- those use Accent."
             ),
             new ColorOption(
                 "color.buttonHovered",
-                "Button (Hover)",
+                "Menu Button (Hover)",
                 "Buttons",
                 new Vector4(0.22f, 0.22f, 0.22f, 0.9f),
                 ImGuiCol.ButtonHovered
             ),
             new ColorOption(
                 "color.buttonActive",
-                "Button (Pressed)",
+                "Menu Button (Pressed)",
                 "Buttons",
                 new Vector4(0.28f, 0.28f, 0.28f, 0.9f),
                 ImGuiCol.ButtonActive
@@ -248,29 +249,29 @@ namespace CharacterSelectPlugin.Windows.Styles
                 "Faint third-tier text (meta info, hints, ghosted labels)."
             ),
 
-            // === BUTTONS (icon + label inside primary buttons) ===
+            // === BUTTONS (icon + label inside primary action buttons) ===
             new CustomColorOption(
                 "custom.button.icon",
-                "Button Icon",
+                "Action Button Icon",
                 "Buttons",
                 new Vector4(26f / 255f, 21f / 255f, 0f, 1f),
-                "Icon glyph colour inside primary buttons (e.g. the + on Add Character / New Design, the disk on Save)."
+                "Icon glyph colour inside primary action buttons only (e.g. the + on ADD CHARACTER / NEW DESIGN, the disk on SAVE). Does not affect the icon bar at the top of the main window."
             ),
             new CustomColorOption(
                 "custom.button.text",
-                "Button Label",
+                "Action Button Label",
                 "Buttons",
                 new Vector4(26f / 255f, 21f / 255f, 0f, 1f),
-                "Label text colour inside primary buttons (e.g. ADD CHARACTER, SAVE, APPLY)."
+                "Label text colour inside primary action buttons only (e.g. ADD CHARACTER, SAVE, APPLY)."
             ),
 
             // === ACCENTS ===
             new CustomColorOption(
                 "custom.accent.primary",
-                "Accent",
+                "Primary Accent (Action Buttons + Highlights)",
                 "Accents",
                 new Vector4(1f, 214f / 255f, 0f, 1f),
-                "The primary accent colour, used for active states, section heads, gold pills, and highlights."
+                "Background colour for primary action buttons (ADD CHARACTER, SAVE, APPLY gold pills) and active-state highlights, section-head accents."
             ),
             new CustomColorOption(
                 "custom.favoriteIcon",
