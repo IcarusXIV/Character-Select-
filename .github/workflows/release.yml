@@ -55,7 +55,8 @@ jobs:
           $Files = @(
             "$PluginPath/CharacterSelectPlugin.dll",
             "$PluginPath/CharacterSelectPlugin.json",
-            "$PluginPath/CharacterSelectPlugin.deps.json"
+            "$PluginPath/CharacterSelectPlugin.deps.json",
+            "$PluginPath/SixLabors.ImageSharp.dll"
           )
           Compress-Archive -Path $Files -DestinationPath $OutputZip -Force
           Compress-Archive -Path "$PluginPath/Assets" -Update -DestinationPath $OutputZip
