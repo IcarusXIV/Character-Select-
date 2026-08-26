@@ -80,13 +80,12 @@ public class WardrobeWindow : Window, IDisposable
     private const float SnapDurClick    = 0.28f;
     private const float MomentumExpBase = 0.05f;     // exp decay base per second
 
-    // ── Default palette (overridden by Custom theme + np-toggle) ─────────
-    private static readonly Vector4 DefaultGold     = Boutique.Gold;
-    private static readonly Vector4 DefaultGoldWarm = Boutique.GoldWarm;
-    private static readonly Vector4 DefaultGoldDeep = Boutique.GoldDeep;
-    // gold-bright #FFF1A8 - used for hex tag inner fill + warm wash highlights
-    private static readonly Vector4 DefaultGoldBright = new(1f, 241f / 255f, 168f / 255f, 1f);
-    private static readonly Vector4 DefaultWinBg    = Boutique.Surface0;
+    // Default palette (overridden by Custom theme + np-toggle)
+    private static Vector4 DefaultGold       => Boutique.Gold;
+    private static Vector4 DefaultGoldWarm   => Boutique.GoldWarm;
+    private static Vector4 DefaultGoldDeep   => Boutique.GoldDeep;
+    private static Vector4 DefaultGoldBright => Boutique.GoldBright;
+    private static Vector4 DefaultWinBg      => Boutique.Surface0;
 
     // Resolved each frame
     private Vector4 accent     = DefaultGold;
@@ -102,6 +101,7 @@ public class WardrobeWindow : Window, IDisposable
     private Vector4 nameTextCol   = Boutique.Text;
 
     private bool useNameplateAccent = false;
+    private bool accentOverridden = false;
 
     // ── Image aspect cache ──────────────────────────────────────────────
     private readonly Dictionary<Guid, float> imageAspectCache = new();
@@ -295,22 +295,36 @@ public class WardrobeWindow : Window, IDisposable
         bool isCustom = plugin.Configuration.SelectedTheme == ThemeSelection.Custom;
         var config = isCustom ? plugin.Configuration.CustomTheme : null;
 
-        // Window bg + card surfaces (Custom theme can override accent / bg / card colours)
+        // Window bg + card surfaces
         winBg = GetCustomColor(config, "custom.wardrobeBg", DefaultWinBg);
         cardBg = GetCustomColor(config, "custom.wardrobeCardBg", Boutique.Surface1);
-        cardBgBot = Boutique.Surface0;
+        cardBgBot = HasCustomColor(config, "custom.wardrobeCardBg")
+            ? Boutique.Lerp(cardBg, new Vector4(0f, 0f, 0f, cardBg.W), 0.26f)
+            : Boutique.Surface0;
         cardBorderCol = GetCustomColor(config, "custom.wardrobeCardBorder",
             new Vector4(80f / 255f, 90f / 255f, 100f / 255f, 0.55f));
         nameTextCol = GetCustomColor(config, "custom.wardrobeNameText", Boutique.Text);
 
-        // Default accent track: gold tokens from CodexChassis
+        // Accent track: wardrobe override or default gold tokens
         accent     = GetCustomColor(config, "custom.wardrobeAccent", DefaultGold);
-        accentWarm = DefaultGoldWarm;
-        accentDeep = DefaultGoldDeep;
+        accentOverridden = HasCustomColor(config, "custom.wardrobeAccent");
+        if (accentOverridden)
+        {
+            accentWarm = Boutique.Lerp(accent, new Vector4(1, 1, 1, 1), 0.30f);
+            accentDeep = new Vector4(accent.X * 0.55f, accent.Y * 0.55f, accent.Z * 0.55f, 1f);
+        }
+        else
+        {
+            accentWarm = DefaultGoldWarm;
+            accentDeep = DefaultGoldDeep;
+        }
 
         // Per-character override: nameplate colour as accent
         var character = TargetCharacter ?? plugin.GetActiveCharacter() ?? plugin.activeCharacter;
-        useNameplateAccent = character != null && character.UseNameplateColorInWardrobe;
+        useNameplateAccent = character != null
+            && (character.UseNameplateColorInWardrobe
+                || (plugin.Configuration.SelectedTheme == ThemeSelection.Custom
+                    && config?.AccentFollowsNameplate == true));
         if (useNameplateAccent)
         {
             var np = character!.NameplateColor;
@@ -328,7 +342,10 @@ public class WardrobeWindow : Window, IDisposable
         return fallback;
     }
 
-    // ═══════════════ WINDOW CHASSIS + BACKGROUND IMAGE ═══════════════
+    private static bool HasCustomColor(CustomThemeConfig? config, string key)
+        => config != null && config.ColorOverrides.TryGetValue(key, out var packed) && packed.HasValue;
+
+    // Window chassis and background image
 
     private void DrawWindowChassis(ImDrawListPtr dl, Vector2 winPos, Vector2 winSize, float s)
     {
@@ -423,12 +440,8 @@ public class WardrobeWindow : Window, IDisposable
             new Vector2(min.X + winW * 0.5f, max.Y - ruleH),
             max, goldMid, goldClear, goldClear, goldMid);
 
-        // Pulsing pip (left side) - axis-aligned square. Pulse formula and
-        // halo/core proportions match the PatchNotesWindow ribbon pip:
-        // halo size constant, alpha modulates with the pulse; core stays
-        // bright at full alpha. Brighter gold-warm core matches PN's
-        // (1, 0.88, 0.15) bright gold versus base accent.
-        double t = ImGui.GetTime();
+        // Pulsing pip on the left. Halo size is constant, only its alpha pulses
+        double t = Boutique.AnimTime(ImGui.GetTime());
         float pulse = 0.55f + 0.45f * (float)Math.Sin(t * 2.2);
         float padX = 14f * s;
         float coreR = 3f * s;
@@ -445,9 +458,7 @@ public class WardrobeWindow : Window, IDisposable
             new Vector2(pipCenter.X + coreR, pipCenter.Y + coreR),
             Boutique.U32(accentWarm));
 
-        // Ribbon tracked-caps: WARDROBE · CHARACTER NAME - bumped to Med11
-        // (was Med10), brightened character name from TextDim → Text-warm so
-        // both segments are clearly readable against the dark gradient.
+        // Tracked-caps ribbon line: WARDROBE, separator, character name
         var ribbonFontHandle = plugin.OswaldMed11 ?? plugin.OswaldMed10;
         if (ribbonFontHandle != null)
         {
@@ -469,7 +480,7 @@ public class WardrobeWindow : Window, IDisposable
                 textX += ImGui.CalcTextSize("·").X + 10f * s;
 
                 string charName = character != null
-                    ? (!string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name)
+                    ? plugin.GetRosterDisplayName(character)
                     : "NO CHARACTER";
                 charName = (charName ?? "").ToUpperInvariant();
                 Boutique.DrawTrackedText(dl, new Vector2(textX, baseY),
@@ -522,10 +533,8 @@ public class WardrobeWindow : Window, IDisposable
         var min = origin;
         var max = new Vector2(origin.X + winW, origin.Y + headerH);
 
-        // Background: simple top→bg vertical gradient. No radial circles -
-        // those read as 4 distinct discs, not a soft wash. The single bottom-
-        // anchored aurora spot below provides the warm fade the mockup wants.
-        uint cTop = Boutique.U32(new Vector4(0x0c / 255f, 0x0e / 255f, 0x14 / 255f, 1f));
+        // Vertical gradient; the aurora spot below adds the warm fade
+        uint cTop = Boutique.U32(Boutique.HeaderTop);
         uint cBot = Boutique.U32(Boutique.Bg);
         dl.AddRectFilledMultiColor(min, max, cTop, cTop, cBot, cBot);
 
@@ -549,7 +558,12 @@ public class WardrobeWindow : Window, IDisposable
             DrawNameplateToggleButton(dl, npBtnMin, npBtnMax, s, npChar);
         }
 
-        // ── Corner button: close (right) ──
+        // Character picker
+        var pickMin = new Vector2(npBtnMin.X + btn + 6f * s, min.Y + padTop);
+        var pickMax = pickMin + new Vector2(btn, btn);
+        DrawCharacterPickerButton(dl, pickMin, pickMax, s);
+
+        // Close
         var closeMin = new Vector2(max.X - 8f * s - btn, min.Y + padTop);
         var closeMax = closeMin + new Vector2(btn, btn);
         DrawCloseButton(dl, closeMin, closeMax, s);
@@ -578,16 +592,14 @@ public class WardrobeWindow : Window, IDisposable
             }
         }
 
-        // ── Subtitle: "{Display} ◆ {N} LOOKS" - Oswald 500 with primitive
-        // diamond separator (the U+25C6 glyph isn't in the loaded fonts and
-        // rendered as a "?" placeholder before). ──
+        // Subtitle. The separator is drawn as a quad since U+25C6 isn't in the loaded fonts
         var subHandle = plugin.OswaldMed11 ?? plugin.OswaldBody11;
         if (subHandle != null)
         {
             using (subHandle.Push())
             {
                 string display = character != null
-                    ? (!string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name) ?? ""
+                    ? plugin.GetRosterDisplayName(character)
                     : "";
                 string subA = (display ?? "").ToUpperInvariant();
                 string subB = $"{designCount} LOOKS";
@@ -695,6 +707,73 @@ public class WardrobeWindow : Window, IDisposable
             fixed (Vector2* p = hex)
                 dl.AddConvexPolyFilled(p, 6, Boutique.U32(glyph));
         }
+    }
+
+    private void DrawCharacterPickerButton(ImDrawListPtr dl, Vector2 min, Vector2 max, float s)
+    {
+        ImGui.SetCursorScreenPos(min);
+        ImGui.InvisibleButton("##wardCharPick", max - min);
+        bool hovered = ImGui.IsItemHovered();
+        if (ImGui.IsItemClicked())
+            ImGui.OpenPopup("##WardrobeCharPicker");
+        if (hovered)
+        {
+            var pickedName = TargetCharacter != null
+                ? plugin.GetRosterDisplayName(TargetCharacter)
+                : null;
+            DrawBoutiqueTooltip(pickedName == null
+                ? "Browsing the active character's wardrobe.\nClick to view another character's wardrobe."
+                : $"Browsing {pickedName}'s wardrobe.\nClick to switch character.",
+                accent);
+        }
+
+        bool pinned = TargetCharacter != null;
+        Vector4 bg = pinned ? Boutique.WithAlpha(accent, 0.10f)
+            : hovered ? Boutique.WithAlpha(accent, 0.06f) : new Vector4(0, 0, 0, 0.40f);
+        Vector4 border = pinned || hovered ? accentDeep : Boutique.BorderSoft;
+        Vector4 glyph = pinned || hovered ? accentWarm : Boutique.WithAlpha(Boutique.TextFaint, 1f);
+        dl.AddRectFilled(min, max, Boutique.U32(bg), 1f * s);
+        dl.AddRect(min, max, Boutique.U32(border), 1f * s, ImDrawFlags.None, 1f * s);
+
+        // Person glyph drawn as a circle plus arc, no font dependency
+        var c = (min + max) * 0.5f;
+        float w = max.X - min.X;
+        uint glyphC = Boutique.U32(glyph);
+        dl.AddCircle(new Vector2(c.X, c.Y - w * 0.11f), w * 0.115f, glyphC, 12, 1.5f * s);
+        dl.PathArcTo(new Vector2(c.X, c.Y + w * 0.27f), w * 0.19f, MathF.PI, MathF.Tau);
+        dl.PathStroke(glyphC, ImDrawFlags.None, 1.5f * s);
+
+        DrawCharacterPickerPopup(s);
+    }
+
+    private void DrawCharacterPickerPopup(float s)
+    {
+        ImGui.PushStyleColor(ImGuiCol.PopupBg, new Vector4(6f / 255f, 6f / 255f, 12f / 255f, 0.97f));
+        ImGui.PushStyleColor(ImGuiCol.Border, accentDeep);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(10, 8));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f);
+        if (ImGui.BeginPopup("##WardrobeCharPicker"))
+        {
+            if (ImGui.MenuItem("Active Character", "", TargetCharacter == null))
+                TargetCharacter = null;
+            ImGui.Separator();
+
+            var listH = MathF.Min(plugin.Characters.Count, 12) * ImGui.GetTextLineHeightWithSpacing() + 8f * s;
+            if (ImGui.BeginChild("##wardCharPickList", new Vector2(220f * s, listH), false))
+            {
+                for (int i = 0; i < plugin.Characters.Count; i++)
+                {
+                    var c = plugin.Characters[i];
+                    var label = plugin.GetRosterDisplayName(c);
+                    if (ImGui.MenuItem($"{label}##wardpick_{i}", "", TargetCharacter == c))
+                        TargetCharacter = c;
+                }
+            }
+            ImGui.EndChild();
+            ImGui.EndPopup();
+        }
+        ImGui.PopStyleVar(2);
+        ImGui.PopStyleColor(2);
     }
 
     private void DrawCloseButton(ImDrawListPtr dl, Vector2 min, Vector2 max, float s)
@@ -1292,7 +1371,7 @@ public class WardrobeWindow : Window, IDisposable
 
     private void DrawFocusGlow(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float s)
     {
-        double t = ImGui.GetTime();
+        double t = Boutique.AnimTime(ImGui.GetTime());
         float breath = 0.85f + 0.30f * (float)Math.Sin(t * Math.Tau / SpotBreathPeriod);
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
@@ -1366,6 +1445,7 @@ public class WardrobeWindow : Window, IDisposable
 
     private void DrawMotes(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float s)
     {
+        if (Boutique.ReduceMotion) return;
         double t = ImGui.GetTime();
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
@@ -1396,8 +1476,7 @@ public class WardrobeWindow : Window, IDisposable
             // Halo (slightly bigger + brighter for visibility)
             dl.AddCircleFilled(new Vector2(px, py), 3.5f * s,
                 Boutique.U32(Boutique.WithAlpha(accentWarm, a * 0.50f)));
-            // Core (GoldBright when in default gold mode, otherwise the np-warm)
-            var coreCol = useNameplateAccent ? accentWarm : DefaultGoldBright;
+            var coreCol = useNameplateAccent || accentOverridden ? accentWarm : DefaultGoldBright;
             dl.AddCircleFilled(new Vector2(px, py), 1.8f * s,
                 Boutique.U32(Boutique.WithAlpha(coreCol, a)));
         }
@@ -1795,6 +1874,7 @@ public class WardrobeWindow : Window, IDisposable
 
     private void DrawFocusSheen(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float s)
     {
+        if (Boutique.ReduceMotion) return;
         double now = ImGui.GetTime();
         double elapsed = now - focusSheenAnchor;
         float phase = (float)((elapsed % FocusSheenPeriod) / FocusSheenPeriod);
@@ -1818,6 +1898,7 @@ public class WardrobeWindow : Window, IDisposable
 
     private void DrawHoverSheen(ImDrawListPtr dl, CardSlot slot, Vector2 mn, Vector2 mx, float s)
     {
+        if (Boutique.ReduceMotion) return;
         var io = ImGui.GetIO();
         bool sideHover = (slot.Tier != CardTier.Focus) &&
                          io.MousePos.X >= mn.X && io.MousePos.X <= mx.X &&
@@ -1962,11 +2043,11 @@ public class WardrobeWindow : Window, IDisposable
             dl.AddTriangleFilled(pTip, pL, pR,
                 Boutique.U32(Boutique.WithAlpha(accentWarm, vis)));
 
-            // Text
             float textY = pillMin.Y + (pillH - ImGui.GetFontSize()) * 0.5f;
             float textX = (pillMin.X + pillMax.X) * 0.5f - textW * 0.5f;
             uint inkC = Boutique.U32(Boutique.WithAlpha(
-                new Vector4(0x1A / 255f, 0x14 / 255f, 0x08 / 255f, 1f), vis));
+                Boutique.SlotOrDefault("custom.button.text",
+                    new Vector4(0x1A / 255f, 0x14 / 255f, 0x08 / 255f, 1f)), vis));
             Boutique.DrawTrackedText(dl, new Vector2(textX, textY), text, inkC, trackPx);
         }
     }
@@ -2003,9 +2084,8 @@ public class WardrobeWindow : Window, IDisposable
             new Vector2(spineX + 1f * s, spineBot),
             cDeep, cDeep, cTrans, cTrans);
 
-        // Diamond bead at top of editorial spine - soft aurora glow + crisp
-        // diamond core. Subtle alpha pulse, no size pulse.
-        double t = ImGui.GetTime();
+        // Diamond bead at the top of the spine, alpha pulse only, no size pulse
+        double t = Boutique.AnimTime(ImGui.GetTime());
         float beadPulse = (float)(0.5 + 0.5 * Math.Sin(t * Math.Tau / BeadPeriod));
         float beadSize = 5f * s;
         var beadCenter = new Vector2(spineX + 0.5f * s, spineTop - 10f * s);
@@ -2130,20 +2210,19 @@ public class WardrobeWindow : Window, IDisposable
             Boutique.U32(accentDeep), Boutique.U32(accent));
         bottomY -= 8f * s;
 
-        // Display name, boutique HEADLINE. Character name in the "name text"
-        // theme colour (white default), design name in the wardrobe accent
-        // (gold default / nameplate colour / custom.wardrobeAccent). Splits
-        // by ENTITY (character vs design), not by word, so multi-word names
-        // inside either entity stay one colour. Long combined headlines
-        // auto-marquee with a 60 px loop gap.
+        // Headline: character half then design half, one colour each. Long headlines auto-marquee
         var nameFont = plugin.OswaldSemiBig ?? plugin.OswaldSemiMid;
+        // The Oswald display handles are ASCII-only, CJK names use the Noto handle
+        string headlineProbe = (owner != null ? plugin.GetRosterDisplayName(owner) : "") + (d.Name ?? "");
+        if (Boutique.NeedsCjkFont(headlineProbe) && plugin.NameFont != null)
+            nameFont = plugin.NameFont;
         if (nameFont != null)
         {
             using (nameFont.Push())
             {
-                string charPart = owner == null
+                string charPart = owner == null || plugin.Configuration.WardrobeDesignNameOnly
                     ? ""
-                    : (!string.IsNullOrWhiteSpace(owner.Alias) ? owner.Alias! : owner.Name ?? "");
+                    : plugin.GetRosterDisplayName(owner);
                 string designPart = string.IsNullOrWhiteSpace(d.Name) ? "Untitled" : d.Name;
                 string upperChar = charPart.ToUpperInvariant();
                 string upperDesign = designPart.ToUpperInvariant();
@@ -2575,10 +2654,10 @@ public class WardrobeWindow : Window, IDisposable
                 borderA = MathF.Max(borderA, 0.60f);
             }
 
-            // Breathing halo on stable active dot
+            // Breathing halo on the settled active dot
             if (i == curr && !isTransitioning)
             {
-                float breath = 0.5f + 0.5f * MathF.Sin((float)ImGui.GetTime() * MathF.PI);
+                float breath = 0.5f + 0.5f * MathF.Sin((float)Boutique.AnimTime(ImGui.GetTime()) * MathF.PI);
                 float halo = (0.10f + 0.10f * breath) * 0.4f;
                 float pad = 3f * s;
                 dl.AddRectFilled(
@@ -2983,9 +3062,9 @@ public class WardrobeWindow : Window, IDisposable
             if (a > 0f) col = CompositeV4(col, accent, a);
         }
 
-        // Focus glow - warm-white aurora at top centre
+        // Focus glow
         var fgCentre = new Vector2(stageMinF.X + w * 0.50f, stageMinF.Y + h * 0.18f);
-        double t = ImGui.GetTime();
+        double t = Boutique.AnimTime(ImGui.GetTime());
         float breath = 0.85f + 0.30f * (float)Math.Sin(t * Math.Tau / SpotBreathPeriod);
         float fgIntensity = SampleAuroraIntensity(pos, fgCentre, w * 0.45f, h * 0.30f, 0.10f * breath);
         if (fgIntensity > 0f) col = CompositeV4(col, warmWhite, fgIntensity);

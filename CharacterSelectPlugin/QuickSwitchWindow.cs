@@ -112,6 +112,7 @@ namespace CharacterSelectPlugin.Windows
                 // Compact + Custom theme + nameplate-colour toggle off: replace npColor with the user's manual override.
                 if (compact && plugin.Configuration.SelectedTheme == ThemeSelection.Custom
                     && !plugin.Configuration.CustomTheme.CompactQuickSwitchUseNameplateColor
+                    && !plugin.Configuration.CustomTheme.AccentFollowsNameplate
                     && plugin.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.compactQS.accent", out var packedAccent)
                     && packedAccent.HasValue)
                 {
@@ -328,28 +329,37 @@ namespace CharacterSelectPlugin.Windows
                 var charComboMax = new Vector2(startX + dropdownWidth, ctrlY + frameH);
                 ImGui.SetNextItemWidth(dropdownWidth);
                 int tempCharacterIndex = selectedCharacterIndex;
-                if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightRegular))
+                AnchorDropdown(startX, ctrlY, ctrlY + frameH);
+                if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightLargest))
                 {
-                    for (int i = 0; i < plugin.Characters.Count; i++)
+                    int charRows = plugin.Characters.Count(c => MatchesSearch(c.Name, characterSearch));
+                    if (BeginDropdownList(ref characterSearch, ctrlY, charRows, "##charList"))
                     {
-                        var character = plugin.Characters[i];
-                        bool isSelected = tempCharacterIndex == i;
-                        if (ImGui.Selectable(character.Name, isSelected))
+                        for (int i = 0; i < plugin.Characters.Count; i++)
                         {
-                            tempCharacterIndex = i;
-                            if (character.Designs.Count > 0)
+                            var character = plugin.Characters[i];
+                            if (!MatchesSearch(character.Name, characterSearch)) continue;
+                            bool isSelected = tempCharacterIndex == i;
+                            if (ImGui.Selectable(character.Name, isSelected))
                             {
-                                var sortedDesigns = GetSortedDesigns(character);
-                                if (sortedDesigns.Count > 0)
-                                    selectedDesignIndex = GetOriginalIndex(character, sortedDesigns[0]);
+                                closeDropdown = true;
+                                tempCharacterIndex = i;
+                                if (character.Designs.Count > 0)
+                                {
+                                    var sortedDesigns = GetSortedDesigns(character);
+                                    if (sortedDesigns.Count > 0)
+                                        selectedDesignIndex = GetOriginalIndex(character, sortedDesigns[0]);
+                                }
+                                else
+                                {
+                                    selectedDesignIndex = -1;
+                                }
                             }
-                            else
-                            {
-                                selectedDesignIndex = -1;
-                            }
+                            if (isSelected) ImGui.SetItemDefaultFocus();
                         }
-                        if (isSelected) ImGui.SetItemDefaultFocus();
+                        EndDropdownList(ref characterSearch, ctrlY);
                     }
+                    if (closeDropdown) ImGui.CloseCurrentPopup();
                     ImGui.EndCombo();
                 }
                 selectedCharacterIndex = tempCharacterIndex;
@@ -367,20 +377,25 @@ namespace CharacterSelectPlugin.Windows
                 {
                     int tempDesignIndex = selectedDesignIndex;
                     ImGui.SetNextItemWidth(dropdownWidth);
-                    if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightRegular))
+                    AnchorDropdown(designX, ctrlY, ctrlY + frameH);
+                    if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightLargest))
                     {
                         userIsInteracting = true;
                         var orderedDesigns = GetSortedDesigns(selectedCharacter)
                             .Select(d => new { Design = d, OriginalIndex = GetOriginalIndex(selectedCharacter, d) })
                             .ToList();
 
-                        for (int j = 0; j < orderedDesigns.Count; j++)
+                        int designRows = orderedDesigns.Count(e => MatchesSearch(e.Design.Name, designSearch));
+                        bool listOpen = BeginDropdownList(ref designSearch, ctrlY, designRows, "##designList");
+                        for (int j = 0; listOpen && j < orderedDesigns.Count; j++)
                         {
                             var entry = orderedDesigns[j];
+                            if (!MatchesSearch(entry.Design.Name, designSearch)) continue;
                             bool isSelected = tempDesignIndex == entry.OriginalIndex;
 
                             if (ImGui.Selectable(entry.Design.Name, isSelected))
                             {
+                                closeDropdown = true;
                                 tempDesignIndex = entry.OriginalIndex;
                                 userIsInteracting = true;
                                 lastTrackedDesignName = entry.Design.Name;
@@ -420,6 +435,8 @@ namespace CharacterSelectPlugin.Windows
 
                             if (isSelected) ImGui.SetItemDefaultFocus();
                         }
+                        if (listOpen) EndDropdownList(ref designSearch, ctrlY);
+                        if (closeDropdown) ImGui.CloseCurrentPopup();
                         ImGui.EndCombo();
                     }
                     selectedDesignIndex = tempDesignIndex;
@@ -469,7 +486,8 @@ namespace CharacterSelectPlugin.Windows
                     if (ImGui.Button("Apply", new Vector2(applyW, applyH)))
                     {
                         userIsInteracting = false;
-                        ApplySelection();
+                        if (ImGui.GetIO().KeyShift) ApplyRandomDesign();
+                        else ApplySelection();
                     }
                     CharacterSelectPlugin.Windows.Styles.UIStyles.ApplyHoverSheenToLastItemStatic("quickswitch_apply_btn");
 
@@ -786,6 +804,70 @@ namespace CharacterSelectPlugin.Windows
             return new Vector4(character.NameplateColor.X, character.NameplateColor.Y, character.NameplateColor.Z, 1.0f);
         }
 
+        private string characterSearch = "";
+        private string designSearch = "";
+        private bool closeDropdown;
+        private const int DropdownMaxRows = 8;
+
+        private static bool DropdownOpensUpward(float comboTopY)
+            => comboTopY > ImGui.GetMainViewport().Size.Y * 0.5f;
+
+        private static void AnchorDropdown(float comboX, float comboTopY, float comboBottomY)
+        {
+            if (DropdownOpensUpward(comboTopY))
+                ImGui.SetNextWindowPos(new Vector2(comboX, comboTopY), ImGuiCond.Always, new Vector2(0f, 1f));
+            else
+                ImGui.SetNextWindowPos(new Vector2(comboX, comboBottomY), ImGuiCond.Always, new Vector2(0f, 0f));
+        }
+
+        private bool BeginDropdownList(ref string search, float comboTopY, int visibleRows, string childId)
+        {
+            closeDropdown = false;
+            if (ImGui.IsWindowAppearing()) search = "";
+            bool upward = DropdownOpensUpward(comboTopY);
+            int rows = Math.Clamp(visibleRows, 1, DropdownMaxRows);
+            float pad = ImGui.GetStyle().ItemSpacing.Y;
+            float listH = ImGui.GetTextLineHeightWithSpacing() * rows + pad;
+            float innerW = ImGui.GetContentRegionAvail().X;
+
+            bool showSearch = plugin.Configuration.QuickSwitchShowSearch;
+            if (!showSearch) search = "";
+
+            if (!upward && showSearch)
+            {
+                ImGui.SetNextItemWidth(innerW);
+                ImGui.InputTextWithHint("##search", "Search...", ref search, 64);
+                ImGui.Separator();
+            }
+            else
+            {
+                ImGui.Dummy(new Vector2(0f, pad));
+            }
+            bool open = ImGui.BeginChild(childId, new Vector2(innerW, listH), false);
+            if (!open) { ImGui.EndChild(); if (upward && showSearch) DrawBottomSearch(ref search, innerW); return false; }
+            return true;
+        }
+
+        private void EndDropdownList(ref string search, float comboTopY)
+        {
+            ImGui.EndChild();
+            if (DropdownOpensUpward(comboTopY) && plugin.Configuration.QuickSwitchShowSearch)
+                DrawBottomSearch(ref search, ImGui.GetContentRegionAvail().X);
+        }
+
+        private static void DrawBottomSearch(ref string search, float innerW)
+        {
+            ImGui.Separator();
+            ImGui.SetNextItemWidth(innerW);
+            ImGui.InputTextWithHint("##search", "Search...", ref search, 64);
+        }
+
+        private static bool MatchesSearch(string name, string search)
+        {
+            if (string.IsNullOrWhiteSpace(search)) return true;
+            return name.ToLowerInvariant().Contains(search.ToLowerInvariant().Trim());
+        }
+
         private string GetSelectedCharacterName()
         {
             return (selectedCharacterIndex >= 0 && selectedCharacterIndex < plugin.Characters.Count)
@@ -818,6 +900,35 @@ namespace CharacterSelectPlugin.Windows
             // DO NOT call PoseRestorer again here, the previous duplicate call would
             // fire ~500ms later via RunOnTick and clobber the design's pose override.
             plugin.ApplyProfile(character, selectedDesignIndex);
+        }
+
+        private void ApplyRandomDesign()
+        {
+            if (selectedCharacterIndex < 0 || selectedCharacterIndex >= plugin.Characters.Count)
+                return;
+
+            var character = plugin.Characters[selectedCharacterIndex];
+
+            var pool = plugin.Configuration.RandomSelectionFavoritesOnly
+                ? character.Designs.Where(d => d.IsFavorite).ToList()
+                : character.Designs.ToList();
+            if (pool.Count == 0)
+                pool = character.Designs.ToList();
+
+            int designIndex = -1;
+            if (pool.Count > 0)
+            {
+                var picked = pool[new Random().Next(pool.Count)];
+                designIndex = character.Designs.IndexOf(picked);
+            }
+
+            selectedDesignIndex = designIndex;
+            userIsInteracting = false;
+            lastTrackedDesignName = designIndex >= 0 ? character.Designs[designIndex].Name : "";
+
+            plugin.AchievementTracker?.OnSwitchFromQuickSwitch();
+            plugin.AchievementTracker?.CheckSwitchMethodsAll();
+            plugin.ApplyProfile(character, designIndex);
         }
 
         private void ApplyToTarget()

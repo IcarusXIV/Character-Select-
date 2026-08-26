@@ -72,18 +72,40 @@ public partial class FeaturesWindow : Window, IDisposable
         {
             // Quick Actions
             new("Quick Switch Overlay",
-                "A floating window for rapid character switching. Keep it open while you play.",
+                "A floating window for rapid character switching. Keep it open while you play. Shift+Click applies a random design from the selected character, right click applies to your target, and Ctrl+Right click reverts to your currently active character.",
                 "/selectswitch",
                 "Quick Actions",
                 FontAwesomeIcon.Bolt, yellow,
-                new[] { "quick", "fast", "switch", "overlay" }),
+                new[] { "quick", "fast", "switch", "overlay", "random", "target", "revert" }),
 
             new("Compact Quick Switch",
-                "A minimal version of Quick Switch, just a row of character icons. Toggle compact mode in the settings or right-click the Quick Switch window.",
+                "A slimmer Quick Switch: the same character and design dropdowns plus Apply, without the header bar. Toggle compact mode in the settings or right-click the Quick Switch window.",
                 "Settings > Behavior",
                 "Quick Actions",
                 FontAwesomeIcon.CompressArrowsAlt, yellow,
                 new[] { "quick", "compact", "small", "minimal", "bar" }),
+
+            new("Quick Switch Dropdown Search",
+                "The character and design dropdowns in Quick Switch have a search field. It sits on whichever edge is nearest the bar, so if Quick Switch is at the bottom of your screen the search is at the bottom of the list and stays put while you scroll. Turn it off in the settings if you would rather not have it.",
+                "Settings > Behavior",
+                "Quick Actions",
+                FontAwesomeIcon.Search, yellow,
+                new[] { "quick", "search", "filter", "dropdown", "find" }),
+
+            new("Icon Bar",
+                "A row of character icons, separate from Quick Switch so you can position it on its own. Left click a portrait to apply that character, right click for their designs, Ctrl+Right click to apply to your target (works on designs in the list too). Arrows and the mouse wheel scroll when you have more characters than fit (hold an arrow to cycle fast, Shift+Click it to jump to that end), it has its own size slider, and dragging its handle to a screen edge flips it vertical or horizontal.",
+                "/selecticons or Settings > Behavior",
+                "Quick Actions",
+                FontAwesomeIcon.Images, yellow,
+                new[] { "quick", "icon", "bar", "portrait", "strip", "row" },
+                IsNew: true),
+
+            new("Quick Switch Ignores Escape",
+                "Stops the Escape key from closing the Quick Switch window, so clearing your target or closing menus never dismisses it by accident.",
+                "Settings > Behavior",
+                "Quick Actions",
+                FontAwesomeIcon.Lock, yellow,
+                new[] { "quick", "escape", "close", "keybind", "focus" }),
 
             new("Random Selection",
                 "Can't decide? Let CS+ pick a random character and design for you.",
@@ -193,6 +215,13 @@ public partial class FeaturesWindow : Window, IDisposable
                 FontAwesomeIcon.Briefcase, purple,
                 new[] { "job", "class", "tank", "healer", "auto" }),
 
+            new("Job Icons On Character Cards",
+                "Characters with job, role, or gearset assignments show the job icons in the corner of their card, so you can see at a glance who covers what. A monochrome style that blends with the card background is available if the role colours clash with your cards. Icons from Material UI - Reborn (valeriae, Sevii, skotlex).",
+                "Settings > Job Assignments",
+                "Automation",
+                FontAwesomeIcon.IdBadge, purple,
+                new[] { "job", "icon", "card", "badge", "assignment" }),
+
             new("Gearset Sync",
                 "When you apply a character, also switch to a matching gearset automatically.",
                 "Settings > Job Assignments",
@@ -208,7 +237,7 @@ public partial class FeaturesWindow : Window, IDisposable
                 new[] { "job", "change", "reapply", "refresh" }),
 
             new("Glamourer Automations",
-                "Trigger Glamourer Automations when applying characters or designs. Create a 'None' automation in Glamourer for characters that shouldn't run any automation, this prevents one character's automation from carrying over to another.",
+                "Trigger Glamourer Automations when applying characters or designs. Create a 'None' automation in Glamourer for characters that shouldn't run any automation, this prevents one character's automation from carrying over to another. With Automations enabled, the Glamourer Design field becomes optional: a character or design can have just an automation, just a design, or both.",
                 "Settings > Glamourer Automations",
                 "Automation",
                 FontAwesomeIcon.Magic, purple,
@@ -236,12 +265,28 @@ public partial class FeaturesWindow : Window, IDisposable
                 FontAwesomeIcon.FolderOpen, blue,
                 new[] { "folder", "organize", "group" }),
 
+            new("Custom Roster Pages",
+                "The Reorder window sorts characters onto pages like folders: any number of characters per page, no need to fill one before using the next. Drag cards to reorder or move them between pages (Ctrl+Click to multi-select, right-click to move via menu), double-click a page tab to name it, drag page tabs to reorder whole pages, and Ctrl+Click an empty page's tab to delete it. The main window updates live while you arrange, and the grid button in the header sizes the cards to match your roster's profiles per row.",
+                "Main window > Reorder button",
+                "Organization",
+                FontAwesomeIcon.BookOpen, blue,
+                new[] { "page", "pages", "folder", "sort", "assign", "roster", "organize", "group", "reorder" },
+                IsNew: true),
+
             new("Import Designs",
-                "Hold Shift + click the '+' button to copy designs from another character.",
-                "Design Panel",
+                "Copy designs from another character into your active character. Open the Import Designs button next to Reorder in the main window and use the From Characters tab.",
+                "Main window > Import Designs button",
                 "Organization",
                 FontAwesomeIcon.FileImport, blue,
                 new[] { "import", "copy", "share" }),
+
+            new("Roster Shows Character Name",
+                "Prefer the Character Name over the Alias on character cards, the Icon Bar, and the Wardrobe. Name Sync and RP profiles keep using the Alias.",
+                "Settings > Visual",
+                "Organization",
+                FontAwesomeIcon.Signature, blue,
+                new[] { "roster", "alias", "name", "card", "label" },
+                IsNew: true),
 
             new("Tags & Favorites",
                 "Tag characters, mark favourites, and filter to find exactly what you need.",
@@ -251,11 +296,25 @@ public partial class FeaturesWindow : Window, IDisposable
                 new[] { "tag", "favorite", "filter" }),
 
             new("Wardrobe",
-                "A boutique coverflow lookbook for the active character's designs. The focused design sits on a lit stage with the others receding to either side. Drag, flick, scroll, or use the arrow keys to pan; click the focus card to apply, click any side card to bring it forward. The editorial info panel below the cards shows the design's name, mods, last applied time, and edition. Right-click the focus card to set its preview from clipboard or toggle favourite. The hex button at the top-left of the header swaps the gold accent for the active character's nameplate colour. Open with /wardrobe, the hanger button in the Design Panel, or Shift+Click the Designs button on a character card.",
+                "A coverflow lookbook for the active character's designs. The focused design sits on a lit stage with the others receding to either side. Drag, flick, scroll, or use the arrow keys to pan; click the focus card to apply, click any side card to bring it forward. The editorial info panel below the cards shows the design's name, mods, last applied time, and edition. Right-click the focus card to set its preview from clipboard or toggle favourite. The hex button at the top-left of the header swaps the gold accent for the active character's nameplate colour. Open with /wardrobe, the hanger button in the Design Panel, or Shift+Click the Designs button on a character card.",
                 "/wardrobe, Design Panel button, or Shift+Click Designs button",
                 "Organization",
                 FontAwesomeIcon.ThLarge, yellow,
                 new[] { "wardrobe", "browse", "design", "visual", "preview", "outfit", "boutique", "coverflow", "hanger", "nameplate", "accent" }),
+
+            new("Wardrobe Character Picker",
+                "Browse any character's wardrobe without switching to them. Click the person button in the Wardrobe's top-left corner to pick a character. A toggle in Settings > Visual Settings can show design names without the character name.",
+                "Wardrobe > top-left person button",
+                "Organization",
+                FontAwesomeIcon.UserFriends, yellow,
+                new[] { "wardrobe", "character", "picker", "switch", "browse", "dropdown", "name" }),
+
+            new("Import Designs From Glamourer",
+                "Bring your Glamourer designs into CS+ in bulk instead of adding them one at a time. Use the Import Designs button next to Reorder in the main window. Designs import into your active character. Import single designs or a whole folder at once; already-imported designs are greyed out, and your Glamourer folders carry over.",
+                "Main window > Import Designs button",
+                "Organization",
+                FontAwesomeIcon.FileImport, yellow,
+                new[] { "import", "glamourer", "bulk", "design", "folder" }),
 
             // Apply to Target
             new("Apply to Target",
@@ -346,15 +405,15 @@ public partial class FeaturesWindow : Window, IDisposable
 
             // Capturing Looks
             new("Snapshot",
-                "One click to save your current look as a new design. Uses your most recently created Glamourer design.",
+                "One click to save your current look as a new design. CS+ detects which Glamourer design you are wearing and asks if it is not sure.",
                 "Design Panel camera icon",
                 "Capturing Looks",
                 FontAwesomeIcon.Camera, cyan,
                 new[] { "snapshot", "save", "capture" }),
 
             new("Snapshot + Mods",
-                "Ctrl+Shift+Click to also capture which mods are currently enabled.",
-                "Design Panel (Ctrl+Shift)",
+                "Ctrl+Shift+Click the snapshot button to also capture which gear and hair mods are currently enabled. Requires Conflict Resolution to be enabled in Settings.",
+                "Design Panel (Ctrl+Shift+Click)",
                 "Capturing Looks",
                 FontAwesomeIcon.CameraRetro, cyan,
                 new[] { "snapshot", "mods", "save" }),
@@ -369,11 +428,43 @@ public partial class FeaturesWindow : Window, IDisposable
                 IsNew: true),
 
             new("Custom Themes",
-                "Change every colour, add background images, pick a custom favourite icon.",
+                "Change every colour, add background images, pick a custom favourite icon. Hover a colour's (?) to spotlight what it affects in the live UI.",
                 "Settings > Visual > Custom",
                 "Customize CS+",
                 FontAwesomeIcon.Palette, purple,
-                new[] { "theme", "colour", "customize" }),
+                new[] { "theme", "colour", "customize", "highlight" }),
+
+            new("Custom Fonts",
+                "Swap the plugin's fonts per role (Body Text, Character Names, Labels & Headings, Large Text, Window Title) using any .ttf or .otf on your PC, with per-role size sliders. Japanese and common Chinese characters render in names regardless of font choice.",
+                "Settings > Visual > Fonts",
+                "Customize CS+",
+                FontAwesomeIcon.Font, purple,
+                new[] { "font", "typeface", "size", "japanese", "chinese", "cjk" },
+                IsNew: true),
+
+            new("Reduce Motion",
+                "Stops decorative animations: drifting glows, scan lines, dust, card streaks, and hover sheens. Everything stays visible, just still.",
+                "Settings > Visual",
+                "Customize CS+",
+                FontAwesomeIcon.PauseCircle, purple,
+                new[] { "motion", "animation", "accessibility", "still", "disable" },
+                IsNew: true),
+
+            new("Match Active Character's Colours",
+                "The Custom theme's accent can follow your active character's nameplate colour, retinting the interface as you switch characters. Toggle it at the top of Colour Customisation, or set it per character in the Add/Edit form so applying a character turns it on or off automatically.",
+                "Settings > Visual > Custom",
+                "Customize CS+",
+                FontAwesomeIcon.UserTag, purple,
+                new[] { "accent", "nameplate", "colour", "character", "dynamic", "match" },
+                IsNew: true),
+
+            new("Atmosphere Intensity",
+                "Dial the Custom theme's ambient background effects up or down with an intensity slider. Setting it to 0 turns the atmosphere off entirely.",
+                "Settings > Visual > Custom > Atmosphere",
+                "Customize CS+",
+                FontAwesomeIcon.Cloud, purple,
+                new[] { "atmosphere", "ambient", "intensity", "background", "glow" },
+                IsNew: true),
 
             new("Classic Mode",
                 "Reverts most CS+ windows to their pre-redesign look.",
@@ -737,7 +828,7 @@ public partial class FeaturesWindow : Window, IDisposable
     private void DrawHeader(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale)
     {
         // Base dark gradient first, banner sits on top of this
-        uint bgTop = Boutique.U32(new Vector4(0x0C / 255f, 0x0E / 255f, 0x14 / 255f, 1f));
+        uint bgTop = Boutique.U32(Boutique.HeaderTop);
         uint bgBot = Boutique.U32(Boutique.Bg);
         dl.AddRectFilledMultiColor(min, max, bgTop, bgTop, bgBot, bgBot);
 
@@ -1631,7 +1722,6 @@ public partial class FeaturesWindow : Window, IDisposable
         using (Plugin.Instance?.OutfitMed13?.Push())
         {
             float fH = ImGui.GetFontSize();
-            // Render name; if there's a NEW pill, lay out name then pill on the same baseline.
             float nameW = ImGui.CalcTextSize(f.Name).X;
             dl.AddText(infoCursor, Boutique.U32(Boutique.Text), f.Name);
 
@@ -1651,7 +1741,8 @@ public partial class FeaturesWindow : Window, IDisposable
                     dl.AddRectFilled(pillMin, pillMax, Boutique.U32(Boutique.Gold));
                     Boutique.DrawTrackedText(dl,
                         new Vector2(pillMin.X + pillPadX, pillMin.Y + pillPadY),
-                        nlbl, Boutique.U32(new Vector4(0.10f, 0.08f, 0f, 1f)), pTrk);
+                        nlbl, Boutique.U32(Boutique.SlotOrDefault("custom.button.text",
+                            new Vector4(0.10f, 0.08f, 0f, 1f))), pTrk);
                 }
             }
         }

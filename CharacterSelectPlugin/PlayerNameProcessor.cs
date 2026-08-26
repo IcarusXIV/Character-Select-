@@ -12,6 +12,8 @@ using Dalamud.Memory;
 using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.Party;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.UI.Arrays;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System;
@@ -49,24 +51,14 @@ namespace CharacterSelectPlugin
         // Cached level prefix for local player (e.g. "Lv100 ")
         private byte[]? cachedLevelPrefixBytes = null;
 
-        // Track party slot -> physical name for other players (to update when they switch CS+ characters)
-        private readonly Dictionary<int, string> partySlotToPhysicalName = new();
-
-        // Track party slot -> level prefix bytes for other players (each player has their own level)
-        private readonly Dictionary<int, byte[]> partySlotPrefixBytes = new();
-
-        // Track party composition by ObjectId to detect when party changes
-        private HashSet<uint> trackedPartyObjectIds = new();
-
-        // Skip replacement for a few frames after party change so the game can refresh text nodes
-        private int partyChangeSkipFrames = 0;
-        private const int PartyChangeSkipFrameCount = 5;
+        private readonly HashSet<string> partyReplacedPhysicalNames = new();
 
         // Target bar addons
         private static readonly string[] TargetAddonNames = { "_TargetInfo", "_TargetInfoMainTarget", "_TargetInfoCastBar" };
 
         // Track which physical names we've replaced on nameplates (to properly reset them)
         private readonly HashSet<string> replacedNameplateNames = new();
+        private bool selfNameplateReplaced = false;
 
         // Native hook on the game's nameplate update so the wave-glow stays
         // animated for self when no game event drives a refresh
@@ -160,7 +152,7 @@ namespace CharacterSelectPlugin
 
                 var activeChar = plugin.GetActiveCharacter();
                 if (activeChar == null) return ret;
-                if (activeChar.ExcludeFromNameSync) return ret;
+                if (plugin.IsNameSyncExcluded(activeChar)) return ret;
 
                 var displayName = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
                 if (string.IsNullOrEmpty(displayName)) return ret;
@@ -223,12 +215,15 @@ namespace CharacterSelectPlugin
         /// </summary>
         public void RequestRedrawIfNeeded()
         {
-            // Only request redraws when shared name replacement is enabled and there are replaced names
-            // Skip if using simple glow for others (no animation needed)
-            if (!plugin.Configuration.EnableSharedNameReplacement ||
-                !plugin.Configuration.NameReplacementNameplate ||
-                plugin.Configuration.UseSimpleGlowForOthers ||
-                replacedNameplateNames.Count == 0)
+            bool sharedWaveActive = plugin.Configuration.EnableSharedNameReplacement
+                                 && plugin.Configuration.NameReplacementNameplate
+                                 && !plugin.Configuration.UseSimpleGlowForOthers
+                                 && replacedNameplateNames.Count > 0;
+
+            bool overridesActive = plugin.Configuration.ShowCSNameOnAppliedTargets
+                                && plugin.LocalTargetOverrides.Count > 0;
+
+            if (!sharedWaveActive && !overridesActive)
                 return;
 
             var now = DateTime.UtcNow;
@@ -526,8 +521,10 @@ namespace CharacterSelectPlugin
                                            plugin.Configuration.NameReplacementNameplate;
             var rpProfileLookupEnabled = plugin.Configuration.ShowViewRPContextMenu;
 
+            var localOverridesEnabled = plugin.Configuration.ShowCSNameOnAppliedTargets && plugin.LocalTargetOverrides.Count > 0;
+
             // Continue if any feature needs nameplate processing
-            if (!selfReplacementEnabled && !sharedReplacementEnabled && !rpProfileLookupEnabled)
+            if (!selfReplacementEnabled && !sharedReplacementEnabled && !rpProfileLookupEnabled && !localOverridesEnabled)
                 return;
 
             // Check if reveal keybind is held - we still need to process nameplates
@@ -535,15 +532,32 @@ namespace CharacterSelectPlugin
             var revealActualNames = IsRevealKeybindHeld();
 
             var activeChar = selfReplacementEnabled ? plugin.GetActiveCharacter() : null;
-            if (activeChar?.ExcludeFromNameSync == true) activeChar = null; // Per-character opt-out
+            if (activeChar != null && plugin.IsNameSyncExcluded(activeChar)) activeChar = null; // Opt-out or name already matches
 
             foreach (var handler in handlers)
             {
-                // Player nameplates only
-                if (handler.NamePlateKind != NamePlateKind.PlayerCharacter)
-                    continue;
-
                 var gameObject = handler.GameObject;
+
+                // Apply-to-Target overrides for non-player handlers
+                if (handler.NamePlateKind != NamePlateKind.PlayerCharacter)
+                {
+                    if (!revealActualNames &&
+                        plugin.Configuration.ShowCSNameOnAppliedTargets &&
+                        gameObject != null &&
+                        plugin.LocalTargetOverrides.TryGet(gameObject.GameObjectId, out var localOvr))
+                    {
+                        handler.NameParts.Text = CreateSimpleColoredName(localOvr.DisplayName, localOvr.NameplateColor);
+                        try { handler.RemoveTitle(); } catch { }
+                        try { handler.RemoveFreeCompanyTag(); } catch { }
+                        try { handler.RemoveStatusPrefix(); } catch { }
+                        try { handler.RemoveTargetSuffix(); } catch { }
+                        try { handler.RemoveLevelPrefix(); } catch { }
+                        try { handler.NameIconId = 0; } catch { }
+                        try { handler.MarkerIconId = 0; } catch { }
+                    }
+                    continue;
+                }
+
                 if (gameObject == null)
                     continue;
 
@@ -555,6 +569,7 @@ namespace CharacterSelectPlugin
                     if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(displayName) && !revealActualNames)
                     {
                         handler.NameParts.Text = CreateColoredName(displayName, activeChar.NameplateColor, forPartyList: false);
+                        selfNameplateReplaced = true;
 
                         // Hide FC tag
                         if (plugin.Configuration.HideFCTagInNameplate)
@@ -562,11 +577,17 @@ namespace CharacterSelectPlugin
                             handler.RemoveFreeCompanyTag();
                         }
                     }
-                    else if (selfReplacementEnabled)
+                    else if (selfReplacementEnabled && selfNameplateReplaced)
                     {
-                        // Reset to original name: reveal keybind held, excluded from sync, or no active character.
-                        // Also covers reverting when switching to an excluded character.
-                        handler.NameParts.Text = new SeString(new TextPayload(localPlayer.Name.TextValue));
+                        if (revealActualNames)
+                        {
+                            handler.NameParts.Text = new SeString(new TextPayload(localPlayer.Name.TextValue));
+                        }
+                        else
+                        {
+                            selfNameplateReplaced = false;
+                            namePlateGui.RequestRedraw(); // rebuild natively so the game's Display Type applies
+                        }
                     }
                 }
                 // Other players - process for shared name replacement or RP profile lookup
@@ -607,14 +628,15 @@ namespace CharacterSelectPlugin
                         }
                         else if (replacedNameplateNames.Contains(physicalName))
                         {
-                            // Reset to original name: either reveal is held, or they no longer have a CS+ name
-                            handler.NameParts.Text = new SeString(new TextPayload(playerName));
-
-                            // Only remove from tracking if they truly don't have a CS+ name anymore
-                            // (not just reveal being held)
-                            if (!revealActualNames)
+                            if (revealActualNames)
+                            {
+                                // Temporary reveal keeps tracking so the CS+ name returns on release
+                                handler.NameParts.Text = new SeString(new TextPayload(playerName));
+                            }
+                            else
                             {
                                 replacedNameplateNames.Remove(physicalName);
+                                namePlateGui.RequestRedraw(); // rebuild natively so the game's Display Type applies
                             }
                         }
                     }
@@ -649,7 +671,7 @@ namespace CharacterSelectPlugin
                 var activeChar = plugin.GetActiveCharacter();
                 // Use Alias if set, otherwise fall back to Name
                 var chatDisplayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
-                if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(chatDisplayName))
+                if (activeChar != null && !plugin.IsNameSyncExcluded(activeChar) && !string.IsNullOrEmpty(chatDisplayName))
                 {
                     chatMessage.Sender = ReplaceSenderName(chatMessage.Sender, localName, chatDisplayName, activeChar.NameplateColor);
                     return;
@@ -753,9 +775,8 @@ namespace CharacterSelectPlugin
                 if (selfReplacementEnabled)
                 {
                     var activeChar = plugin.GetActiveCharacter();
-                    // Use Alias if set, otherwise fall back to Name
                     var targetDisplayName = !string.IsNullOrWhiteSpace(activeChar?.Alias) ? activeChar.Alias : activeChar?.Name;
-                    if (activeChar != null && !activeChar.ExcludeFromNameSync && !string.IsNullOrEmpty(targetDisplayName))
+                    if (activeChar != null && !plugin.IsNameSyncExcluded(activeChar) && !string.IsNullOrEmpty(targetDisplayName))
                     {
                         var localName = localPlayer.Name.TextValue;
                         ReplaceNameInAllTextNodes(addon, localName, targetDisplayName, activeChar.NameplateColor);
@@ -845,43 +866,31 @@ namespace CharacterSelectPlugin
             }
         }
 
-        /// <summary>
-        /// Checks if party composition has changed and clears tracking if so.
-        /// This prevents stale CS+ names from being applied to new party members.
-        /// </summary>
-        private void CheckForPartyChange()
+        // Resolves the GameObject at addon-display party slot N (0 = self, 1-7 = others)
+        private static unsafe GameObject* ResolvePartySlotCharacter(int slot)
         {
-            // Skip if we have no tracking to validate - avoid unnecessary work
-            if (partySlotToPhysicalName.Count == 0 && trackedPartyObjectIds.Count == 0)
-                return;
-
-            var currentObjectIds = new HashSet<uint>();
-
-            for (int i = 0; i < partyList.Length; i++)
+            try
             {
-                var member = partyList[i];
-                if (member != null && member.ObjectId != 0)
+                var arr = PartyListNumberArray.Instance();
+                if (arr == null || slot < 0 || slot >= arr->PartyListCount) return null;
+
+                // Field labelled ContentId in CS, actually holds EntityId
+                uint entityId = (uint)arr->PartyMembers[slot].ContentId;
+                if (entityId == 0) return null;
+
+                var charManager = CharacterManager.Instance();
+                if (charManager == null) return null;
+
+                foreach (var bChara in charManager->BattleCharas)
                 {
-                    currentObjectIds.Add(member.ObjectId);
+                    if (bChara == null) continue;
+                    if (bChara.Value->EntityId == entityId) return (GameObject*)bChara.Value;
                 }
+                return null;
             }
-
-            // Check if party composition changed
-            if (!currentObjectIds.SetEquals(trackedPartyObjectIds))
+            catch
             {
-                // Clear tracking if we had any
-                if (partySlotToPhysicalName.Count > 0 || partySlotPrefixBytes.Count > 0)
-                {
-                    log.Debug($"[PartyList] Party composition changed (was {trackedPartyObjectIds.Count} members, now {currentObjectIds.Count}) - clearing all tracking");
-                    partySlotToPhysicalName.Clear();
-                    partySlotPrefixBytes.Clear();
-
-                    // Skip replacement for a few frames so the game can refresh text nodes
-                    // Without this, stale CS+ names linger on slots that now belong to different players
-                    partyChangeSkipFrames = PartyChangeSkipFrameCount;
-                }
-
-                trackedPartyObjectIds = currentObjectIds;
+                return null;
             }
         }
 
@@ -900,217 +909,108 @@ namespace CharacterSelectPlugin
             var localName = localPlayer.Name.TextValue;
 
             var activeChar = selfReplacementEnabled ? plugin.GetActiveCharacter() : null;
-            if (activeChar?.ExcludeFromNameSync == true) activeChar = null; // Per-character opt-out
+            if (activeChar != null && plugin.IsNameSyncExcluded(activeChar)) activeChar = null; // Opt-out or name already matches
 
-            // Check for party composition changes - clear all tracking if party changed
-            CheckForPartyChange();
+            var seenPhysicalNames = new HashSet<string>();
 
-            // After a party change, skip replacement for a few frames so the game
-            // can refresh text nodes with the correct names for new members
-            if (partyChangeSkipFrames > 0)
-            {
-                partyChangeSkipFrames--;
-                return;
-            }
-
-            // Process all slots - local player is ALWAYS slot 0
-            // Note: We rely on CheckForPartyChange() (ObjectId-based) to detect party composition changes.
-            // Don't validate against IPartyList indices here - they don't match addon slot indices reliably.
             for (int i = 0; i < addon->MemberCount && i < 8; i++)
             {
                 var member = addon->PartyMembers[i];
                 var nameNode = member.Name;
+                if (nameNode == null) continue;
 
-                if (nameNode == null)
-                    continue;
-
-                // Parse SeString to get plain text
-                string plainText;
                 byte[] rawBytes;
-                try
-                {
-                    rawBytes = nameNode->NodeText.AsSpan().ToArray();
-                    var seString = SeString.Parse(rawBytes);
-                    plainText = seString.TextValue;
-                }
-                catch
-                {
-                    plainText = nameNode->NodeText.ToString();
-                    rawBytes = null;
-                }
+                try { rawBytes = nameNode->NodeText.AsSpan().ToArray(); }
+                catch { rawBytes = null; }
 
-                if (string.IsNullOrEmpty(plainText))
-                    continue;
-
-                // Slot 0 is always the local player
-                bool isOurSlot = (i == 0);
-
-                if (isOurSlot && selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
+                if (i == 0)
                 {
-                    // Always construct level prefix from player's level to avoid malformed SeString issues
-                    // (raw bytes from party list may contain incomplete SeString sequences)
-                    try
+                    if (selfReplacementEnabled && activeChar != null && !string.IsNullOrEmpty(activeChar.Name))
                     {
-                        if (localPlayer != null && localPlayer.Level > 0)
+                        try
                         {
-                            var prefixBytes = ConstructLevelPrefix(localPlayer.Level);
-                            cachedLevelPrefixBytes = prefixBytes;
-
-                            // Use Alias if set, otherwise fall back to Name
                             var selfDisplayName = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
                             var coloredName = CreateSimpleColoredName(selfDisplayName, activeChar.NameplateColor, forPartyList: true);
                             var coloredBytes = coloredName.Encode();
 
-                            // +1 for null terminator - SetText expects null-terminated C string
-                            var finalBytes = new byte[prefixBytes.Length + coloredBytes.Length + 1];
-                            Array.Copy(prefixBytes, 0, finalBytes, 0, prefixBytes.Length);
-                            Array.Copy(coloredBytes, 0, finalBytes, prefixBytes.Length, coloredBytes.Length);
-                            // finalBytes[last] is already 0 from array initialization
+                            byte[] prefixBytes = null;
+                            if (localPlayer != null && localPlayer.Level > 0)
+                            {
+                                prefixBytes = ConstructLevelPrefix(localPlayer.Level);
+                                cachedLevelPrefixBytes = prefixBytes;
+                            }
 
+                            int prefixLen = prefixBytes?.Length ?? 0;
+                            var finalBytes = new byte[prefixLen + coloredBytes.Length + 1];
+                            if (prefixBytes != null) Array.Copy(prefixBytes, 0, finalBytes, 0, prefixLen);
+                            Array.Copy(coloredBytes, 0, finalBytes, prefixLen, coloredBytes.Length);
                             nameNode->SetText(finalBytes);
-                        }
-                        else
-                        {
-                            // Fallback: no prefix available at all - Encode() doesn't include null terminator
-                            // Use Alias if set, otherwise fall back to Name
-                            var selfDisplayNameFallback = !string.IsNullOrWhiteSpace(activeChar.Alias) ? activeChar.Alias : activeChar.Name;
-                            var fallbackName = CreateSimpleColoredName(selfDisplayNameFallback, activeChar.NameplateColor, forPartyList: true);
-                            var fallbackBytes = fallbackName.Encode();
-                            var nullTerminated = new byte[fallbackBytes.Length + 1];
-                            Array.Copy(fallbackBytes, 0, nullTerminated, 0, fallbackBytes.Length);
-                            nameNode->SetText(nullTerminated);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        log.Debug($"Failed to set party list name (self): {ex.Message}");
-                    }
-                }
-                // Check for shared name replacement (other players - slots 1+)
-                else if (!isOurSlot && sharedReplacementEnabled && plugin.SharedNameManager != null)
-                {
-                    // Party list shows just "FirstName LastName" without world
-                    // Try to find a matching cached shared name by physical name in text
-                    var match = plugin.SharedNameManager.FindCachedNameInText(plainText, localName);
-
-                    if (match.HasValue)
-                    {
-                        var (sharedEntry, originalName) = match.Value;
-                        // Store this slot's physical name for future lookups (when they switch CS+ characters)
-                        partySlotToPhysicalName[i] = originalName;
-
-                        // Use pattern detection to get ONLY the level icon bytes (safe, no SeString issues)
-                        byte[]? slotPrefix = null;
-                        if (rawBytes != null && rawBytes.Length > 0)
-                        {
-                            slotPrefix = FindLevelPrefixByPattern(rawBytes);
-                            if (slotPrefix != null)
-                            {
-                                partySlotPrefixBytes[i] = slotPrefix;
-                            }
-                        }
-
-                        // Replace with their CS+ name using the captured prefix
-                        try
-                        {
-                            var coloredName = CreateSimpleColoredName(sharedEntry.CSName, sharedEntry.NameplateColor, forPartyList: true);
-                            var coloredBytes = coloredName.Encode();
-                            if (slotPrefix != null)
-                            {
-                                // +1 for null terminator - SetText expects null-terminated C string
-                                var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length + 1];
-                                Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
-                                Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
-                                nameNode->SetText(finalBytes);
-                            }
-                            else
-                            {
-                                // Fallback if no prefix captured - add null terminator
-                                var nullTerminated = new byte[coloredBytes.Length + 1];
-                                Array.Copy(coloredBytes, 0, nullTerminated, 0, coloredBytes.Length);
-                                nameNode->SetText(nullTerminated);
-                            }
                         }
                         catch (Exception ex)
                         {
-                            log.Debug($"Failed to set party list name (shared): {ex.Message}");
+                            log.Debug($"Failed to set party list name (self): {ex.Message}");
                         }
                     }
-                    // If no match by physical name in text, check if we have a stored physical name for this slot
-                    else if (partySlotToPhysicalName.TryGetValue(i, out var storedPhysicalName))
+                    continue;
+                }
+
+                if (!sharedReplacementEnabled || plugin.SharedNameManager == null) continue;
+
+                string physicalName = null;
+                unsafe
+                {
+                    var go = ResolvePartySlotCharacter(i);
+                    if (go != null) physicalName = go->NameString;
+                }
+                if (string.IsNullOrEmpty(physicalName)) continue;
+                if (string.Equals(physicalName, localName, StringComparison.OrdinalIgnoreCase)) continue;
+                seenPhysicalNames.Add(physicalName);
+
+                var entry = plugin.SharedNameManager.GetCachedNameByCharacterName(physicalName);
+                byte[] slotPrefix = (rawBytes != null && rawBytes.Length > 0)
+                    ? FindLevelPrefixByPattern(rawBytes) : null;
+
+                if (entry != null && !string.IsNullOrEmpty(entry.CSName))
+                {
+                    try
                     {
-                        // First check: if the text already contains their in-game name, they switched to no-profile
-                        if (plainText.Contains(storedPhysicalName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Their in-game name is showing - clear tracking
-                            partySlotToPhysicalName.Remove(i);
-                            partySlotPrefixBytes.Remove(i);
-                        }
-                        else
-                        {
-                            // Their in-game name is NOT in the text (we previously replaced it)
-                            var entry = plugin.SharedNameManager.GetCachedNameByCharacterName(storedPhysicalName);
-                            if (entry != null && !string.IsNullOrEmpty(entry.CSName))
-                            {
-                                // Use pattern detection or stored prefix (safe level icon bytes only)
-                                byte[]? slotPrefix = null;
-                                if (rawBytes != null && rawBytes.Length > 0)
-                                {
-                                    slotPrefix = FindLevelPrefixByPattern(rawBytes);
-                                    if (slotPrefix != null)
-                                    {
-                                        partySlotPrefixBytes[i] = slotPrefix;
-                                    }
-                                }
-
-                                // Fall back to stored prefix if pattern detection failed
-                                if (slotPrefix == null && partySlotPrefixBytes.TryGetValue(i, out var storedPrefix))
-                                {
-                                    slotPrefix = storedPrefix;
-                                }
-
-                                try
-                                {
-                                    var coloredName = CreateSimpleColoredName(entry.CSName, entry.NameplateColor, forPartyList: true);
-                                    var coloredBytes = coloredName.Encode();
-                                    if (slotPrefix != null)
-                                    {
-                                        // +1 for null terminator - SetText expects null-terminated C string
-                                        var finalBytes = new byte[slotPrefix.Length + coloredBytes.Length + 1];
-                                        Array.Copy(slotPrefix, 0, finalBytes, 0, slotPrefix.Length);
-                                        Array.Copy(coloredBytes, 0, finalBytes, slotPrefix.Length, coloredBytes.Length);
-                                        nameNode->SetText(finalBytes);
-                                    }
-                                    else
-                                    {
-                                        // Fallback - add null terminator
-                                        var nullTerminated = new byte[coloredBytes.Length + 1];
-                                        Array.Copy(coloredBytes, 0, nullTerminated, 0, coloredBytes.Length);
-                                        nameNode->SetText(nullTerminated);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    log.Debug($"Failed to set party list name (stored shared): {ex.Message}");
-                                }
-                            }
-                            else
-                            {
-                                // No CS+ name found - revert to in-game name (just use plain text, no prefix concat)
-                                try
-                                {
-                                    nameNode->SetText(storedPhysicalName);
-                                }
-                                catch (Exception ex)
-                                {
-                                    log.Debug($"Failed to revert party list name: {ex.Message}");
-                                }
-                                partySlotToPhysicalName.Remove(i);
-                                partySlotPrefixBytes.Remove(i);
-                            }
-                        }
+                        var coloredName = CreateSimpleColoredName(entry.CSName, entry.NameplateColor, forPartyList: true);
+                        var coloredBytes = coloredName.Encode();
+                        int prefixLen = slotPrefix?.Length ?? 0;
+                        var finalBytes = new byte[prefixLen + coloredBytes.Length + 1];
+                        if (slotPrefix != null) Array.Copy(slotPrefix, 0, finalBytes, 0, prefixLen);
+                        Array.Copy(coloredBytes, 0, finalBytes, prefixLen, coloredBytes.Length);
+                        nameNode->SetText(finalBytes);
+                        partyReplacedPhysicalNames.Add(physicalName);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Debug($"Failed to set party list name (shared): {ex.Message}");
                     }
                 }
+                else if (partyReplacedPhysicalNames.Contains(physicalName))
+                {
+                    try
+                    {
+                        int prefixLen = slotPrefix?.Length ?? 0;
+                        var nameUtf8 = System.Text.Encoding.UTF8.GetBytes(physicalName);
+                        var finalBytes = new byte[prefixLen + nameUtf8.Length + 1];
+                        if (slotPrefix != null) Array.Copy(slotPrefix, 0, finalBytes, 0, prefixLen);
+                        Array.Copy(nameUtf8, 0, finalBytes, prefixLen, nameUtf8.Length);
+                        nameNode->SetText(finalBytes);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.Debug($"Failed to revert party list name: {ex.Message}");
+                    }
+                    partyReplacedPhysicalNames.Remove(physicalName);
+                }
+            }
+
+            // Drop tracking for anyone who left the party between frames.
+            if (partyReplacedPhysicalNames.Count > 0)
+            {
+                partyReplacedPhysicalNames.RemoveWhere(n => !seenPhysicalNames.Contains(n));
             }
         }
 
@@ -1207,22 +1107,32 @@ namespace CharacterSelectPlugin
             return null;
         }
 
-        /// <summary>
-        /// Replaces the player's name in all text nodes of an addon
-        /// </summary>
+        // Replaces a name in all text nodes of an addon, recursing into component sub-nodes.
         private unsafe void ReplaceNameInAllTextNodes(AtkUnitBase* addon, string originalName, string newName, Vector3 glowColor)
         {
-            if (addon == null)
-                return;
+            if (addon == null) return;
+            WalkAndReplaceNames(addon->UldManager.NodeList, addon->UldManager.NodeListCount, originalName, newName, glowColor, 0);
+        }
 
-            var nodeList = addon->UldManager.NodeList;
-            var nodeCount = addon->UldManager.NodeListCount;
+        private unsafe void WalkAndReplaceNames(AtkResNode** nodeList, int nodeCount, string originalName, string newName, Vector3 glowColor, int depth)
+        {
+            if (nodeList == null || depth > 6) return;
 
             for (var i = 0; i < nodeCount; i++)
             {
                 var node = nodeList[i];
-                if (node == null || node->Type != NodeType.Text)
+                if (node == null) continue;
+
+                if (node->Type >= (NodeType)1000)
+                {
+                    var componentNode = (AtkComponentNode*)node;
+                    var component = componentNode->Component;
+                    if (component != null)
+                        WalkAndReplaceNames(component->UldManager.NodeList, component->UldManager.NodeListCount, originalName, newName, glowColor, depth + 1);
                     continue;
+                }
+
+                if (node->Type != NodeType.Text) continue;
 
                 var textNode = (AtkTextNode*)node;
 
@@ -1241,18 +1151,10 @@ namespace CharacterSelectPlugin
 
                 if (!string.IsNullOrEmpty(plainText) && plainText.Contains(originalName, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Target bar doesn't animate, so use simple glow (useWave: false)
                     var replacedSeString = CreateColoredNameWithContext(plainText, originalName, newName, glowColor, useWave: false);
                     if (replacedSeString != null)
                     {
-                        try
-                        {
-                            textNode->SetText(replacedSeString.Encode());
-                        }
-                        catch
-                        {
-                            // Silently fail - prevents crash from propagating
-                        }
+                        try { textNode->SetText(replacedSeString.Encode()); } catch { }
                     }
                 }
             }

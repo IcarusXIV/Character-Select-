@@ -17,15 +17,15 @@ public static partial class Boutique
     public static readonly Vector4 NpOcean  = new(0x6F / 255f, 0xBF / 255f, 0xE3 / 255f, 1f);
     public static readonly Vector4 NpSand   = new(0xD9 / 255f, 0xC9 / 255f, 0x8B / 255f, 1f);
 
-    public static readonly Vector4[] NpPalette =
-    {
-        NpCyan, NpRose, NpGreen, NpAmber, NpViolet, NpCoral, NpOcean, NpSand,
-    };
+    // Lazy so NpCyan/NpAmber (declared in Boutique.Tokens.cs) are initialised first
+    private static Vector4[]? _npPalette;
+    public static Vector4[] NpPalette =>
+        _npPalette ??= new[] { NpCyan, NpRose, NpGreen, NpAmber, NpViolet, NpCoral, NpOcean, NpSand };
 
     public static Vector4 NpColorByIndex(int i)
         => NpPalette[((i % NpPalette.Length) + NpPalette.Length) % NpPalette.Length];
 
-    // ── Achievement category palette + glyph (CodexChassis aliases) ─────
+    // Achievement category palette + glyph
     public static readonly Vector4 CatCharacters    = CodexChassis.CatCharacters;
     public static readonly Vector4 CatDesigns       = CodexChassis.CatDesigns;
     public static readonly Vector4 CatProfiles      = CodexChassis.CatProfiles;
@@ -34,7 +34,7 @@ public static partial class Boutique
     public static readonly Vector4 CatSocial        = CodexChassis.CatSocial;
     public static readonly Vector4 CatCustomization = CodexChassis.CatCustomization;
     public static readonly Vector4 CatDiscovery     = CodexChassis.CatDiscovery;
-    public static readonly Vector4 CatFeatured      = CodexChassis.CatFeatured;
+    public static Vector4 CatFeatured      => CodexChassis.CatFeatured;
     public static readonly Vector4 CatBehind        = CodexChassis.CatBehind;
     public static readonly Vector4 CatRandom        = CodexChassis.CatRandom;
 
@@ -238,7 +238,7 @@ public static partial class Boutique
         float scale, double time)
         => BoutiqueChassis.DrawAppliedNameShimmer(dl, textPos, text, scale, time);
 
-    // ── Page-dot pager (Wardrobe / hero pagination dots) ────────────────
+    // Page-dot pager
     public static void DrawPageDot(ImDrawListPtr dl, Vector2 centre, float scale, bool isActive, bool isHovered, double time)
         => BoutiqueChassis.DrawPageDot(dl, centre, scale, isActive, isHovered, time);
 
@@ -249,9 +249,9 @@ public static partial class Boutique
         float yCenter, int total, int curr, int fromIdx, float t, bool isTransitioning,
         float scale, Vector4 accent, Vector4 accentWarm,
         Dalamud.Interface.ManagedFontAtlas.IFontHandle? glyphFont,
-        Action<int> onJumpToPage)
+        Action<int> onJumpToPage, string? highlightTokenKey = null)
         => BoutiqueChassis.DrawWardrobePagerRow(dl, stMn, stMx, yCenter, total, curr, fromIdx, t,
-            isTransitioning, scale, accent, accentWarm, glyphFont, onJumpToPage);
+            isTransitioning, scale, accent, accentWarm, glyphFont, onJumpToPage, highlightTokenKey);
 
     public static void DrawPageArrow(ImDrawListPtr dl, Vector2 min, float scale,
         ImFontPtr iconFont, float iconFontSize, string glyph, bool hovered, bool disabled)

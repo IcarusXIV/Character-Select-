@@ -309,6 +309,15 @@ namespace CharacterSelectPlugin.Windows.Components
                 }, "Optional alias used for Name Sync.\nIf set, this name is displayed instead of Character Name.\nLeave empty to use the Character Name above.", scale);
             }
 
+            bool tempAccentFollows = IsEditWindowOpen ? editedCharacterAccentFollows : plugin.NewCharacterAccentFollows;
+            if (ImGui.Checkbox("Match Active Character's Colours", ref tempAccentFollows))
+            {
+                if (IsEditWindowOpen) editedCharacterAccentFollows = tempAccentFollows;
+                else plugin.NewCharacterAccentFollows = tempAccentFollows;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Checked: applying this character turns 'Match active character's colours' on, tinting the UI with their nameplate colour.\nUnchecked: applying turns it off and the UI uses your plain theme.");
+
             ImGui.Separator();
 
             // Character Tags
@@ -382,12 +391,13 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.Separator();
 
             // Glamourer Design
-            DrawClassicFormField("Glamourer Design*", labelWidth, inputWidth, inputOffset, () =>
+            DrawClassicFormField(plugin.Configuration.EnableAutomations ? "Glamourer Design" : "Glamourer Design*", labelWidth, inputWidth, inputOffset, () =>
             {
                 var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+                var currentGlamourer = plugin.IntegrationListProvider?.GetCurrentGlamourerDesign();
                 string oldValue = tempGlamourer;
 
-                if (AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, inputWidth, "Select design..."))
+                if (AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, inputWidth, "Select design...", currentActive: currentGlamourer))
                 {
                     plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
                     plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
@@ -461,16 +471,30 @@ namespace CharacterSelectPlugin.Windows.Components
             // Mod Manager (Conflict Resolution)
             if (plugin.Configuration.EnableConflictResolution)
             {
-                if (ImGui.Checkbox("Use Conflict Resolution", ref isSecretMode))
+                string crCharName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
+                bool crNameValid = !string.IsNullOrWhiteSpace(crCharName);
+
+                if (!crNameValid)
+                    ImGui.BeginDisabled();
+                bool crCheckboxClicked = ImGui.Checkbox("Use Conflict Resolution", ref isSecretMode);
+                if (!crNameValid)
+                    ImGui.EndDisabled();
+
+                if (crCheckboxClicked)
                 {
                     if (!IsEditWindowOpen && !isAdvancedModeCharacter)
                     {
                         plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
                     }
+
+                    if (isSecretMode && crNameValid)
+                        PerformQuickCharacterGearHairUpdate();
                 }
-                if (ImGui.IsItemHovered())
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
-                    ImGui.SetTooltip("Manual mod state for this character.");
+                    ImGui.SetTooltip(crNameValid
+                        ? "Manual mod state for this character."
+                        : "Enter a Character Name first.");
                 }
 
                 if (isSecretMode)
@@ -755,6 +779,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     if (IsEditWindowOpen) editedAnimatedImagePath = pendingAnimatedImagePath;
                     else plugin.NewCharacterAnimatedImagePath = pendingAnimatedImagePath;
                     pendingAnimatedImagePath = null;
+                    _hoverModeRadio = 1;
                 }
             }
 
@@ -770,6 +795,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     if (IsEditWindowOpen) editedAnimatedImagePath = null;
                     else plugin.NewCharacterAnimatedImagePath = null;
+                    _hoverModeRadio = 0;
                     return;
                 }
 
@@ -799,10 +825,13 @@ namespace CharacterSelectPlugin.Windows.Components
             string tempName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
             string tempPenumbra = IsEditWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
             string tempGlamourer = IsEditWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
+            string tempAutomation = IsEditWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
+            bool hasGlamourer = !string.IsNullOrWhiteSpace(tempGlamourer)
+                || (plugin.Configuration.EnableAutomations && !string.IsNullOrWhiteSpace(tempAutomation));
 
             bool canSaveCharacter = !string.IsNullOrWhiteSpace(tempName) &&
                                    !string.IsNullOrWhiteSpace(tempPenumbra) &&
-                                   !string.IsNullOrWhiteSpace(tempGlamourer) &&
+                                   hasGlamourer &&
                                    string.IsNullOrEmpty(nameValidationError);
 
             uiStyles.PushDarkButtonStyle(scale);

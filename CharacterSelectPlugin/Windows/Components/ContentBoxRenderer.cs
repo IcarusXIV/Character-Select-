@@ -773,32 +773,39 @@ namespace CharacterSelectPlugin.Windows.Components
             var cons = box.RightColumn.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
             var drawList = ImGui.GetWindowDrawList();
-            float columnWidth = (width - 10 * scale) / 2;
+            float gap = 10 * scale;
             float bgPadding = 6f * scale;
+            float columnWidth = (width - gap) / 2 - 2 * bgPadding;
 
-            // Render one column inside a BeginGroup so we can measure its size,
-            // then draw the bg behind via ChannelsSplit.
-            void RenderColumn(string[] items, string headerText, Vector4 bgColor, Vector4 headerColor, Vector4 iconColor, string itemIcon, bool iconIsFontAwesome)
+            var rowStart = ImGui.GetCursorPos();
+
+            // Manual columns, not a table, so the ChannelsSplit background clips to the card child
+            float RenderColumn(float blockX, string[] items, string headerText, Vector4 bgColor, Vector4 headerColor, Vector4 iconColor, string itemIcon, bool iconIsFontAwesome)
             {
+                ImGui.SetCursorPosX(blockX + bgPadding);
+                ImGui.SetCursorPosY(rowStart.Y + bgPadding);
+
                 drawList.ChannelsSplit(2);
                 drawList.ChannelsSetCurrent(1); // foreground - content
 
                 var columnStart = ImGui.GetCursorScreenPos();
+                float contentRightX = blockX + bgPadding + columnWidth;
                 ImGui.BeginGroup();
 
                 // Column header
                 ImGui.PushStyleColor(ImGuiCol.Text, headerColor);
-                if (iconIsFontAwesome && headerText == "WEAKNESSES")
+                if (iconIsFontAwesome)
                 {
                     ImGui.PushFont(UiBuilder.IconFont);
-                    ImGui.Text(FontAwesomeIcon.Times.ToIconString());
+                    ImGui.Text((headerText == "WEAKNESSES"
+                        ? FontAwesomeIcon.Times : FontAwesomeIcon.Check).ToIconString());
                     ImGui.PopFont();
                     ImGui.SameLine();
                     ImGui.Text(headerText);
                 }
                 else
                 {
-                    ImGui.Text("✓ " + headerText);
+                    ImGui.Text(headerText);
                 }
                 ImGui.PopStyleColor();
                 ImGui.Separator();
@@ -806,8 +813,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 foreach (var item in items)
                 {
-                    ImGui.Dummy(new Vector2(10 * scale, 0));
-                    ImGui.SameLine();
+                    ImGui.SetCursorPosX(blockX + bgPadding + 10 * scale);
                     if (iconIsFontAwesome)
                     {
                         ImGui.PushFont(UiBuilder.IconFont);
@@ -819,7 +825,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         ImGui.TextColored(iconColor, itemIcon);
                     }
                     ImGui.SameLine();
-                    ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + columnWidth - 40 * scale);
+                    ImGui.PushTextWrapPos(contentRightX);
                     ImGui.Text(item);
                     ImGui.PopTextWrapPos();
                 }
@@ -838,31 +844,25 @@ namespace CharacterSelectPlugin.Windows.Components
                 );
 
                 drawList.ChannelsMerge();
+                return columnSize.Y + 2 * bgPadding;
             }
 
-            if (ImGui.BeginTable("##proscons", 2, ImGuiTableFlags.None))
-            {
-                ImGui.TableSetupColumn("Pros", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Cons", ImGuiTableColumnFlags.WidthStretch);
+            float leftBlockX = rowStart.X;
+            float rightBlockX = rowStart.X + columnWidth + 2 * bgPadding + gap;
 
-                ImGui.TableNextRow();
+            float leftHeight = RenderColumn(leftBlockX, pros, "STRENGTHS",
+                new Vector4(0.1f, 0.2f, 0.1f, 0.3f),
+                new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
+                new Vector4(0.4f, 0.8f, 0.4f, 0.9f),
+                "✓", iconIsFontAwesome: false);
 
-                ImGui.TableNextColumn();
-                RenderColumn(pros, "STRENGTHS",
-                    new Vector4(0.1f, 0.2f, 0.1f, 0.3f),
-                    new Vector4(0.4f, 0.8f, 0.4f, 1.0f),
-                    new Vector4(0.4f, 0.8f, 0.4f, 0.9f),
-                    "✓", iconIsFontAwesome: false);
+            float rightHeight = RenderColumn(rightBlockX, cons, "WEAKNESSES",
+                new Vector4(0.2f, 0.1f, 0.1f, 0.3f),
+                new Vector4(0.9f, 0.3f, 0.3f, 1.0f),
+                new Vector4(0.9f, 0.3f, 0.3f, 0.9f),
+                FontAwesomeIcon.Times.ToIconString(), iconIsFontAwesome: true);
 
-                ImGui.TableNextColumn();
-                RenderColumn(cons, "WEAKNESSES",
-                    new Vector4(0.2f, 0.1f, 0.1f, 0.3f),
-                    new Vector4(0.9f, 0.3f, 0.3f, 1.0f),
-                    new Vector4(0.9f, 0.3f, 0.3f, 0.9f),
-                    FontAwesomeIcon.Times.ToIconString(), iconIsFontAwesome: true);
-
-                ImGui.EndTable();
-            }
+            ImGui.SetCursorPos(new Vector2(rowStart.X, rowStart.Y + Math.Max(leftHeight, rightHeight) + 4 * scale));
         }
         
         private static void RenderLikesDislikesLayout(ContentBox box, float width, float scale)
@@ -897,6 +897,7 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var drawList = ImGui.GetWindowDrawList();
             var itemPos = ImGui.GetCursorScreenPos();
+            float startLocalY = ImGui.GetCursorPos().Y;
 
             // Calculate the actual rendered height based on how the trait text wraps.
             // Icon (thumbs) is drawn inline with the text and takes ~1 line's width.
@@ -965,8 +966,8 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PopStyleColor();
             ImGui.PopTextWrapPos();
 
-            // Move cursor past the item (plus a small gap to the next item)
-            ImGui.SetCursorPosY(itemPos.Y - ImGui.GetWindowPos().Y + itemHeight + 8 * scale);
+            // Advance in local space so scroll offset is preserved
+            ImGui.SetCursorPosY(startLocalY + itemHeight + 8 * scale);
         }
         
         private static void RenderStandardLayout(ContentBox box, float width, float scale)

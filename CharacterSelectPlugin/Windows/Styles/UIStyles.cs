@@ -30,6 +30,11 @@ namespace CharacterSelectPlugin.Windows.Styles
         /// </summary>
         public float UpdateAndGetHoverSweepProgress(string id, bool isHovered)
         {
+            if (Boutique.ReduceMotion)
+            {
+                hoverSweepStarts.Remove(id);
+                return -1f;
+            }
             if (!isHovered)
             {
                 hoverSweepStarts.Remove(id);
@@ -89,6 +94,11 @@ namespace CharacterSelectPlugin.Windows.Styles
         /// </summary>
         public static void ApplyHoverSheenToLastItemStatic(string id, float maxAlpha = 0.18f)
         {
+            if (Boutique.ReduceMotion)
+            {
+                staticHoverSweepStarts.Remove(id);
+                return;
+            }
             bool hovered = ImGui.IsItemHovered();
             if (!hovered)
             {
@@ -145,11 +155,8 @@ namespace CharacterSelectPlugin.Windows.Styles
         // PreDraw push count, paired with PopCustomWindowBgIfNeeded in PostDraw
         private int preDrawSlotsPushed = 0;
 
-        /// <summary>
-        /// PreDraw hook: pushes the chrome slots ImGui paints at Begin time
-        /// (WindowBg, TitleBg, TitleBgActive, TitleBgCollapsed, MenuBarBg) so
-        /// the title bar respects the Custom theme.
-        /// </summary>
+        // PreDraw hook: pushes the chrome slots ImGui paints at Begin time so
+        // the title bar respects the Custom theme
         public void PushCustomWindowBgIfNeeded()
         {
             preDrawSlotsPushed = 0;
@@ -162,7 +169,6 @@ namespace CharacterSelectPlugin.Windows.Styles
             preDrawSlotsPushed += TryPushSlot(customTheme, "color.titleBg",      ImGuiCol.TitleBg);
             preDrawSlotsPushed += TryPushSlot(customTheme, "color.titleBgActive", ImGuiCol.TitleBgActive);
             preDrawSlotsPushed += TryPushSlot(customTheme, "color.titleBg",      ImGuiCol.TitleBgCollapsed);
-            preDrawSlotsPushed += TryPushSlot(customTheme, "color.menuBarBg",    ImGuiCol.MenuBarBg);
         }
 
         private static int TryPushSlot(CustomThemeConfig theme, string key, ImGuiCol target)
@@ -187,14 +193,17 @@ namespace CharacterSelectPlugin.Windows.Styles
             }
         }
 
+        // Every seasonal/default branch below pushes exactly this many colours
+        private const int SeasonalColorPushCount = 21;
+
         public void PushMainWindowStyle()
         {
             float scale = ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier;
 
-            // Check for Custom theme first (takes priority)
+            int colorPushes = SeasonalColorPushCount;
             if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
             {
-                PushCustomThemeColors();
+                colorPushes = PushCustomThemeColors();
             }
             // Check for seasonal themes
             else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration) &&
@@ -349,9 +358,7 @@ namespace CharacterSelectPlugin.Windows.Styles
             ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, 0.5f * scale);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0.5f * scale);
 
-            // ColorOptions push one slot each, plus the manual SeparatorHovered push.
-            // Compute dynamically so editor option additions/removals don't drift the count.
-            colorStackCount += CustomThemeDefinitions.ColorOptions.Length + 1;
+            colorStackCount += colorPushes;
             styleStackCount += 10;
 
         }
@@ -364,11 +371,8 @@ namespace CharacterSelectPlugin.Windows.Styles
             colorStackCount = 0;
         }
 
-        /// <summary>
-        /// Pushes custom theme colors from CustomThemeDefinitions.
-        /// Uses user overrides where available, otherwise falls back to defaults.
-        /// </summary>
-        private void PushCustomThemeColors()
+        // Pushes the custom theme's ImGui slot colours, returns the push count
+        private int PushCustomThemeColors()
         {
             var customTheme = plugin.Configuration.CustomTheme;
             int pushedColors = 0;
@@ -393,9 +397,7 @@ namespace CharacterSelectPlugin.Windows.Styles
             // Push additional separator colors to match seasonal theme count (21 total)
             // These use defaults since they're not in the customizable options
             ImGui.PushStyleColor(ImGuiCol.SeparatorHovered, new Vector4(0.35f, 0.35f, 0.35f, 0.8f));
-
-            // Note: colorStackCount is incremented in PushMainWindowStyle() after the if/else block
-            // to keep consistent handling across all theme types (line 156: colorStackCount += 21)
+            return pushedColors + 1;
         }
 
         public void PushCharacterCardStyle(Vector3 glowColor, bool isHovered = false, float scale = 1.0f)

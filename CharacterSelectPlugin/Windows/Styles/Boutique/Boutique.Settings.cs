@@ -369,7 +369,7 @@ public static partial class Boutique
 
         var origin = ImGui.GetCursorScreenPos();
 
-        // ── Input mode (ctrl+click typed value) ─────────────────────────
+        // Input mode (ctrl+click typed value)
         if (_sliderInputMode.Contains(id))
         {
             if (!_sliderInputBuf.TryGetValue(id, out string? buf) || buf == null)
@@ -380,7 +380,7 @@ public static partial class Boutique
 
             ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.95f));
             ImGui.PushStyleColor(ImGuiCol.Border, Gold);
-            ImGui.PushStyleColor(ImGuiCol.Text, Text);
+            ImGui.PushStyleColor(ImGuiCol.Text, InputText);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8f * scale, (h - ImGui.GetFontSize()) * 0.5f));
@@ -715,27 +715,40 @@ public static partial class Boutique
         Vector4 borderCol = isOpen ? Gold : (hovered ? GoldDeep : BorderSoft);
         dl.AddRect(min, max, U32(borderCol), 0f, ImDrawFlags.None, 1f * scale);
 
-        // KICKER (left) + value (right-leaning toward chevron)
+        // Kicker on the left, value leaning toward the chevron
         float padX = 12f * scale;
         string value = (currentIndex >= 0 && currentIndex < options.Count)
             ? options[currentIndex].ToUpperInvariant() : "";
 
         if (Plugin.Instance?.OswaldMed9 != null && Plugin.Instance.OswaldMed11 != null)
         {
+            float kickerW;
             using (Plugin.Instance.OswaldMed9.Push())
             {
                 float kY = (min.Y + max.Y) * 0.5f - ImGui.GetFontSize() * 0.5f;
+                string kickerUpper = kicker.ToUpperInvariant();
                 DrawTrackedText(dl, new Vector2(min.X + padX, kY),
-                    kicker.ToUpperInvariant(), U32(TextGhost), 2.5f * scale);
+                    kickerUpper, U32(TextGhost), 2.5f * scale);
+                kickerW = MeasureTrackedText(kickerUpper, 2.5f * scale);
             }
             using (Plugin.Instance.OswaldMed11.Push())
             {
                 float vY = (min.Y + max.Y) * 0.5f - ImGui.GetFontSize() * 0.5f;
                 float trackPx = 1.8f * scale;
-                float vW = MeasureTrackedText(value, trackPx);
                 float chevronW = 14f * scale;
+                float availW = (max.X - padX - chevronW) - (min.X + padX + kickerW + 10f * scale);
+                float vW = MeasureTrackedText(value, trackPx);
+                if (vW > availW && availW > 0f)
+                {
+                    while (value.Length > 1 && MeasureTrackedText(value + "..", trackPx) > availW)
+                        value = value[..^1];
+                    value += "..";
+                    vW = MeasureTrackedText(value, trackPx);
+                }
                 float vX = max.X - padX - chevronW - vW;
                 DrawTrackedText(dl, new Vector2(vX, vY), value, U32(GoldWarm), trackPx);
+                if (hovered && value.EndsWith("..") && currentIndex >= 0 && currentIndex < options.Count)
+                    Tooltip(options[currentIndex]);
             }
         }
 
@@ -927,11 +940,7 @@ public static partial class Boutique
         return clicked;
     }
 
-    // ── Text field (lightly skinned ImGui.InputText) ────────────────────
-    /// <summary>
-    /// Wraps ImGui.InputText with boutique frame styling + focus glow.
-    /// Caller-supplied width. Returns true if changed.
-    /// </summary>
+    // ImGui.InputText with boutique frame styling and a focus glow
     public static bool TextField(string id, ref string value, int maxLength,
         float width, float scale, ImGuiInputTextFlags flags = ImGuiInputTextFlags.None)
     {
@@ -940,7 +949,7 @@ public static partial class Boutique
         ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.85f));
         ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 0.95f));
         ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0x08 / 255f, 0x0A / 255f, 0x0E / 255f, 1f));
-        ImGui.PushStyleColor(ImGuiCol.Text, Text);
+        ImGui.PushStyleColor(ImGuiCol.Text, InputText);
         ImGui.PushStyleColor(ImGuiCol.Border, BorderSoft);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
@@ -948,6 +957,8 @@ public static partial class Boutique
 
         ImGui.SetNextItemWidth(width);
         bool changed = ImGui.InputText($"##tf_{id}", ref value, maxLength, flags);
+        if (HoveredTokenKey != null)
+            DrawTokenHighlight(ImGui.GetWindowDrawList(), ImGui.GetItemRectMin(), ImGui.GetItemRectMax(), "custom.input.text");
 
         // Focus glow on the just-rendered item
         if (ImGui.IsItemActive())
@@ -1010,15 +1021,16 @@ public static partial class Boutique
         var min = origin;
         var max = origin + size;
         // Gradient fill
-        uint gTop = U32(GoldWarm);
-        uint gBot = U32(Gold);
+        Vector4 fill = ActionFill;
+        uint gTop = U32(ActionFillWarm);
+        uint gBot = U32(fill);
         dl.AddRectFilledMultiColor(min, max, gTop, gTop, gBot, gBot);
-        dl.AddRect(min, max, U32(WithAlpha(Gold, hovered ? 0.85f : 0.55f)), 0f, ImDrawFlags.None, 1f);
+        dl.AddRect(min, max, U32(WithAlpha(fill, hovered ? 0.85f : 0.55f)), 0f, ImDrawFlags.None, 1f);
         // Halo
         for (int g = 3; g >= 1; g--)
         {
             float pad = g * 2f * scale;
-            uint glow = U32(WithAlpha(Gold, (hovered ? 0.20f : 0.12f) / g));
+            uint glow = U32(WithAlpha(fill, (hovered ? 0.20f : 0.12f) / g));
             dl.AddRectFilled(min - new Vector2(pad, pad), max + new Vector2(pad, pad), glow);
         }
         // Label
@@ -1030,7 +1042,7 @@ public static partial class Boutique
             DrawTrackedText(dl,
                 new Vector2((min.X + max.X) * 0.5f - labelW * 0.5f,
                             (min.Y + max.Y) * 0.5f - fontH * 0.5f),
-                label, U32(new Vector4(0.10f, 0.08f, 0.03f, 1f)), trackPx);
+                label, U32(SlotOrDefault("custom.button.text", new Vector4(0.10f, 0.08f, 0.03f, 1f))), trackPx);
         }
         return clicked;
     }

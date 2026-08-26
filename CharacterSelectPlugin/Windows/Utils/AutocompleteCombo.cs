@@ -19,13 +19,14 @@ namespace CharacterSelectPlugin.Windows.Utils
         private static readonly Dictionary<string, string> _filterTexts = new();
         private static readonly Dictionary<string, bool> _focusFilterOnNext = new();
 
-        // Plain ImGui combo for classic mode: no boutique chrome.
-        // allowCustomInput=true: editable InputText + small arrow button that pops up the option list.
-        // allowCustomInput=false: standard ImGui.BeginCombo with no typing.
+        // Plain ImGui combo for classic mode. allowCustomInput picks between an
+        // editable InputText plus arrow popup and a plain BeginCombo.
         private static bool DrawClassicCombo(string id, ref string value, IReadOnlyList<string> options,
-            float width, string placeholder, bool allowCustomInput)
+            float width, string placeholder, bool allowCustomInput, string? currentActive = null)
         {
             bool changed = false;
+            if (!string.IsNullOrEmpty(currentActive))
+                options = options.OrderByDescending(o => o.Equals(currentActive, StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (allowCustomInput)
             {
@@ -79,13 +80,16 @@ namespace CharacterSelectPlugin.Windows.Utils
                         {
                             if (!string.IsNullOrEmpty(lower) && !opt.ToLowerInvariant().Contains(lower)) continue;
                             bool isSel = opt.Equals(value, StringComparison.OrdinalIgnoreCase);
-                            if (ImGui.Selectable(opt, isSel))
+                            bool isActive = opt.Equals(currentActive, StringComparison.OrdinalIgnoreCase);
+                            if (isActive) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.2f, 0.9f, 0.2f, 1f));
+                            if (ImGui.Selectable(isActive ? $"{opt} (active)##{opt}" : opt, isSel))
                             {
                                 value = opt;
                                 changed = true;
                                 _filterTexts[id] = "";
                                 ImGui.CloseCurrentPopup();
                             }
+                            if (isActive) ImGui.PopStyleColor();
                         }
                     }
                     ImGui.EndChild();
@@ -106,11 +110,14 @@ namespace CharacterSelectPlugin.Windows.Utils
                     foreach (var opt in options)
                     {
                         bool isSel = opt.Equals(value, StringComparison.OrdinalIgnoreCase);
-                        if (ImGui.Selectable(opt, isSel))
+                        bool isActive = opt.Equals(currentActive, StringComparison.OrdinalIgnoreCase);
+                        if (isActive) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.2f, 0.9f, 0.2f, 1f));
+                        if (ImGui.Selectable(isActive ? $"{opt} (active)##{opt}" : opt, isSel))
                         {
                             value = opt;
                             changed = true;
                         }
+                        if (isActive) ImGui.PopStyleColor();
                         if (isSel) ImGui.SetItemDefaultFocus();
                     }
                     ImGui.EndCombo();
@@ -130,7 +137,7 @@ namespace CharacterSelectPlugin.Windows.Utils
             bool allowCustomInput = true)
         {
             if (Plugin.UseClassicLayout)
-                return DrawClassicCombo(id, ref value, options, width, placeholder, allowCustomInput);
+                return DrawClassicCombo(id, ref value, options, width, placeholder, allowCustomInput, currentActive);
 
             bool valueChanged = false;
             float fs = Boutique.FormScale;
@@ -281,13 +288,15 @@ namespace CharacterSelectPlugin.Windows.Utils
                 ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f * fs);
                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8f * fs, 5f * fs));
                 ImGui.PushStyleColor(ImGuiCol.Border, Boutique.WithAlpha(Boutique.GoldDeep, 0.45f));
+                ImGui.PushStyleColor(ImGuiCol.Text, Boutique.InputText);
+                ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.InputPlaceholder);
                 bool filterEnter = ImGui.InputTextWithHint($"##bcombo_filt_{id}",
                     allowCustomInput ? "Search or type custom..." : "Search...",
                     ref filterText, 256,
                     allowCustomInput
                         ? ImGuiInputTextFlags.EnterReturnsTrue
                         : ImGuiInputTextFlags.None);
-                ImGui.PopStyleColor();
+                ImGui.PopStyleColor(3);
                 ImGui.PopStyleVar(2);
 
                 if (_focusFilterOnNext.TryGetValue(id, out bool wantsFocus) && wantsFocus)

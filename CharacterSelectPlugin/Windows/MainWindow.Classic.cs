@@ -314,6 +314,8 @@ namespace CharacterSelectPlugin.Windows
                 designPanel.Draw();
                 ImGui.EndChild();
             }
+
+            designPanel.DrawImportPopout(totalScale);
         }
 
         private void DrawClassicBottomBar()
@@ -381,6 +383,19 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.Button("Reorder Characters"))
                 reorderWindow.Open();
             uiStyles.ApplyHoverSheenToLastItem("reorder_chars_btn");
+
+            ImGui.SameLine();
+
+            var importChar = designPanel.CurrentPanelCharacter ?? plugin.GetActiveCharacter();
+            if (importChar == null) ImGui.BeginDisabled();
+            if (ImGui.Button("Import Designs") && importChar != null)
+                designPanel.OpenDesignImport(importChar);
+            if (importChar == null) ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip(importChar != null
+                    ? $"Import designs into {importChar.Name}, from Glamourer or another character"
+                    : "Apply a character first");
+            uiStyles.ApplyHoverSheenToLastItem("import_designs_btn");
 
             ImGui.SameLine();
 

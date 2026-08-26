@@ -12,7 +12,7 @@ namespace CharacterSelectPlugin
     {
         private readonly Plugin plugin;
         private readonly IDalamudPluginInterface pluginInterface;
-        
+
         // IPC Providers
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string[]> getCharacterListProvider;
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string> getCurrentCharacterProvider;
@@ -22,15 +22,22 @@ namespace CharacterSelectPlugin
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<bool> getQuickSwitchVisibilityProvider;
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<bool> toggleQuickSwitchProvider;
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string, string, object> onCharacterChangedProvider;
-        
+        private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string?> getSyncedNameProvider;
+        private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string?, object> onSyncedNameChangedProvider;
+
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<int> getCharacterCountProvider;
         private readonly Dalamud.Plugin.Ipc.ICallGateProvider<List<(string, bool, string?)>> getCharactersProvider;
+        private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string, string, string> getDesignPreviewPathProvider;
+        private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string, string> getCharacterColorProvider;
+#if DEV_BUILD
+        private readonly Dalamud.Plugin.Ipc.ICallGateProvider<string, int, int, bool> applyToObjectProvider;
+#endif
 
         public IPCProvider(Plugin plugin, IDalamudPluginInterface pluginInterface)
         {
             this.plugin = plugin;
             this.pluginInterface = pluginInterface;
-            
+
             // Initialize IPC providers
             getCharacterListProvider = pluginInterface.GetIpcProvider<string[]>("CharacterSelect.GetCharacterList");
             getCurrentCharacterProvider = pluginInterface.GetIpcProvider<string>("CharacterSelect.GetCurrentCharacter");
@@ -40,10 +47,17 @@ namespace CharacterSelectPlugin
             getQuickSwitchVisibilityProvider = pluginInterface.GetIpcProvider<bool>("CharacterSelect.GetQuickSwitchVisibility");
             toggleQuickSwitchProvider = pluginInterface.GetIpcProvider<bool>("CharacterSelect.ToggleQuickSwitch");
             onCharacterChangedProvider = pluginInterface.GetIpcProvider<string, string, object>("CharacterSelect.OnCharacterChanged");
+            getSyncedNameProvider = pluginInterface.GetIpcProvider<string?>("CharacterSelect.GetSyncedName");
+            onSyncedNameChangedProvider = pluginInterface.GetIpcProvider<string?, object>("CharacterSelect.OnSyncedNameChanged");
             
             getCharacterCountProvider = pluginInterface.GetIpcProvider<int>("CharacterSelect.GetCharacterCount");
             getCharactersProvider = pluginInterface.GetIpcProvider<List<(string, bool, string?)>>("CharacterSelect.GetCharacters");
-            
+            getDesignPreviewPathProvider = pluginInterface.GetIpcProvider<string, string, string>("CharacterSelect.GetDesignPreviewPath");
+            getCharacterColorProvider = pluginInterface.GetIpcProvider<string, string>("CharacterSelect.GetCharacterColor");
+#if DEV_BUILD
+            applyToObjectProvider = pluginInterface.GetIpcProvider<string, int, int, bool>("CharacterSelect.ApplyToObject");
+#endif
+
             // Register IPC methods
             RegisterMethods();
         }
@@ -57,10 +71,16 @@ namespace CharacterSelectPlugin
             switchToCharacterDesignProvider.RegisterFunc(SwitchToCharacterDesign);
             getQuickSwitchVisibilityProvider.RegisterFunc(GetQuickSwitchVisibility);
             toggleQuickSwitchProvider.RegisterFunc(ToggleQuickSwitch);
-            
+            getSyncedNameProvider.RegisterFunc(GetSyncedName);
+
             getCharacterCountProvider.RegisterFunc(GetCharacterCount);
             getCharactersProvider.RegisterFunc(GetCharacters);
-            
+            getDesignPreviewPathProvider.RegisterFunc(GetDesignPreviewPath);
+            getCharacterColorProvider.RegisterFunc(GetCharacterColor);
+#if DEV_BUILD
+            applyToObjectProvider.RegisterFunc(ApplyToObject);
+#endif
+
             Plugin.Log.Info("[IPC] All IPC methods registered including GetCharacterCount and GetCharacters");
         }
 
@@ -104,7 +124,6 @@ namespace CharacterSelectPlugin
             try
             {
                 plugin.ApplyProfile(character, -1);
-                NotifyCharacterChanged(characterName, "");
                 return true;
             }
             catch
@@ -129,7 +148,6 @@ namespace CharacterSelectPlugin
             try
             {
                 plugin.ApplyProfile(character, designIndex);
-                NotifyCharacterChanged(characterName, designName);
                 return true;
             }
             catch
@@ -203,10 +221,74 @@ namespace CharacterSelectPlugin
             return result;
         }
 
-        /// <summary>
-        /// Notify other plugins that character changed
-        /// </summary>
-        private void NotifyCharacterChanged(string characterName, string designName)
+        // Empty string when the design has no preview
+        private string GetDesignPreviewPath(string characterName, string designName)
+        {
+            var character = plugin.Characters.FirstOrDefault(c => c.Name == characterName);
+            var design = character?.Designs.FirstOrDefault(d => d.Name == designName);
+            return design?.PreviewImagePath ?? "";
+        }
+
+        // Nameplate colour as #RRGGBB, empty string if the character is missing
+        private string GetCharacterColor(string characterName)
+        {
+            var character = plugin.Characters.FirstOrDefault(c => c.Name == characterName);
+            if (character == null)
+                return "";
+            var c = character.NameplateColor;
+            return $"#{(int)(c.X * 255):X2}{(int)(c.Y * 255):X2}{(int)(c.Z * 255):X2}";
+        }
+
+#if DEV_BUILD
+        // Returns true once the apply is started; the apply itself runs asynchronously
+        private bool ApplyToObject(string characterName, int objectIndex, int designIndex)
+        {
+            var character = plugin.Characters.FirstOrDefault(c => c.Name == characterName);
+            if (character == null)
+            {
+                Plugin.Log.Warning($"[IPC] ApplyToObject: character '{characterName}' not found (index {objectIndex})");
+                return false;
+            }
+
+            try
+            {
+                Plugin.Log.Info($"[IPC] ApplyToObject: applying '{characterName}' (design {designIndex}) to object index {objectIndex}");
+                // Empty target name skips the name-match check, which only guards swapped real targets
+                _ = plugin.ApplyToTarget(character, designIndex, objectIndex,
+                    Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc, "", skipRateLimit: true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Warning($"[IPC] ApplyToObject threw: {ex.Message}");
+                return false;
+            }
+        }
+#endif
+
+        // the name Name Sync shows for the local player, or null when nothing is shared
+        private string? GetSyncedName()
+        {
+            var c = plugin.activeCharacter;
+            if (c == null) return null;
+            if (!plugin.Configuration.AllowOthersToSeeMyCSName) return null;
+            if (c.ExcludeFromNameSync) return null;
+            return !string.IsNullOrWhiteSpace(c.Alias) ? c.Alias : c.Name;
+        }
+
+        public void NotifySyncedNameChanged()
+        {
+            try
+            {
+                onSyncedNameChangedProvider.SendMessage(GetSyncedName());
+            }
+            catch
+            {
+                // Ignore notification failures
+            }
+        }
+
+        public void NotifyCharacterChanged(string characterName, string designName)
         {
             try
             {

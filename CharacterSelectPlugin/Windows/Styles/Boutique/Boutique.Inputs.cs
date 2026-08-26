@@ -71,8 +71,8 @@ public static partial class Boutique
         ImGui.PushStyleColor(ImGuiCol.FrameBg, Vector4.Zero);
         ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, Vector4.Zero);
         ImGui.PushStyleColor(ImGuiCol.FrameBgActive, Vector4.Zero);
-        ImGui.PushStyleColor(ImGuiCol.Text, Text);
-        ImGui.PushStyleColor(ImGuiCol.TextDisabled, TextFaint);
+        ImGui.PushStyleColor(ImGuiCol.Text, InputText);
+        ImGui.PushStyleColor(ImGuiCol.TextDisabled, InputPlaceholder);
 
         ImGui.SetCursorScreenPos(new Vector2(inputX, min.Y));
         ImGui.SetNextItemWidth(inputW);
@@ -93,6 +93,13 @@ public static partial class Boutique
                 new Vector2(min.X + 1f * scale, min.Y + 1f * scale),
                 new Vector2(max.X - 1f * scale, max.Y - 1f * scale),
                 U32(WithAlpha(Gold, 0.12f)), 0f, ImDrawFlags.None, 1f * scale);
+        }
+
+        if (HoveredTokenKey != null)
+        {
+            DrawTokenHighlight(dl, min, max, "color.frameBg");
+            DrawTokenHighlight(dl, min, max, "custom.input.text");
+            DrawTokenHighlight(dl, min, max, "custom.input.placeholder");
         }
 
         ImGui.SetCursorScreenPos(new Vector2(min.X, max.Y));

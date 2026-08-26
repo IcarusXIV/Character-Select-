@@ -11,15 +11,11 @@ public static partial class Boutique
     // wrapped body copy in OutfitMed13 (heavier stroke than Regular at the
     // same size for easier first-glance reading).
 
-    /// <summary>
-    /// Default tooltip wrap width in pixels. Kept narrow so tooltips feel
-    /// like compact captions rather than paragraphs of text. Callers needing
-    /// wider tooltips can pass an override to the wrapWidth param overloads.
-    /// </summary>
-    public const float TooltipWrapDefault = 220f;
+    // Default wrap width in unscaled pixels; default overloads multiply by Scale
+    public const float TooltipWrapDefault = 300f;
 
-    /// <summary>Single-line tracked tooltip on the most recently drawn item.</summary>
-    public static void Tooltip(string text) => Tooltip(text, TooltipWrapDefault);
+    // Tooltip on the most recently drawn item
+    public static void Tooltip(string text) => Tooltip(text, TooltipWrapDefault * Scale);
 
     /// <summary>Tooltip with custom wrap width (in pixels).</summary>
     public static void Tooltip(string text, float wrapWidth)
@@ -40,9 +36,9 @@ public static partial class Boutique
         ImGui.PopStyleVar();
     }
 
-    /// <summary>Multi-line tooltip with a tracked-caps title and body lines.</summary>
+    // Tracked-caps title over body lines
     public static void TitledTooltip(string title, string body, Vector4? titleColor = null)
-        => TitledTooltip(title, body, TooltipWrapDefault, titleColor);
+        => TitledTooltip(title, body, TooltipWrapDefault * Scale, titleColor);
 
     public static void TitledTooltip(string title, string body, float wrapWidth, Vector4? titleColor = null)
     {
@@ -75,9 +71,9 @@ public static partial class Boutique
         ImGui.PopStyleVar();
     }
 
-    /// <summary>Warning-tinted tooltip (red-warm border, used for destructive or restricted actions).</summary>
+    // Red-bordered variant for destructive or restricted actions
     public static void WarningTooltip(string title, string body)
-        => WarningTooltip(title, body, TooltipWrapDefault);
+        => WarningTooltip(title, body, TooltipWrapDefault * Scale);
 
     public static void WarningTooltip(string title, string body, float wrapWidth)
     {

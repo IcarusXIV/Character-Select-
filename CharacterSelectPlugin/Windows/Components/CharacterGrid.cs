@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -77,6 +77,15 @@ namespace CharacterSelectPlugin.Windows.Components
             public float PoseAx, PoseAy;
         }
         private readonly List<PendingCutout> pendingCutouts = new();
+
+        private struct PendingAppliedChip
+        {
+            public Vector2 ImgMin;
+            public Vector2 ImgMax;
+            public float Scale;
+            public Vector4 NpCol;
+        }
+        private readonly List<PendingAppliedChip> pendingAppliedChips = new();
 
         // Performance optimizations
         private List<Character> cachedFilteredCharacters = new();
@@ -185,7 +194,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 return true;
             }
         }
-        /// <summary>0..1 ease-out-cubic progress of the in-flight page transition.</summary>
+        // 0..1 ease-out-cubic progress of the in-flight page transition
         public float PageTransitionT
         {
             get
@@ -200,10 +209,35 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public int CharactersPerPage => charactersPerPage;
         public int FilteredCount => GetFilteredCharacters().Count;
-        public int TotalPageCount => Math.Max(1, (FilteredCount + charactersPerPage - 1) / charactersPerPage);
+        public int TotalPageCount => UsingCustomPages
+            ? CustomPageCount()
+            : Math.Max(1, (FilteredCount + charactersPerPage - 1) / charactersPerPage);
         public int MaxPageIndex => Math.Max(0, TotalPageCount - 1);
-        public int VisibleStartIndex => FilteredCount == 0 ? 0 : currentPage * charactersPerPage + 1;
-        public int VisibleEndIndex => Math.Min(FilteredCount, (currentPage + 1) * charactersPerPage);
+        public int VisibleStartIndex
+        {
+            get
+            {
+                if (FilteredCount == 0) return 0;
+                if (UsingCustomPages)
+                {
+                    var (start, count) = CustomPageSlice(currentPage);
+                    return count == 0 ? 0 : start + 1;
+                }
+                return currentPage * charactersPerPage + 1;
+            }
+        }
+        public int VisibleEndIndex
+        {
+            get
+            {
+                if (UsingCustomPages)
+                {
+                    var (start, count) = CustomPageSlice(currentPage);
+                    return start + count;
+                }
+                return Math.Min(FilteredCount, (currentPage + 1) * charactersPerPage);
+            }
+        }
 
         public IReadOnlyList<string> GetAvailableTags()
         {
@@ -1048,7 +1082,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     int idx = filtered.IndexOf(active);
                     if (idx >= 0 && charactersPerPage > 0)
                     {
-                        currentPage = idx / charactersPerPage;
+                        currentPage = UsingCustomPages ? CustomPageOfIndex(idx) : idx / charactersPerPage;
                         scrollToTopOnNextFrame = true;
                         InvalidateCache();
                     }
@@ -1155,6 +1189,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // the cutout paints over neighbouring cards rather than being
             // clipped at their boundary.
             DrainPendingCutouts();
+            DrainPendingAppliedChips();
 
             // New-character reveal overlay, drawn last so it sits above
             // everything, including pop-out cutouts.
@@ -1203,7 +1238,25 @@ namespace CharacterSelectPlugin.Windows.Components
             pendingCutouts.Clear();
         }
 
-        // ── New-character reveal animation ─────────────────────────────────
+        private void DrainPendingAppliedChips()
+        {
+            if (pendingAppliedChips.Count == 0) return;
+            var dl = ImGui.GetWindowDrawList();
+            using (Plugin.Instance?.OswaldSemi11?.Push())
+            {
+                foreach (var pc in pendingAppliedChips)
+                {
+                    var chipSize = Boutique.MeasureAppliedChip(1.8f * pc.Scale, pc.Scale);
+                    var chipPos = new Vector2(
+                        pc.ImgMin.X + 5f * pc.Scale,
+                        pc.ImgMax.Y - chipSize.Y - 6f * pc.Scale);
+                    Boutique.DrawAppliedChip(dl, chipPos, 1.8f * pc.Scale, pc.Scale, pc.NpCol);
+                }
+            }
+            pendingAppliedChips.Clear();
+        }
+
+        // New-character reveal animation
 
         public void PlayNewCharacterAnimation(Character newChar)
         {
@@ -1213,14 +1266,13 @@ namespace CharacterSelectPlugin.Windows.Components
             _newAnimSlotCaptured = false;
             _newAnimScrolledToSlot = false;
 
-            // Force-navigate to the page where the new character will live
-            // so the LAND target is on-screen.
+            // Navigate to the new character's page so the land target is on-screen
             InvalidateCache();
             cardRectsDirty = true;
             var filtered = GetFilteredCharacters();
             int idx = filtered.IndexOf(newChar);
             if (idx >= 0 && charactersPerPage > 0)
-                currentPage = idx / charactersPerPage;
+                currentPage = UsingCustomPages ? CustomPageOfIndex(idx) : idx / charactersPerPage;
         }
 
         private static float NewAnimEaseOutCubic(float t) => 1f - MathF.Pow(1f - t, 3f);
@@ -1667,7 +1719,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
             {
                 var customTheme = plugin.Configuration.CustomTheme;
-                if (!customTheme.UseNameplateColorForCardGlow &&
+                if (!customTheme.UseNameplateColorForCardGlow && !customTheme.AccentFollowsNameplate &&
                     customTheme.ColorOverrides.TryGetValue("custom.cardGlow", out var packedGlow) && packedGlow.HasValue)
                 {
                     var g = CustomThemeDefinitions.UnpackColor(packedGlow.Value);
@@ -1698,6 +1750,7 @@ namespace CharacterSelectPlugin.Windows.Components
             // Card slip silhouette with coloured edge
             Boutique.DrawCardSlip(dl, slipMin, slipMax, npCol,
                 isHovered || hoverAmount > 0.1f, isApplied, scale);
+            Boutique.DrawTokenHighlight(dl, slipMin, slipMax, "custom.cardGlow");
 
             // Seasonal decorations behind image (preserved)
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
@@ -1779,7 +1832,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         if (animWrap != null)
                         {
                             animWrap.IsHovered = isHovered;
-                            if (isHovered)
+                            if (isHovered && animWrap.IsReady)
                             {
                                 renderHandle = animWrap.Handle;
                                 // Use the GIF's aspect + per-character offset/zoom
@@ -1880,6 +1933,13 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
 
+            if (plugin.Configuration.ShowJobIconsOnCards
+                && (plugin.Configuration.EnableJobAssignments || plugin.Configuration.EnableGearsetAssignments))
+            {
+                bool gifBadge = !string.IsNullOrEmpty(finalImagePath) && !string.IsNullOrWhiteSpace(character.AnimatedImagePath);
+                DrawJobAssignmentIcons(dl, character, imgMin, imgMax, scale, gifBadge, npCol);
+            }
+
             // Seasonal overlays on top of image (preserved)
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
@@ -1918,19 +1978,16 @@ namespace CharacterSelectPlugin.Windows.Components
                 Boutique.DrawAppliedCornerBrackets(dl, slipMin, slipMax, scale, time, npCol, sparkT, hoverAmount);
             }
 
-            // APPLIED chip, bottom-LEFT of the portrait, mirroring the GIF
-            // badge's bottom-RIGHT.  Bigger font (OswaldSemi11) for legibility
-            // since OswaldSemi9 was reading pixel-y at the chip's small size.
+            // Applied chip, queued for the post-cutout drain so it paints over the cutout image
             if (isApplied)
             {
-                using (Plugin.Instance?.OswaldSemi11?.Push())
+                pendingAppliedChips.Add(new PendingAppliedChip
                 {
-                    var chipSize = Boutique.MeasureAppliedChip(1.8f * scale, scale);
-                    var chipPos = new Vector2(
-                        imgMin.X + 5f * scale,
-                        imgMax.Y - chipSize.Y - 6f * scale);
-                    Boutique.DrawAppliedChip(dl, chipPos, 1.8f * scale, scale, npCol);
-                }
+                    ImgMin = imgMin,
+                    ImgMax = imgMax,
+                    Scale = scale,
+                    NpCol = npCol,
+                });
             }
             if (isMainCharacter && plugin.Configuration.ShowMainCharacterCrown)
             {
@@ -2039,15 +2096,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(character.IsFavorite
                     ? $"Remove {character.Name} from favourites"
                     : $"Add {character.Name} to favourites");
-            // Favourite-active colour: Custom theme honours the user's
-            // custom.favoriteIcon override; seasonal themes pick a tinted
-            // colour matching their decoration; otherwise gold.
+            // Favourite-active colour
             var favActiveCol = Boutique.Gold;
-            if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom &&
-                plugin.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.favoriteIcon", out var packedFavCol)
-                && packedFavCol.HasValue)
+            if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
             {
-                favActiveCol = CustomThemeDefinitions.UnpackColor(packedFavCol.Value);
+                favActiveCol = plugin.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.favoriteIcon", out var packedFavCol)
+                    && packedFavCol.HasValue
+                    ? CustomThemeDefinitions.UnpackColor(packedFavCol.Value)
+                    : new Vector4(1f, 0.85f, 0f, 1f);
             }
             else if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
@@ -2060,6 +2116,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
             }
             var favCol = (character.IsFavorite || favHovered) ? favActiveCol : Boutique.TextGhost;
+            Boutique.DrawTokenHighlight(dl, favMin, favMin + new Vector2(favSize, favSize), "custom.favoriteIcon");
             var starPos = new Vector2(
                 favMin.X + (favSize - starSizeRendered.X) * 0.5f,
                 favMin.Y + (favSize - starSizeRendered.Y) * 0.5f);
@@ -2104,9 +2161,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 Boutique.U32(rpInk), bookGlyph);
             if (rpClicked) plugin.OpenRPProfileViewWindow(character);
 
-            // Name (centred between fav and rp), Outfit semi 15.5
-            string displayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias! : character.Name;
-            using (Plugin.Instance?.OutfitSemi15?.Push())
+            // Name, centred between fav and rp
+            string displayName = plugin.GetRosterDisplayName(character);
+            using (Plugin.Instance?.OutfitNameSemi15?.Push())
             {
                 var nameNatural = ImGui.CalcTextSize(displayName);
                 float nameLeft = favMin.X + favSize + 6f * scale;
@@ -2143,9 +2200,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 else
                 {
-                    dl.AddText(ImGui.GetFont(), ImGui.GetFontSize() * nameFit, namePos, Boutique.U32(Boutique.Text), displayName);
+                    dl.AddText(ImGui.GetFont(), ImGui.GetFontSize() * nameFit, namePos, Boutique.U32(Boutique.CardNameInk), displayName);
                 }
                 dl.PopClipRect();
+                Boutique.DrawTokenHighlight(dl, new Vector2(nameLeft, npTop),
+                    new Vector2(nameLeft + nameAvailW, npTop + favSize), "custom.card.nameText");
             }
 
             // ── 3 buttons row: Designs | Edit | Delete ──
@@ -2171,8 +2230,19 @@ namespace CharacterSelectPlugin.Windows.Components
             const string editIcon = "";    // pencil/edit
             const string deleteIcon = "";  // trash-alt
 
+            if (Boutique.HoveredTokenKey != null)
+            {
+                Boutique.DrawTokenHighlight(dl, new Vector2(btnRowX, btnRowY),
+                    new Vector2(btnRowX + btnRowW, btnRowY + btnH), "custom.card.buttonBg");
+                Boutique.DrawTokenHighlight(dl, new Vector2(btnRowX, btnRowY),
+                    new Vector2(btnRowX + btnW, btnRowY + btnH), "custom.card.designsText");
+                Boutique.DrawTokenHighlight(dl, new Vector2(btnRowX + btnW + btnGap, btnRowY),
+                    new Vector2(btnRowX + btnW * 2 + btnGap, btnRowY + btnH), "custom.card.editText");
+                Boutique.DrawTokenHighlight(dl, new Vector2(btnRowX + (btnW + btnGap) * 2, btnRowY),
+                    new Vector2(btnRowX + btnW * 3 + btnGap * 2, btnRowY + btnH), "custom.card.deleteText");
+            }
             DrawBoutiqueCardButton(dl, scale, new Vector2(btnRowX, btnRowY), new Vector2(btnW, btnH),
-                "DESIGNS", $"##cardbtn_d_{index}", Boutique.CyanSoft,
+                "DESIGNS", $"##cardbtn_d_{index}", Boutique.CardDesignsInk,
                 hovered =>
                 {
                     if (hovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Open design panel (Shift+Click: Wardrobe)");
@@ -2188,9 +2258,10 @@ namespace CharacterSelectPlugin.Windows.Components
                             plugin.OpenDesignPanel(realIndex);
                     }
                 },
-                designsIcon, useIcons);
+                designsIcon, useIcons,
+                Boutique.HasTokenOverride("custom.card.designsText") ? Boutique.CardDesignsInk : null);
             DrawBoutiqueCardButton(dl, scale, new Vector2(btnRowX + btnW + btnGap, btnRowY), new Vector2(btnW, btnH),
-                "EDIT", $"##cardbtn_e_{index}", Boutique.Text,
+                "EDIT", $"##cardbtn_e_{index}", Boutique.CardEditInk,
                 hovered => { if (hovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Edit character details"); },
                 () =>
                 {
@@ -2198,9 +2269,10 @@ namespace CharacterSelectPlugin.Windows.Components
                     if (realIndex >= 0)
                         plugin.MainWindow?.OpenEditCharacterWindow(realIndex);
                 },
-                editIcon, useIcons);
+                editIcon, useIcons,
+                Boutique.HasTokenOverride("custom.card.editText") ? Boutique.CardEditInk : null);
             DrawBoutiqueCardButton(dl, scale, new Vector2(btnRowX + (btnW + btnGap) * 2, btnRowY), new Vector2(btnW, btnH),
-                "DELETE", $"##cardbtn_x_{index}", Boutique.Red,
+                "DELETE", $"##cardbtn_x_{index}", Boutique.CardDeleteInk,
                 hovered => { if (hovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Delete character - hold Ctrl+Shift and click"); },
                 () =>
                 {
@@ -2232,7 +2304,8 @@ namespace CharacterSelectPlugin.Windows.Components
                         InvalidateFilterCache();
                     }
                 },
-                deleteIcon, useIcons);
+                deleteIcon, useIcons,
+                Boutique.HasTokenOverride("custom.card.deleteText") ? Boutique.CardDeleteInk : null);
 
             // Perimeter streak/trail effect, gold-coloured trace around the card
             // perimeter on hover, persistent on the active card unless another is
@@ -2304,7 +2377,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void DrawBoutiqueCardButton(ImDrawListPtr dl, float scale, Vector2 min, Vector2 size,
             string label, string id, Vector4 hoverInk, Action<bool>? onHover, Action onClick,
-            string? compactIcon = null, bool useIcon = false)
+            string? compactIcon = null, bool useIcon = false, Vector4? idleInkOverride = null)
         {
             var max = min + size;
             ImGui.SetCursorScreenPos(min);
@@ -2312,10 +2385,8 @@ namespace CharacterSelectPlugin.Windows.Components
             bool hovered = ImGui.IsItemHovered();
             onHover?.Invoke(hovered);
 
-            // Seasonal themes substitute their own button palette so Designs /
-            // Edit / Delete match the active decoration. Hover ink stays as
-            // the per-button accent (cyan for designs, etc.).
-            Vector4 idleBg = Boutique.Surface3;
+            // Seasonal themes substitute their own idle palette; hover ink stays per-button
+            Vector4 idleBg = Boutique.HasTokenOverride("custom.card.buttonBg") ? Boutique.CardButtonBg : Boutique.Surface3;
             Vector4 idleInk = Boutique.TextDim;
             if (SeasonalThemeManager.IsSeasonalThemeEnabled(plugin.Configuration))
             {
@@ -2348,7 +2419,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 dl.AddRect(min, max, Boutique.U32(Boutique.WithAlpha(hoverInk, 0.45f)),
                     0f, ImDrawFlags.None, 1f * scale);
 
-            var ink = hovered ? hoverInk : idleInk;
+            var ink = hovered ? hoverInk : (idleInkOverride ?? idleInk);
 
             if (useIcon && !string.IsNullOrEmpty(compactIcon))
             {
@@ -2380,7 +2451,171 @@ namespace CharacterSelectPlugin.Windows.Components
             if (clicked) onClick?.Invoke();
         }
 
-        // LEGACY METHOD (no longer called; kept for fallback / cleanup later)
+        // Legacy card renderer, no longer called
+        private static readonly (string Role, FontAwesomeIcon Icon)[] RoleBadgeIcons =
+        {
+            ("Tank", FontAwesomeIcon.ShieldAlt),
+            ("Healer", FontAwesomeIcon.Medkit),
+            ("Melee", FontAwesomeIcon.FistRaised),
+            ("Ranged", FontAwesomeIcon.Crosshairs),
+            ("Caster", FontAwesomeIcon.HatWizard),
+            ("Crafter", FontAwesomeIcon.Hammer),
+            ("Gatherer", FontAwesomeIcon.Leaf),
+        };
+
+        private static readonly Dictionary<string, string> EmptyAssignments = new();
+        private List<(int Number, byte JobId, string Name)>? gearsetCache;
+        private DateTime gearsetCacheAt = DateTime.MinValue;
+
+        private List<(int Number, byte JobId, string Name)> GetGearsetsCached()
+        {
+            if (gearsetCache == null || (DateTime.Now - gearsetCacheAt).TotalSeconds > 5)
+            {
+                gearsetCache = plugin.GetPlayerGearsets();
+                gearsetCacheAt = DateTime.Now;
+            }
+            return gearsetCache;
+        }
+
+        private void DrawJobAssignmentIcons(ImDrawListPtr dl, Character character, Vector2 imgMin, Vector2 imgMax, float scale, bool gifBadge, Vector4 npCol)
+        {
+            var entries = new List<(uint JobId, string? Role, string Label)>();
+            var assignments = plugin.Configuration.EnableJobAssignments
+                ? plugin.Configuration.JobAssignments
+                : EmptyAssignments;
+            foreach (var kv in assignments)
+            {
+                string v = kv.Value;
+                string charName;
+                string? designName = null;
+                if (v.StartsWith("Design:", StringComparison.Ordinal))
+                {
+                    var rest = v.Substring(7);
+                    int sep = rest.IndexOf(':');
+                    if (sep < 0) continue;
+                    charName = rest.Substring(0, sep);
+                    designName = rest.Substring(sep + 1);
+                }
+                else if (v.StartsWith("Character:", StringComparison.Ordinal))
+                    charName = v.Substring(10);
+                else
+                    charName = v;
+
+                if (!string.Equals(charName, character.Name, StringComparison.Ordinal))
+                    continue;
+
+                if (kv.Key.StartsWith("Job_", StringComparison.Ordinal) && uint.TryParse(kv.Key.AsSpan(4), out var jobId))
+                {
+                    var jobName = SettingsPanel.JobData.FirstOrDefault(j => j.Id == jobId).Name ?? $"Job {jobId}";
+                    entries.Add((jobId, null, designName == null ? jobName : $"{jobName} ({designName})"));
+                }
+                else if (kv.Key.StartsWith("Role_", StringComparison.Ordinal))
+                {
+                    var role = kv.Key.Substring(5);
+                    entries.Add((0, role, designName == null ? $"{role} Role" : $"{role} Role ({designName})"));
+                }
+            }
+
+            if (plugin.Configuration.EnableGearsetAssignments && character.AssignedGearset.HasValue)
+            {
+                var gs = GetGearsetsCached().FirstOrDefault(g => g.Number == character.AssignedGearset.Value);
+                if (gs.JobId != 0 && !entries.Any(e => e.Role == null && e.JobId == gs.JobId))
+                {
+                    var jobName = plugin.GetJobName(gs.JobId) ?? $"Job {gs.JobId}";
+                    entries.Add((gs.JobId, null, $"{jobName} (Gearset)"));
+                }
+            }
+
+            if (entries.Count == 0)
+                return;
+
+            entries.Sort((a, b) =>
+            {
+                if (a.Role == null && b.Role == null) return a.JobId.CompareTo(b.JobId);
+                if (a.Role == null) return -1;
+                if (b.Role == null) return 1;
+                return string.Compare(a.Role, b.Role, StringComparison.Ordinal);
+            });
+
+            int shown = Math.Min(entries.Count, 3);
+            int overflow = entries.Count - shown;
+
+            float baseSize = shown switch { 1 => 36f, 2 => 30f, _ => 26f };
+            float iconSize = MathF.Round(baseSize * scale);
+            float gap = MathF.Round(3f * scale);
+            float margin = 6f * scale;
+            float bottom = imgMax.Y - margin;
+            if (gifBadge)
+                bottom -= 18f * scale;
+
+            string overflowText = overflow > 0 ? $"+{overflow}" : "";
+            var overflowSize = overflow > 0 ? ImGui.CalcTextSize(overflowText) : Vector2.Zero;
+            float overflowW = overflow > 0 ? overflowSize.X + gap : 0f;
+
+            float totalW = shown * iconSize + (shown - 1) * gap + overflowW;
+            float x = MathF.Floor(imgMax.X - margin - totalW);
+            float top = MathF.Floor(bottom - iconSize);
+            var rowMin = new Vector2(x, top);
+            var rowMax = new Vector2(x + totalW, top + iconSize);
+
+            var shOff = new Vector2(1f * scale, 1.5f * scale);
+            uint shadowTxt = ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.8f));
+            bool mono = plugin.Configuration.JobIconsMonochrome;
+            uint glyphCol = mono
+                ? ImGui.GetColorU32(new Vector4(0.85f, 0.86f, 0.88f, 1f))
+                : Boutique.U32(Boutique.GoldWarm);
+
+            for (int i = 0; i < shown; i++)
+            {
+                var slotMin = new Vector2(x, top);
+                var slotMax = slotMin + new Vector2(iconSize, iconSize);
+                var e = entries[i];
+                if (e.Role == null)
+                {
+                    string iconPath = Path.Combine(plugin.PluginDirectory, "Assets", "JobIcons", (62000 + e.JobId).ToString("D6") + (mono ? "_mono" : "") + ".png");
+                    var tex = Plugin.TextureProvider.GetFromFile(iconPath).GetWrapOrDefault();
+                    if (tex != null)
+                        dl.AddImage(tex.Handle, slotMin, slotMax);
+                }
+                else
+                {
+                    var glyph = RoleBadgeIcons.FirstOrDefault(r => r.Role == e.Role).Icon.ToIconString();
+                    float glyphSize = MathF.Round(iconSize * 0.83f);
+                    ImGui.PushFont(UiBuilder.IconFont);
+                    var drawn = ImGui.CalcTextSize(glyph) * (glyphSize / ImGui.GetFontSize());
+                    ImGui.PopFont();
+                    var gPos = new Vector2(slotMin.X + (iconSize - drawn.X) * 0.5f, slotMin.Y + (iconSize - drawn.Y) * 0.5f);
+                    uint roleHalo = mono
+                        ? ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.55f, 0.28f))
+                        : ImGui.GetColorU32(new Vector4(npCol.X, npCol.Y, npCol.Z, 0.28f));
+                    float rr = 2f * scale;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        float ang = k * MathF.PI / 4f;
+                        dl.AddText(UiBuilder.IconFont, glyphSize, gPos + new Vector2(MathF.Cos(ang), MathF.Sin(ang)) * rr, roleHalo, glyph);
+                    }
+                    dl.AddText(UiBuilder.IconFont, glyphSize, gPos, glyphCol, glyph);
+                }
+                x += iconSize + gap;
+            }
+
+            if (overflow > 0)
+            {
+                var tPos = new Vector2(x, top + (iconSize - overflowSize.Y) * 0.5f);
+                dl.AddText(tPos + shOff, shadowTxt, overflowText);
+                dl.AddText(tPos, glyphCol, overflowText);
+            }
+
+            if (ImGui.IsMouseHoveringRect(rowMin, rowMax))
+            {
+                ImGui.BeginTooltip();
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.75f, 1f), "Auto-applies for:");
+                foreach (var e in entries)
+                    ImGui.TextUnformatted(e.Label);
+                ImGui.EndTooltip();
+            }
+        }
+
         private void DrawCharacterCardLegacy(Character character, int index, float cardWidth, float scale)
         {
             cardWidth = Math.Clamp(cardWidth, 64 * scale, 512 * scale);
@@ -2434,7 +2669,7 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 var customTheme = plugin.Configuration.CustomTheme;
                 // Only use custom color if toggle is OFF (UseNameplateColorForCardGlow = false)
-                if (!customTheme.UseNameplateColorForCardGlow &&
+                if (!customTheme.UseNameplateColorForCardGlow && !customTheme.AccentFollowsNameplate &&
                     customTheme.ColorOverrides.TryGetValue("custom.cardGlow", out var packedGlowColor) && packedGlowColor.HasValue)
                 {
                     var glowColor = CustomThemeDefinitions.UnpackColor(packedGlowColor.Value);
@@ -2742,6 +2977,7 @@ namespace CharacterSelectPlugin.Windows.Components
         /// </summary>
         private static void DrawPerimeterStreak(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float hoverAmount, float scale, Vector3 accent, float hoverElapsed)
         {
+            if (Boutique.ReduceMotion) return;
             if (hoverAmount < 0.2f) return;
             float alpha = hoverAmount;
             float rounding = 6f;
@@ -3204,7 +3440,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (showRPBadge)
             {
                 // Pulsing glow effect around the icon
-                float pulse = (float)(Math.Sin(ImGui.GetTime() * 3.0) * 0.5 + 0.5);
+                float pulse = (float)(Math.Sin(Boutique.AnimTime(ImGui.GetTime()) * 3.0) * 0.5 + 0.5);
                 var glowColor = new Vector4(0.2f, 1.0f, 0.4f, 0.3f + pulse * 0.5f); // Green glow
 
                 for (int i = 3; i >= 1; i--)
@@ -3840,15 +4076,13 @@ namespace CharacterSelectPlugin.Windows.Components
             return result;
         }
 
-        // Inline top pagination - placed on the same row as Add Character / filter / search via
-        // SameLine at a computed X so it sits centered in the window. Adds zero vertical footprint
-        // to the toolbar row. Only shown when there's more than one page.
+        // Pagination centred in the toolbar row via SameLine, shown only for multiple pages
         private void DrawInlinePagination(float scale)
         {
             var filteredCharacters = GetFilteredCharacters();
-            if (filteredCharacters.Count <= charactersPerPage) return;
+            if (!UsingCustomPages && filteredCharacters.Count <= charactersPerPage) return;
 
-            int totalPages = (int)Math.Ceiling((double)filteredCharacters.Count / charactersPerPage);
+            int totalPages = TotalPageCount;
             if (totalPages <= 1) return;
 
             // Same dimensions as the bottom pagination so icons render cleanly inside the button bounds
@@ -3941,7 +4175,13 @@ namespace CharacterSelectPlugin.Windows.Components
                     InvalidateCache();
                     scrollToTopOnNextFrame = true;
                 }
-                if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsItemHovered())
+                {
+                    string pageName = UsingCustomPages ? GetCustomPageName(i) : "";
+                    if (!string.IsNullOrEmpty(pageName))
+                        CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(pageName);
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                }
                 if (pageColorCount > 0) ImGui.PopStyleColor(pageColorCount);
 
                 if (i < endPage) ImGui.SameLine(0, buttonSpacing);
@@ -3968,13 +4208,13 @@ namespace CharacterSelectPlugin.Windows.Components
         {
             var filteredCharacters = GetFilteredCharacters();
 
-            if (filteredCharacters.Count <= charactersPerPage)
+            if (!UsingCustomPages && filteredCharacters.Count <= charactersPerPage)
             {
                 currentPage = 0;
                 return;
             }
 
-            int totalPages = (int)Math.Ceiling((double)filteredCharacters.Count / charactersPerPage);
+            int totalPages = TotalPageCount;
             if (totalPages <= 1) return;
 
             var pagedCharacters = GetPagedCharacters(filteredCharacters);
@@ -4098,7 +4338,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 if (ImGui.IsItemHovered())
                 {
-                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Go to page {i + 1}");
+                    string pageName = UsingCustomPages ? GetCustomPageName(i) : "";
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(
+                        string.IsNullOrEmpty(pageName) ? $"Go to page {i + 1}" : $"Go to page {i + 1} - {pageName}");
                     ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                 }
 
@@ -4134,7 +4376,10 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Page info text
             ImGui.Spacing();
-            string pageInfo = $"Page {currentPage + 1} of {totalPages} ({filteredCharacters.Count} characters)";
+            string currentName = UsingCustomPages ? GetCustomPageName(currentPage) : "";
+            string pageInfo = string.IsNullOrEmpty(currentName)
+                ? $"Page {currentPage + 1} of {totalPages} ({filteredCharacters.Count} characters)"
+                : $"Page {currentPage + 1} of {totalPages} - {currentName} ({filteredCharacters.Count} characters)";
             var textSize = ImGui.CalcTextSize(pageInfo);
             ImGui.SetCursorPosX(Math.Max(10f * scale, (windowWidth - textSize.X) / 2));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.7f, 1.0f));
@@ -4155,17 +4400,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
             plugin.Characters.RemoveAt(fromIndex);
 
-            int insertIndex;
-            if (fromIndex < toIndex)
-            {
-                insertIndex = toIndex - 1;
-            }
-            else
-            {
-                insertIndex = toIndex;
-            }
-
-            insertIndex = Math.Clamp(insertIndex, 0, plugin.Characters.Count);
+            int insertIndex = Math.Clamp(toIndex, 0, plugin.Characters.Count);
             plugin.Characters.Insert(insertIndex, character);
 
             for (int i = 0; i < plugin.Characters.Count; i++)
@@ -4201,8 +4436,8 @@ namespace CharacterSelectPlugin.Windows.Components
                 _ = plugin.ApplySecretModState(character);
             }
 
-            // Apply character-level mod option settings
-            if (character.ModOptionSettings != null && character.ModOptionSettings.Any())
+            // Apply character-level mod option settings (CR-gated)
+            if (plugin.Configuration.EnableConflictResolution && character.ModOptionSettings != null && character.ModOptionSettings.Any())
             {
                 _ = System.Threading.Tasks.Task.Run(async () =>
                 {
@@ -4244,7 +4479,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (ShouldUploadToServer(character))
                 {
                     var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
-                    var excludeFromSync = character.ExcludeFromNameSync; // Capture for closure
+                    var excludeFromSync = plugin.IsNameSyncExcluded(character); // Capture for closure
                     System.Threading.Tasks.Task.Run(() =>
                     {
                         var profileToSend = plugin.BuildProfileForUpload(character);
@@ -4367,8 +4602,21 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private List<Character> GetPagedCharacters(List<Character> filteredCharacters)
         {
-            int startIndex = currentPage * charactersPerPage;
-            var pagedResult = filteredCharacters.Skip(startIndex).Take(charactersPerPage).ToList();
+            List<Character> pagedResult;
+            if (UsingCustomPages)
+            {
+                int totalCustom = CustomPageCount();
+                if (currentPage >= totalCustom) currentPage = totalCustom - 1;
+                if (currentPage < 0) currentPage = 0;
+                var baseOrder = BaseOrderForPages();
+                var (start, count) = CustomPageSlice(currentPage);
+                pagedResult = baseOrder.Skip(start).Take(count).ToList();
+            }
+            else
+            {
+                int startIndex = currentPage * charactersPerPage;
+                pagedResult = filteredCharacters.Skip(startIndex).Take(charactersPerPage).ToList();
+            }
 
             if (cachedPagedCharacters == null || !cachedPagedCharacters.SequenceEqual(pagedResult))
             {
@@ -4376,6 +4624,86 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             return cachedPagedCharacters;
+        }
+
+        internal bool UsingCustomPages =>
+            (plugin.Configuration.RosterPages.Count > 0 || ReorderWindow.PagesPreviewSizes != null)
+            && string.IsNullOrWhiteSpace(searchQuery)
+            && selectedTag == "All";
+
+        private List<Character> BaseOrderForPages()
+            => ReorderWindow.PagesPreviewOrder ?? plugin.Characters;
+
+        private List<int> PageSizesForPages()
+        {
+            if (ReorderWindow.PagesPreviewSizes != null)
+                return ReorderWindow.PagesPreviewSizes;
+            NormalizeRosterPages();
+            var sizes = new List<int>(plugin.Configuration.RosterPages.Count);
+            foreach (var p in plugin.Configuration.RosterPages)
+                sizes.Add(p.Size);
+            if (sizes.Count == 0)
+                sizes.Add(plugin.Characters.Count);
+            return sizes;
+        }
+
+        internal void NormalizeRosterPages()
+        {
+            var pages = plugin.Configuration.RosterPages;
+            if (pages.Count == 0) return;
+            int total = plugin.Characters.Count;
+            int sum = 0;
+            foreach (var p in pages)
+            {
+                if (p.Size < 0) p.Size = 0;
+                sum += p.Size;
+            }
+            if (sum < total)
+            {
+                pages[pages.Count - 1].Size += total - sum;
+            }
+            else if (sum > total)
+            {
+                int excess = sum - total;
+                for (int i = pages.Count - 1; i >= 0 && excess > 0; i--)
+                {
+                    int take = Math.Min(excess, pages[i].Size);
+                    pages[i].Size -= take;
+                    excess -= take;
+                }
+            }
+        }
+
+        private int CustomPageCount() => Math.Max(1, PageSizesForPages().Count);
+
+        private (int Start, int Count) CustomPageSlice(int page)
+        {
+            var sizes = PageSizesForPages();
+            int start = 0;
+            for (int i = 0; i < sizes.Count && i < page; i++) start += sizes[i];
+            int count = (page >= 0 && page < sizes.Count) ? sizes[page] : 0;
+            return (start, count);
+        }
+
+        private int CustomPageOfIndex(int idx)
+        {
+            var sizes = PageSizesForPages();
+            int acc = 0;
+            for (int i = 0; i < sizes.Count; i++)
+            {
+                acc += sizes[i];
+                if (idx < acc) return i;
+            }
+            return Math.Max(0, sizes.Count - 1);
+        }
+
+        internal string GetCustomPageName(int page)
+        {
+            var previewNames = ReorderWindow.PagesPreviewNames;
+            if (previewNames != null)
+                return (page >= 0 && page < previewNames.Count) ? previewNames[page] : "";
+            var pages = plugin.Configuration.RosterPages;
+            return (page >= 0 && page < pages.Count) ? pages[page].Name : "";
         }
 
         private float UpdateHoverAnimation(int characterIndex, bool isHovered)
@@ -4462,30 +4790,41 @@ namespace CharacterSelectPlugin.Windows.Components
 
         public void SortCharacters()
         {
-            if (CurrentSort == Plugin.SortType.Favorites)
+            Comparison<Character>? cmp = CurrentSort switch
             {
-                plugin.Characters.Sort((a, b) =>
+                Plugin.SortType.Favorites => (a, b) =>
                 {
                     int favCompare = b.IsFavorite.CompareTo(a.IsFavorite);
                     if (favCompare != 0) return favCompare;
                     return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
-                });
-            }
-            else if (CurrentSort == Plugin.SortType.Manual)
+                },
+                Plugin.SortType.Manual => (a, b) => a.SortOrder.CompareTo(b.SortOrder),
+                Plugin.SortType.Alphabetical => (a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase),
+                Plugin.SortType.Recent => (a, b) => b.DateAdded.CompareTo(a.DateAdded),
+                Plugin.SortType.Oldest => (a, b) => a.DateAdded.CompareTo(b.DateAdded),
+                _ => null,
+            };
+            if (cmp == null) return;
+
+            // with custom pages, non-manual sorts stay inside each page so membership holds
+            var pages = plugin.Configuration.RosterPages;
+            if (pages.Count > 0 && CurrentSort != Plugin.SortType.Manual)
             {
-                plugin.Characters.Sort((a, b) => a.SortOrder.CompareTo(b.SortOrder));
+                NormalizeRosterPages();
+                var comparer = Comparer<Character>.Create(cmp);
+                int start = 0;
+                foreach (var p in pages)
+                {
+                    int count = Math.Min(p.Size, plugin.Characters.Count - start);
+                    if (count > 1)
+                        plugin.Characters.Sort(start, count, comparer);
+                    start += p.Size;
+                    if (start >= plugin.Characters.Count) break;
+                }
             }
-            else if (CurrentSort == Plugin.SortType.Alphabetical)
+            else
             {
-                plugin.Characters.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-            }
-            else if (CurrentSort == Plugin.SortType.Recent)
-            {
-                plugin.Characters.Sort((a, b) => b.DateAdded.CompareTo(a.DateAdded));
-            }
-            else if (CurrentSort == Plugin.SortType.Oldest)
-            {
-                plugin.Characters.Sort((a, b) => a.DateAdded.CompareTo(b.DateAdded));
+                plugin.Characters.Sort(cmp);
             }
 
             InvalidateCache();

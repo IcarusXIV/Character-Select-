@@ -13,6 +13,13 @@ using System.Text.Json.Serialization;
 namespace CharacterSelectPlugin
 {
     [Serializable]
+    public class RosterPage
+    {
+        public int Size { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    [Serializable]
     public class Configuration : IPluginConfiguration
     {
         public int Version { get; set; } = 1;
@@ -28,6 +35,10 @@ namespace CharacterSelectPlugin
 
         private IDalamudPluginInterface pluginInterface;
         public int CurrentSortIndex { get; set; } = 0; // Default to Manual (SortType.Manual = 0)
+
+        // sizes partition the ordered roster, empty = pages of 40
+        public List<RosterPage> RosterPages { get; set; } = new();
+        public bool ReorderPagesMatchGrid { get; set; } = false;
         public PersistentPoseSet DefaultPoses { get; set; } = new();
         public bool IsQuickSwitchWindowOpen { get; set; } = false;
         public bool RememberMainWindowState { get; set; } = false;
@@ -51,6 +62,8 @@ namespace CharacterSelectPlugin
         // Value format: "Character:{CharacterName}" or "Design:{CharacterName}:{DesignName}"
         public Dictionary<string, string> JobAssignments { get; set; } = new();
         public bool EnableJobAssignments { get; set; } = false;
+        public bool ShowJobIconsOnCards { get; set; } = false;
+        public bool JobIconsMonochrome { get; set; } = false;
         public bool EnableGearsetAssignments { get; set; } = false;
 
         public bool EnableLastUsedCharacterAutoload { get; set; } = false;
@@ -64,11 +77,26 @@ namespace CharacterSelectPlugin
         /// <summary>
         /// UI scale multiplier (0.5-2.0). Legacy setting, no longer in UI.
         /// </summary>
-        public float UIScaleMultiplier 
-        { 
+        public float UIScaleMultiplier
+        {
             get => _uiScaleMultiplier;
             set => _uiScaleMultiplier = Math.Clamp(value, 0.5f, 2.0f);
         }
+
+        // Stops decorative animations (atmosphere drift, hum lines, motes, card streaks, sheens)
+        public bool ReduceMotion { get; set; } = false;
+
+        // Font roles: null path = built-in default, scale multiplies the baked size
+        public string? FontBodyPath { get; set; } = null;
+        public float FontBodyScale { get; set; } = 1.0f;
+        public string? FontNamesPath { get; set; } = null;
+        public float FontNamesScale { get; set; } = 1.0f;
+        public string? FontLabelsPath { get; set; } = null;
+        public float FontLabelsScale { get; set; } = 1.0f;
+        public string? FontDisplayPath { get; set; } = null;
+        public float FontDisplayScale { get; set; } = 1.0f;
+        public string? FontTitlePath { get; set; } = null;
+        public float FontTitleScale { get; set; } = 1.0f;
         [DefaultValue(true)]
         public bool ApplyIdleOnLogin { get; set; } = true;
         public uint LastKnownJobId { get; set; } = 0;
@@ -88,7 +116,16 @@ namespace CharacterSelectPlugin
         public bool EnablePoseAutoSave { get; set; } = true;
         public bool EnableSafeMode { get; set; } = false;
         public bool QuickSwitchCompact { get; set; } = false;
+        public bool IsIconBarOpen { get; set; } = false;
+        public int QuickSwitchIconBarMaxTiles { get; set; } = 8;
+        public float QuickSwitchIconBarScale { get; set; } = 1.5f;
+        public bool QuickSwitchIconBarFavouritesFirst { get; set; } = false;
+        // 0 auto (flips at screen edges), 1 horizontal, 2 vertical
+        public int QuickSwitchIconBarOrientation { get; set; } = 0;
         public bool QuickSwitchIgnoreEscape { get; set; } = true;
+        public bool QuickSwitchShowSearch { get; set; } = true;
+        public bool WardrobeDesignNameOnly { get; set; } = false;
+        public bool RosterShowsCharacterName { get; set; } = false;
         public bool EnableCharacterHoverEffects { get; set; } = false;
         public bool UseImGuiFilePicker { get; set; } = false;
         public List<string> PinnedFileBrowserPaths { get; set; } = new();
@@ -198,6 +235,10 @@ namespace CharacterSelectPlugin
         [JsonPropertyName("useSimpleGlowForOthers")]
         public bool UseSimpleGlowForOthers { get; set; } = false;
 
+        // Show the applied CS+ character's name above NPCs / mannequins that have been Applied-To. Local-only.
+        [JsonPropertyName("showCSNameOnAppliedTargets")]
+        public bool ShowCSNameOnAppliedTargets { get; set; } = false;
+
         // Update Notification - shows a chat message when a new CS+ version is available on GitHub.
         // Checked every 30 minutes, notifies once per session, opt-out here.
         public bool ShowUpdateNotification { get; set; } = true;
@@ -225,6 +266,7 @@ namespace CharacterSelectPlugin
 
         [JsonPropertyName("allowOthersToSeeMyCSName")]
         public bool AllowOthersToSeeMyCSName { get; set; } = false;
+        public bool SkipNameSyncWhenNamesMatch { get; set; } = false;
 
         // Master switch for server traffic.
         [JsonPropertyName("disableAllServerCommunication")]
@@ -232,6 +274,7 @@ namespace CharacterSelectPlugin
 
         [JsonPropertyName("hasSeenPrivacyConsent")]
         public bool HasSeenPrivacyConsent { get; set; } = false;
+        public bool ShowWelcomePrompt { get; set; } = false;
 
         // Reveal actual names keybind
         [JsonPropertyName("enableRevealActualNamesKeybind")]
@@ -473,7 +516,13 @@ namespace CharacterSelectPlugin
         /// <summary>Button opacity for Compact Quick Switch (0.0-1.0).</summary>
         public float CompactQuickSwitchButtonOpacity { get; set; } = 1.0f;
 
-        /// <summary>Use nameplate colour for the compact Quick Switch chassis + Apply button.</summary>
+        // Atmosphere layer intensity, 0 = off, 1 = default, 12 = spotlight
+        public float AtmosphereIntensity { get; set; } = 1.0f;
+
+        // Accent follows the active character's nameplate colour
+        public bool AccentFollowsNameplate { get; set; } = false;
+
+        // Nameplate colour for the compact Quick Switch chassis and Apply button
         public bool CompactQuickSwitchUseNameplateColor { get; set; } = true;
 
         /// <summary>Wardrobe background image path.</summary>
@@ -501,6 +550,8 @@ namespace CharacterSelectPlugin
                 FavoriteIconId = this.FavoriteIconId,
                 UseNameplateColorForCardGlow = this.UseNameplateColorForCardGlow,
                 CompactQuickSwitchButtonOpacity = this.CompactQuickSwitchButtonOpacity,
+                AtmosphereIntensity = this.AtmosphereIntensity,
+                AccentFollowsNameplate = this.AccentFollowsNameplate,
                 CompactQuickSwitchUseNameplateColor = this.CompactQuickSwitchUseNameplateColor,
                 WardrobeBackgroundImagePath = this.WardrobeBackgroundImagePath,
                 WardrobeBackgroundImageOpacity = this.WardrobeBackgroundImageOpacity,
@@ -522,6 +573,8 @@ namespace CharacterSelectPlugin
             this.FavoriteIconId = other.FavoriteIconId;
             this.UseNameplateColorForCardGlow = other.UseNameplateColorForCardGlow;
             this.CompactQuickSwitchButtonOpacity = other.CompactQuickSwitchButtonOpacity;
+            this.AtmosphereIntensity = other.AtmosphereIntensity;
+            this.AccentFollowsNameplate = other.AccentFollowsNameplate;
             this.CompactQuickSwitchUseNameplateColor = other.CompactQuickSwitchUseNameplateColor;
             this.WardrobeBackgroundImagePath = other.WardrobeBackgroundImagePath;
             this.WardrobeBackgroundImageOpacity = other.WardrobeBackgroundImageOpacity;

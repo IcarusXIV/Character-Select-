@@ -1,4 +1,4 @@
-using Dalamud.Interface.Windowing;
+﻿using Dalamud.Interface.Windowing;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 using System.IO;
@@ -41,6 +41,13 @@ namespace CharacterSelectPlugin.Windows
         private string originalOccupation = "";
         private string originalAbilities = "";
         private string originalBio = "";
+
+        // Live-sync shadows
+        private string _miniLastBio = "";
+        private string _miniLastAbilities = "";
+        private string _miniLastTags = "";
+        private string _miniLastRelationship = "";
+        private string _miniLastOccupation = "";
         private string originalTags = "";
         private string originalRace = "";
         private string? originalBackgroundImage = null;
@@ -235,6 +242,12 @@ namespace CharacterSelectPlugin.Windows
             links = rp.Links ?? "";
             isNSFW = rp.IsNSFW;
 
+            _miniLastBio = bio;
+            _miniLastAbilities = abilities;
+            _miniLastTags = tags;
+            _miniLastRelationship = relationship;
+            _miniLastOccupation = occupation;
+
             originalPronouns = pronouns;
             originalRace = race;
             originalGender = gender;
@@ -310,6 +323,13 @@ namespace CharacterSelectPlugin.Windows
                 plugin.RPProfileEditorWindowPos = ImGui.GetWindowPos();
                 plugin.RPProfileEditorWindowSize = ImGui.GetWindowSize();
                 var rp = character.RPProfile ??= new RPProfile();
+
+                // Pull external changes
+                if ((rp.Bio ?? "") != _miniLastBio) { bio = rp.Bio ?? ""; _miniLastBio = bio; }
+                if ((rp.Abilities ?? "") != _miniLastAbilities) { abilities = rp.Abilities ?? ""; _miniLastAbilities = abilities; }
+                if ((rp.Tags ?? "") != _miniLastTags) { tags = rp.Tags ?? ""; _miniLastTags = tags; }
+                if ((rp.Relationship ?? "") != _miniLastRelationship) { relationship = rp.Relationship ?? ""; _miniLastRelationship = relationship; }
+                if ((rp.Occupation ?? "") != _miniLastOccupation) { occupation = rp.Occupation ?? ""; _miniLastOccupation = occupation; }
 
                 var contentHeight = ImGui.GetContentRegionAvail().Y - (80 * totalScale);
                 var availableWidth = ImGui.GetContentRegionAvail().X;
@@ -719,7 +739,6 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SameLine();
                 ImGui.BeginChild("##RightColumn", new Vector2(rightColumnWidth, contentHeight), true, ImGuiWindowFlags.AlwaysVerticalScrollbar);
 
-                // Use Alias if set, otherwise fall back to Name
                 var displayName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
                 ImGui.TextColored(new Vector4(1f, 0.75f, 0.4f, 1f), $"{displayName} - Profile Info");
                 ImGui.Separator();
@@ -733,51 +752,61 @@ namespace CharacterSelectPlugin.Windows
 
                 ImGui.Text("Pronouns:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editPronouns", ref pronouns, 100);
+                if (ImGui.InputText("##editPronouns", ref pronouns, 100))
+                    rp.Pronouns = pronouns;
                 plugin.RPPronounsFieldPos = ImGui.GetItemRectMin();
                 plugin.RPPronounsFieldSize = ImGui.GetItemRectSize();
 
                 ImGui.Text("Race:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editRace", ref race, 100);
+                if (ImGui.InputText("##editRace", ref race, 100))
+                    rp.Race = race;
 
                 ImGui.Text("Gender:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editGender", ref gender, 100);
+                if (ImGui.InputText("##editGender", ref gender, 100))
+                    rp.Gender = gender;
 
                 ImGui.Text("Age:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editAge", ref age, 100);
+                if (ImGui.InputText("##editAge", ref age, 100))
+                    rp.Age = age;
 
                 ImGui.Text("Occupation:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editOccupation", ref occupation, 100);
+                if (ImGui.InputText("##editOccupation", ref occupation, 100))
+                    { rp.Occupation = occupation; _miniLastOccupation = occupation; }
 
                 ImGui.Text("Orientation:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editOrientation", ref orientation, 100);
+                if (ImGui.InputText("##editOrientation", ref orientation, 100))
+                    rp.Orientation = orientation;
 
                 ImGui.Text("Relationship:");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editRelationship", ref relationship, 100);
+                if (ImGui.InputText("##editRelationship", ref relationship, 100))
+                    { rp.Relationship = relationship; _miniLastRelationship = relationship; }
 
                 ImGui.Text("Abilities:");
                 ImGui.SameLine();
                 ImGui.TextDisabled("ⓘ");
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Separate abilities using commas: e.g. 'alchemy, bardic magic, swordplay'");
-                ImGui.InputTextMultiline("##abilities", ref abilities, 1000, new Vector2(-1, 35 * totalScale), ImGuiInputTextFlags.CtrlEnterForNewLine);
+                if (ImGui.InputTextMultiline("##abilities", ref abilities, 1000, new Vector2(-1, 35 * totalScale), ImGuiInputTextFlags.CtrlEnterForNewLine))
+                    { rp.Abilities = abilities; _miniLastAbilities = abilities; }
 
                 ImGui.Text("Tags:");
                 ImGui.SameLine();
                 ImGui.TextDisabled("ⓘ");
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Separate tags using commas: e.g. 'casual, paragraph, lore-heavy'");
-                ImGui.InputTextMultiline("##tags", ref tags, 1000, new Vector2(-1, 35 * totalScale));
+                if (ImGui.InputTextMultiline("##tags", ref tags, 1000, new Vector2(-1, 35 * totalScale)))
+                    { rp.Tags = tags; _miniLastTags = tags; }
 
                 ImGui.Spacing();
                 ImGui.Text("Bio:");
-                ImGui.InputTextMultiline("##bio", ref bio, 1000, new Vector2(-1, 90 * totalScale), ImGuiInputTextFlags.CtrlEnterForNewLine);
+                if (ImGui.InputTextMultiline("##bio", ref bio, 1000, new Vector2(-1, 90 * totalScale), ImGuiInputTextFlags.CtrlEnterForNewLine))
+                    { rp.Bio = bio; _miniLastBio = bio; }
                 plugin.RPBioFieldPos = ImGui.GetItemRectMin();
                 plugin.RPBioFieldSize = ImGui.GetItemRectSize();
 
@@ -787,7 +816,8 @@ namespace CharacterSelectPlugin.Windows
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Add a social media link, website, etc.");
                 ImGui.SetNextItemWidth(-1);
-                ImGui.InputText("##editLinks", ref links, 1000);
+                if (ImGui.InputText("##editLinks", ref links, 1000))
+                    rp.Links = links;
 
                 ImGui.PopStyleVar(2);
                 ImGui.PopStyleColor(4);

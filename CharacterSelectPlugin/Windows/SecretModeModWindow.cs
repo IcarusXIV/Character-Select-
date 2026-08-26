@@ -1395,15 +1395,15 @@ namespace CharacterSelectPlugin.Windows
                         sep, Boutique.U32(Boutique.TextGhost), trackPx);
                     xCursor += Boutique.MeasureTrackedText(sep, trackPx);
 
-                    // Cyan square pip for the design context (matches mockup .ctx::before)
+                    // Square pip for the design context
                     var ctxPipC = new Vector2(xCursor + 3f * scale, midY);
-                    Boutique.DrawSquarePip(dl, ctxPipC, 3f * scale, Boutique.NpCyan);
+                    Boutique.DrawSquarePip(dl, ctxPipC, 3f * scale, Boutique.Gold);
                     xCursor += 11f * scale;
 
                     string designName = string.IsNullOrEmpty(editingDesign.Name)
                         ? "NEW DESIGN" : editingDesign.Name.ToUpperInvariant();
                     Boutique.DrawTrackedText(dl, new Vector2(xCursor, textY),
-                        designName, Boutique.U32(Boutique.NpCyan), trackPx);
+                        designName, Boutique.U32(Boutique.Gold), trackPx);
                 }
             }
 
@@ -3323,7 +3323,10 @@ namespace CharacterSelectPlugin.Windows
                     }
                 }
 
-                // Extracted file paths from mod JSON files (log removed to prevent spam)
+                // v4 fallback
+                if (filePaths.Count == 0)
+                    filePaths.AddRange(GetModFilePathsFromV4Meta(modDirectory));
+
             }
             catch (Exception ex)
             {
@@ -3333,9 +3336,62 @@ namespace CharacterSelectPlugin.Windows
             return filePaths;
         }
 
-        /// <summary>
-        /// Fallback method to analyze mods based on item names when file paths aren't available
-        /// </summary>
+        private static List<string> GetModFilePathsFromV4Meta(string modDirectory)
+        {
+            var filePaths = new List<string>();
+
+            try
+            {
+                var metaPath = Path.Combine(modDirectory, "meta.json");
+                if (!File.Exists(metaPath))
+                    return filePaths;
+
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(metaPath));
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    return filePaths;
+                if (!root.TryGetProperty("FileVersion", out var version) || version.ValueKind != System.Text.Json.JsonValueKind.Number || version.GetInt32() < 4)
+                    return filePaths;
+
+                CollectFilesKeys(root, filePaths);
+            }
+            catch
+            {
+            }
+
+            return filePaths;
+        }
+
+        private static void CollectFilesKeys(System.Text.Json.JsonElement element, List<string> filePaths)
+        {
+            switch (element.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.Object:
+                    foreach (var property in element.EnumerateObject())
+                    {
+                        if (property.Name == "Files" && property.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        {
+                            foreach (var file in property.Value.EnumerateObject())
+                            {
+                                if (!string.IsNullOrEmpty(file.Name))
+                                    filePaths.Add(file.Name);
+                            }
+                        }
+                        else
+                        {
+                            CollectFilesKeys(property.Value, filePaths);
+                        }
+                    }
+
+                    break;
+                case System.Text.Json.JsonValueKind.Array:
+                    foreach (var item in element.EnumerateArray())
+                        CollectFilesKeys(item, filePaths);
+                    break;
+            }
+        }
+
+        // Classifies a mod from changed item names when file paths aren't available
         private ModType AnalyzeModFromItemNames(string modName, Dictionary<string, object?> changedItems)
         {
             var typeCounts = new Dictionary<ModType, int>
@@ -3608,7 +3664,24 @@ namespace CharacterSelectPlugin.Windows
                     }
                     catch
                     {
-                        // Ignore parse errors for this check
+                        // Parse errors don't matter for this check
+                    }
+                }
+
+                // v4 fallback
+                if (!hasModels && !hasTextures)
+                {
+                    foreach (var path in GetModFilePathsFromV4Meta(modDirectory))
+                    {
+                        if (path.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase))
+                            hasModels = true;
+
+                        if (path.EndsWith(".tex", StringComparison.OrdinalIgnoreCase) ||
+                            path.EndsWith(".mtrl", StringComparison.OrdinalIgnoreCase))
+                            hasTextures = true;
+
+                        if (hasModels && hasTextures)
+                            break;
                     }
                 }
             }
@@ -4092,7 +4165,7 @@ namespace CharacterSelectPlugin.Windows
                 }
                 else
                 {
-                    // No current settings - use defaults (handle multi-select vs single-select)
+                    // No current settings, so fall back to per-group defaults
                     currentModOptions = new Dictionary<string, List<string>>();
                     foreach (var (groupName, optionNames) in availableModOptions)
                     {
@@ -4101,23 +4174,17 @@ namespace CharacterSelectPlugin.Windows
                             var groupType = optionGroupTypes?.ContainsKey(groupName) == true ? optionGroupTypes[groupName] : 0;
                             var isMultiSelect = groupType == 1 || groupType == 2;
 
+                            // Multi-select starts empty, single-select takes the first option
                             if (isMultiSelect)
-                            {
-                                // Multi-select: start with empty selection
                                 currentModOptions[groupName] = new List<string>();
-                            }
                             else
-                            {
-                                // Single-select: use first option as default
                                 currentModOptions[groupName] = new List<string> { optionNames.First() };
-                            }
                         }
                     }
                 }
             }
             else
             {
-                // Default to appropriate selection based on group type
                 currentModOptions = new Dictionary<string, List<string>>();
                 foreach (var (groupName, optionNames) in availableModOptions)
                 {
@@ -4126,16 +4193,11 @@ namespace CharacterSelectPlugin.Windows
                         var groupType = optionGroupTypes?.ContainsKey(groupName) == true ? optionGroupTypes[groupName] : 0;
                         var isMultiSelect = groupType == 1 || groupType == 2;
 
+                        // Multi-select starts empty, single-select takes the first option
                         if (isMultiSelect)
-                        {
-                            // Multi-select: start with empty selection
                             currentModOptions[groupName] = new List<string>();
-                        }
                         else
-                        {
-                            // Single-select: use first option as default
                             currentModOptions[groupName] = new List<string> { optionNames.First() };
-                        }
                     }
                 }
             }

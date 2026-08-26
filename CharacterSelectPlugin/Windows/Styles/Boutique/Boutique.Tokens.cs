@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 
@@ -39,8 +39,17 @@ public static partial class Boutique
     private static readonly Vector4 _White             = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 _Black             = new(0f, 0f, 0f, 1f);
 
-    // Token resolver: specific key > slot key > default. Variants are derived
-    // from the primary so retheming cascades without exposing extra editor rows.
+    // True when the token has a user override
+    public static bool HasTokenOverride(string key)
+    {
+        var p = Plugin.Instance;
+        return p?.Configuration?.SelectedTheme == ThemeSelection.Custom
+            && p.Configuration.CustomTheme != null
+            && p.Configuration.CustomTheme.ColorOverrides.TryGetValue(key, out var v)
+            && v.HasValue;
+    }
+
+    // Token resolver: specific key > slot key > default
     private static Vector4 ResolveColor(string? specificKey, string? slotKey,
         Vector4 fallback)
     {
@@ -75,16 +84,13 @@ public static partial class Boutique
         return derive(primary);
     }
 
-    // Surface family. Surface0 is the body of every boutique window/panel and
-    // routes through color.windowBg (ImGui slot) so the "Window Frame" option
-    // also drives the boutique body. Velvet is the list backdrop with its own
-    // dedicated key (custom.list.bg). Surface1/2/3 and Ribbon Top/Bot derive
-    // from Surface0 so they shift together when window frame is recoloured.
-    public static Vector4 Surface0   => ResolveColor("custom.body.bg",          "color.windowBg", _Surface0Default);
+    // Surface family. Surface0 routes through color.windowBg; Surface1/2/3 and
+    // Ribbon Top/Bot derive from it so they shift together when it changes.
+    public static Vector4 Surface0   => ResolveColor(null,            "color.windowBg", _Surface0Default);
     public static Vector4 Surface1   => ResolveDerivedFromPrimary(Surface0, _Surface0Default, _Surface1Default, m => Lerp(m, _White, 0.06f));
     public static Vector4 Surface2   => ResolveDerivedFromPrimary(Surface0, _Surface0Default, _Surface2Default, m => Lerp(m, _White, 0.12f));
     public static Vector4 Surface3   => ResolveDerivedFromPrimary(Surface0, _Surface0Default, _Surface3Default, m => Lerp(m, _White, 0.18f));
-    public static Vector4 Velvet     => ResolveColor(null,                      null,             _VelvetDefault);
+    public static Vector4 Velvet     => ResolveColor("custom.list.bg",  null,             _VelvetDefault);
     public static Vector4 Bg         => ResolveDerivedFromPrimary(Surface0, _Surface0Default, _BgDefault,       m => Lerp(m, _Black, 0.20f));
     public static Vector4 Shell      => ResolveDerivedFromPrimary(Surface0, _Surface0Default, _ShellDefault,    m => Lerp(m, _Black, 0.55f));
     public static Vector4 RibbonTop  => ResolveDerivedFromPrimary(Surface0, _Surface0Default, _RibbonTopDefault, m => Lerp(m, _White, 0.03f));
@@ -100,11 +106,107 @@ public static partial class Boutique
     public static Vector4 TextDim    => ResolveColor("custom.text.subtle", null, _TextDimDefault);
     public static Vector4 TextFaint  => ResolveColor("custom.text.faint",  null, _TextFaintDefault);
     public static Vector4 TextGhost  => _TextGhostDefault;
+    public static Vector4 InputText        => ResolveColor("custom.input.text", "color.text", _TextDefault);
+    public static Vector4 InputPlaceholder => ResolveColor("custom.input.placeholder", null, _TextFaintDefault);
+    public static Vector4 MenuIcon         => ResolveColor("custom.button.menu.icon", null, _TextDimDefault);
 
-    // Gold accent family. Single override (custom.accent.primary) drives all
-    // gold variants via lerp toward white/black so accent recolouring stays
-    // visually coherent.
-    public static Vector4 Gold       => ResolveColor("custom.accent.primary", null, _GoldDefault);
+    // Character card button labels
+    public static Vector4 CardDesignsInk => ResolveColor("custom.card.designsText", null, CyanSoft);
+    public static Vector4 CardEditInk    => ResolveColor("custom.card.editText",    null, _TextDefault);
+    public static Vector4 CardDeleteInk  => ResolveColor("custom.card.deleteText",  null, Red);
+    public static Vector4 CardButtonBg   => ResolveColor("custom.card.buttonBg",    null, _Surface3Default);
+    public static Vector4 CardNameInk    => ResolveColor("custom.card.nameText",    "color.text", _TextDefault);
+
+    // Applied design row accent
+    public static Vector4 ActiveDesignAccent => AccentSyncActive ? Gold : ResolveColor("custom.designPanel.activeAccent", null, Gold);
+
+    // Hovered (?) token key, expires after 2 frames
+    private static string? _hoveredTokenKey;
+    private static int _hoveredTokenFrame;
+    public static string? HoveredTokenKey
+    {
+        get => _hoveredTokenKey != null && ImGui.GetFrameCount() - _hoveredTokenFrame <= 2 ? _hoveredTokenKey : null;
+        set { _hoveredTokenKey = value; _hoveredTokenFrame = ImGui.GetFrameCount(); }
+    }
+    public static bool IsTokenHovered(string key) => HoveredTokenKey == key;
+
+    // Pulsing outline while the token's (?) is hovered
+    public static void DrawTokenHighlight(ImDrawListPtr dl, Vector2 min, Vector2 max, string key)
+    {
+        if (!IsTokenHovered(key))
+            return;
+        float pulse = 0.55f + 0.35f * MathF.Sin((float)ImGui.GetTime() * 6f);
+        var col = new Vector4(1f, 0.95f, 0.55f, pulse);
+        dl.AddRect(min - new Vector2(2f, 2f), max + new Vector2(2f, 2f), U32(col), 0f, ImDrawFlags.None, 2f);
+    }
+
+    // User atmosphere intensity multiplier, Custom theme only
+    public static float AtmosphereIntensity
+    {
+        get
+        {
+            var p = Plugin.Instance;
+            if (p?.Configuration?.SelectedTheme != ThemeSelection.Custom || p.Configuration.CustomTheme == null)
+                return 1f;
+            return Math.Clamp(p.Configuration.CustomTheme.AtmosphereIntensity, 0f, 12f);
+        }
+    }
+
+    // Hover spotlight wins, otherwise user intensity
+    public static float AtmosphereAlpha(string? key, float baseAlpha, float cap)
+        => key != null && IsTokenHovered(key)
+            ? MathF.Min(baseAlpha * 12f, cap)
+            : MathF.Min(baseAlpha * AtmosphereIntensity, cap);
+
+    // While set, the gold family resolves the settings accent instead of the main accent
+    public static bool StaticChrome;
+
+    // Master character-colour sync
+    public static bool AccentSyncActive
+    {
+        get
+        {
+            var p = Plugin.Instance;
+            return !StaticChrome
+                && p?.Configuration?.SelectedTheme == ThemeSelection.Custom
+                && p.Configuration.CustomTheme?.AccentFollowsNameplate == true;
+        }
+    }
+
+    // Gold accent family
+    public static Vector4 Gold
+    {
+        get
+        {
+            if (StaticChrome)
+                return ResolveColor("custom.settings.accent", null, _GoldDefault);
+            var p = Plugin.Instance;
+            if (p?.Configuration?.SelectedTheme == ThemeSelection.Custom
+                && p.Configuration.CustomTheme?.AccentFollowsNameplate == true)
+            {
+                var np = p.ActiveCharacterNameplate;
+                if (np != null && np.Value.LengthSquared() > 0.001f)
+                    return new Vector4(np.Value.X, np.Value.Y, np.Value.Z, 1f);
+            }
+            return ResolveColor("custom.accent.primary", null, _GoldDefault);
+        }
+    }
+
+    // Decorative animation gate
+    public static bool ReduceMotion => Plugin.Instance?.Configuration?.ReduceMotion == true;
+    public static double AnimTime(double t) => ReduceMotion ? 0.0 : t;
+
+    // True when text needs a CJK-capable font
+    public static bool NeedsCjkFont(string text)
+    {
+        foreach (var c in text)
+            if (c >= 0x3000)
+                return true;
+        return false;
+    }
+    // Action pill fill
+    public static Vector4 ActionFill     => AccentSyncActive ? Gold : ResolveColor("custom.button.bg", null, Gold);
+    public static Vector4 ActionFillWarm => ResolveDerivedFromPrimary(ActionFill, _GoldDefault, _GoldWarmDefault, m => Lerp(m, _White, 0.20f));
     public static Vector4 GoldWarm   => ResolveDerivedFromPrimary(Gold, _GoldDefault, _GoldWarmDefault,   m => Lerp(m, _White, 0.20f));
     public static Vector4 GoldBright => ResolveDerivedFromPrimary(Gold, _GoldDefault, _GoldBrightDefault, m => Lerp(m, _White, 0.55f));
     public static Vector4 GoldDeep   => ResolveDerivedFromPrimary(Gold, _GoldDefault, _GoldDeepDefault,   m => Lerp(m, _Black, 0.40f));
@@ -114,6 +216,17 @@ public static partial class Boutique
     public static readonly Vector4 MagentaSft = Rgb(0xFF, 0x5E, 0x8A);
     public static readonly Vector4 Cyan       = Rgb(0x29, 0xB6, 0xF6);
     public static readonly Vector4 CyanSoft   = Rgb(0x4D, 0xD0, 0xE1);
+
+    private static readonly Vector4 _HeaderTopDefault = Rgb(0x0C, 0x0E, 0x14);
+    // Header and action-bar gradient top stop
+    public static Vector4 HeaderTop => ResolveColor("custom.header.top", null, _HeaderTopDefault);
+
+    // Ambient atmosphere layers, soft variants derive from their primary
+    public static Vector4 AmbientMagenta => ResolveColor("custom.ambient.magenta", null, Magenta);
+    public static Vector4 AmbientCyan    => ResolveColor("custom.ambient.cyan",    null, Cyan);
+    public static Vector4 AmbientViolet  => ResolveColor("custom.ambient.violet",  null, Violet);
+    public static Vector4 AmbientMagentaSoft => ResolveDerivedFromPrimary(AmbientMagenta, Magenta, MagentaSft, m => Lerp(m, _White, 0.25f));
+    public static Vector4 AmbientCyanSoft    => ResolveDerivedFromPrimary(AmbientCyan,    Cyan,    CyanSoft,   m => Lerp(m, _White, 0.25f));
     public static readonly Vector4 NpCyan     = Rgb(0x5A, 0xC7, 0xFF);
     public static readonly Vector4 NpAmber    = Rgb(0xFF, 0xB8, 0x40);
     public static readonly Vector4 Violet     = Rgb(0x7E, 0x57, 0xC2);

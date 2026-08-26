@@ -13,6 +13,7 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using CharacterSelectPlugin.Windows.Styles;
 using CharacterSelectPlugin.Windows.Utils;
+using CharacterSelectPlugin.Managers;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using Dalamud.Interface.Textures.TextureWraps;
@@ -126,6 +127,7 @@ namespace CharacterSelectPlugin.Windows.Components
         // Import window
         private bool isImportWindowOpen = false;
         private Character? targetForDesignImport = null;
+        private int _importActiveTab = 0; // 0 = from characters, 1 = from Glamourer
 
         // Snapshot dialog
         private bool isSnapshotDialogOpen = false;
@@ -181,6 +183,7 @@ namespace CharacterSelectPlugin.Windows.Components
             DrawImportWindow(totalScale);
             DrawAdvancedModeWindow(totalScale);
             DrawSnapshotDialog(totalScale);
+            DrawSmartSnapshotPicker(totalScale);
         }
 
         /// <summary>Advance the open/close animation.  Called every frame
@@ -413,6 +416,7 @@ namespace CharacterSelectPlugin.Windows.Components
             DrawImportWindow(totalScale);
             DrawAdvancedModeWindow(totalScale);
             DrawSnapshotDialog(totalScale);
+            DrawSmartSnapshotPicker(totalScale);
         }
 
         /// <summary>
@@ -567,7 +571,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private void DrawDpHead(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale, double time, Character character)
         {
             // Background gradient + bottom hairline
-            uint top = Boutique.U32(new Vector4(0x0C / 255f, 0x0E / 255f, 0x14 / 255f, 1f));
+            uint top = Boutique.U32(Boutique.HeaderTop);
             uint bot = Boutique.U32(Boutique.Bg);
             dl.AddRectFilledMultiColor(min, max, top, top, bot, bot);
             Boutique.DrawAuroraSpot(dl,
@@ -646,7 +650,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private void DrawDpActionBar(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale, double time, Character character)
         {
             // Background: gold radial wash bottom-left + dark vertical gradient
-            uint top = Boutique.U32(new Vector4(0x0C / 255f, 0x0E / 255f, 0x14 / 255f, 1f));
+            uint top = Boutique.U32(Boutique.HeaderTop);
             uint bot = Boutique.U32(Boutique.Bg);
             dl.AddRectFilledMultiColor(min, max, top, top, bot, bot);
             Boutique.DrawAuroraSpot(dl,
@@ -715,22 +719,11 @@ namespace CharacterSelectPlugin.Windows.Components
             float sheen = uiStyles.UpdateAndGetHoverSweepProgress("dp_newdesign_pill", pillHovered);
             if (sheen >= 0f) Windows.Styles.UIStyles.DrawHoverSheen(dl, pillMin, pillMax, sheen, maxAlpha: 0.40f);
             if (pillHovered)
-                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(
-                    "New design\nShift-click: import from another character");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("New design");
             if (pillClicked)
             {
-                var io = ImGui.GetIO();
-                if (io.KeyShift)
-                {
-                    isSecretDesignMode = false;
-                    isImportWindowOpen = true;
-                    targetForDesignImport = character;
-                }
-                else
-                {
-                    isSecretDesignMode = false;
-                    AddNewDesign();
-                }
+                isSecretDesignMode = false;
+                AddNewDesign();
             }
 
             // ── Icon cluster (right): folder, snapshot, wardrobe | divider | search ──
@@ -739,12 +732,9 @@ namespace CharacterSelectPlugin.Windows.Components
             string[] keys     = { "folder",       "snapshot",     "wardrobe" };
             Vector4[] hovers  = { Boutique.NpAmber, Boutique.NpViolet, Boutique.CyanSoft };
 
-            // Restore the previous (longer, more descriptive) tooltip wording
-            // for Snapshot + Wardrobe \u2014 the new short versions were a regression.
-            string snapshotTip = "Create Design from Current Look\n\u2022 Click: Smart snapshot";
+            string snapshotTip = "Create Design from Current Look\nDetects which Glamourer design you are wearing.";
             if (plugin.Configuration.EnableConflictResolution)
-                snapshotTip += "\n\u2022 Ctrl+Shift+Click: Smart snapshot with Conflict Resolution";
-            snapshotTip += "\n\nNote: Uses the most recently created design in Glamourer.";
+                snapshotTip += "\n\n• Click: snapshot without mod states\n• Ctrl+Shift+Click: include Conflict Resolution mod state";
             string[] tooltips = { "New folder", snapshotTip, "Open Wardrobe (visual design browser)" };
 
             float iconY = midY - iconSize * 0.5f;
@@ -811,7 +801,10 @@ namespace CharacterSelectPlugin.Windows.Components
                         break;
                     case "snapshot":
                         if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count)
-                            OpenSnapshotDialog(plugin.Characters[activeCharacterIndex]);
+                        {
+                            bool withCR = plugin.Configuration.EnableConflictResolution && ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+                            CreateSmartSnapshot(plugin.Characters[activeCharacterIndex], withCR);
+                        }
                         break;
                     case "wardrobe":
                         if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count)
@@ -1021,23 +1014,11 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (ImGui.Button("+##AddDesign", new Vector2(buttonSize, buttonSize)))
             {
-                var io = ImGui.GetIO();
-                bool shiftHeld = io.KeyShift;
-
-                if (shiftHeld)
-                {
-                    isSecretDesignMode = false;
-                    isImportWindowOpen = true;
-                    targetForDesignImport = character;
-                }
-                else
-                {
-                    isSecretDesignMode = false;
-                    AddNewDesign();
-                    editedDesignMacro = GenerateDesignMacro(character);
-                    if (isAdvancedModeDesign)
-                        advancedDesignMacroText = editedDesignMacro;
-                }
+                isSecretDesignMode = false;
+                AddNewDesign();
+                editedDesignMacro = GenerateDesignMacro(character);
+                if (isAdvancedModeDesign)
+                    advancedDesignMacroText = editedDesignMacro;
             }
 
             plugin.DesignPanelAddButtonPos = ImGui.GetItemRectMin();
@@ -1047,8 +1028,7 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PopStyleColor(4);
 
             if (ImGui.IsItemHovered())
-                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(
-                    "Click to add a new design\nHold Shift to import from another character");
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Add a new design");
 
             ImGui.SameLine(0, spacing);
 
@@ -1125,19 +1105,9 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count)
                 {
-                    var io = ImGui.GetIO();
                     var selectedCharacter = plugin.Characters[activeCharacterIndex];
-
-                    if (io.KeyCtrl && io.KeyShift)
-                    {
-                        // Ctrl+Shift: Smart snapshot with CR
-                        CreateSmartSnapshot(selectedCharacter, useConflictResolution: true);
-                    }
-                    else
-                    {
-                        // Regular click: Smart snapshot without CR
-                        CreateSmartSnapshot(selectedCharacter, useConflictResolution: false);
-                    }
+                    bool withCR = plugin.Configuration.EnableConflictResolution && ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+                    CreateSmartSnapshot(selectedCharacter, withCR);
                 }
             }
 
@@ -1148,9 +1118,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (ImGui.IsItemHovered())
             {
-                string tooltip = "Create Design from Current Look\n• Click: Smart snapshot";
-                if (plugin.Configuration.EnableConflictResolution)
-                    tooltip += "\n• Ctrl+Shift+Click: Smart snapshot with Conflict Resolution";
+                string tooltip = plugin.Configuration.EnableConflictResolution
+                    ? "Snapshot current look as a new Design\nCtrl+Shift+Click: include Conflict Resolution mod state"
+                    : "Snapshot current look as a new Design";
                 CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip(tooltip);
             }
 
@@ -1463,19 +1433,23 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.Dummy(new Vector2(availW, totalH));
         }
 
-        // Inline footer: Cancel + Save Design buttons left-aligned at the bottom
-        // of the form content. Lifted off the bottom edge with breathing space.
+        // Inline footer: Cancel and Save Design, left-aligned at the bottom of the form
         private void DrawDesignFormFooterButtons(Character character, float fs)
         {
+            bool automationsOn = plugin.Configuration.EnableAutomations;
+            bool hasGlamourer = !string.IsNullOrWhiteSpace(editedGlamourerDesign)
+                || (automationsOn && !string.IsNullOrWhiteSpace(editedAutomation));
             bool canSave = !string.IsNullOrWhiteSpace(editedDesignName)
-                        && !string.IsNullOrWhiteSpace(editedGlamourerDesign);
+                        && hasGlamourer;
             string disabledReason = null;
             if (!canSave)
             {
                 if (string.IsNullOrWhiteSpace(editedDesignName))
                     disabledReason = "Enter a design name first.";
-                else if (string.IsNullOrWhiteSpace(editedGlamourerDesign))
-                    disabledReason = "Pick a Glamourer design first.";
+                else if (!hasGlamourer)
+                    disabledReason = automationsOn
+                        ? "Pick a Glamourer design or automation first."
+                        : "Pick a Glamourer design first.";
             }
 
             ImGui.Dummy(new Vector2(0f, 14f * fs));
@@ -1567,9 +1541,9 @@ namespace CharacterSelectPlugin.Windows.Components
                     plugin.DesignNameFieldSize = ImGui.GetItemRectSize();
                 });
 
-            // ── Integrations ──
+            // Integrations
             Section("Integrations");
-            Field("Glamourer Design", true,
+            Field("Glamourer Design", !plugin.Configuration.EnableAutomations,
                 "Select the Glamourer design for this outfit. Right-click to clear.",
                 w => DrawGlamourerInputInline(character, w));
             if (plugin.Configuration.EnableAutomations)
@@ -1599,12 +1573,27 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImFontPtr crLblF, crDescF;
                 using (Plugin.Instance?.OutfitMed13?.Push()) { crLblF  = ImGui.GetFont(); }
                 using (Plugin.Instance?.OutfitMed13?.Push()) { crDescF = ImGui.GetFont(); }
+
+                bool crDesignNameValid = !string.IsNullOrWhiteSpace(editedDesignName);
+
                 ImGui.SetCursorPosX(_dpFormIndent);
+                bool wasSecretDesignMode = isSecretDesignMode;
+
+                if (!crDesignNameValid)
+                    ImGui.BeginDisabled();
                 Boutique.DrawBoutiqueCheckbox(
                     "dp_use_cr", ref isSecretDesignMode,
                     "Use Conflict Resolution",
                     "Per-design mod state",
                     scale, crLblF, crDescF);
+                if (!crDesignNameValid)
+                    ImGui.EndDisabled();
+
+                if (!crDesignNameValid && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Enter a Design Name first.");
+
+                if (isSecretDesignMode && !wasSecretDesignMode && crDesignNameValid)
+                    PerformQuickGearHairUpdate(character);
 
                 if (isSecretDesignMode)
                 {
@@ -1621,7 +1610,8 @@ namespace CharacterSelectPlugin.Windows.Components
         private void DrawGlamourerInputInline(Character character, float width)
         {
             var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
-            if (AutocompleteCombo.Draw("##GlamourerDesign", ref editedGlamourerDesign, glamourerOptions, width, "Select design..."))
+            var currentGlamourer = plugin.IntegrationListProvider?.GetCurrentGlamourerDesign();
+            if (AutocompleteCombo.Draw("##GlamourerDesign", ref editedGlamourerDesign, glamourerOptions, width, "Select design...", currentActive: currentGlamourer))
             {
                 plugin.EditedGlamourerDesign = editedGlamourerDesign;
                 if (!isAdvancedModeDesign)
@@ -2700,7 +2690,8 @@ namespace CharacterSelectPlugin.Windows.Components
             Vector4 bodyTop, bodyBot;
             if (isApplied)
             {
-                bodyTop = new Vector4(0x1A / 255f, 0x14 / 255f, 0x08 / 255f, 1f);
+                var activeAccent = Boutique.ActiveDesignAccent;
+                bodyTop = new Vector4(activeAccent.X * 0.102f, activeAccent.Y * 0.093f, activeAccent.Z * 0.08f + 0.03f, 1f);
                 bodyBot = Boutique.Surface0;
             }
             else
@@ -2716,7 +2707,7 @@ namespace CharacterSelectPlugin.Windows.Components
             Boutique.DrawRowBodyGradient(dl, rowMin, rowMax, bodyTop, bodyBot, Boutique.Velvet, chamfer);
 
             Vector4 hairCol = isApplied
-                ? Boutique.WithAlpha(Boutique.Gold, 0.30f)
+                ? Boutique.WithAlpha(Boutique.ActiveDesignAccent, 0.30f)
                 : Boutique.WithAlpha(new Vector4(80f / 255f, 90f / 255f, 100f / 255f, 1f), 0.18f);
             Boutique.DrawRowInsetHairline(dl, rowMin, rowMax, chamfer, hairCol);
 
@@ -2724,7 +2715,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 ? (hovered ? 0.45f : 0.34f)
                 : (hovered ? 0.18f : 0.10f);
             Boutique.DrawRowCornerGlow(dl, new Vector2(rowMax.X, rowMin.Y), scale,
-                Boutique.Gold, cornerStrength);
+                isApplied ? Boutique.ActiveDesignAccent : Boutique.Gold, cornerStrength);
 
             // Left rail
             float railX = rowMin.X + 3f * scale;
@@ -2734,7 +2725,7 @@ namespace CharacterSelectPlugin.Windows.Components
             float railGlowR = 0f;
             if (isApplied)
             {
-                railCol = Boutique.Gold;
+                railCol = Boutique.ActiveDesignAccent;
                 double t = ImGui.GetTime();
                 float pulse = 0.5f + 0.5f * MathF.Sin((float)(t * 2.0 * Math.PI / 4.5));
                 railGlowA = 0.45f + pulse * 0.30f;
@@ -2820,16 +2811,16 @@ namespace CharacterSelectPlugin.Windows.Components
             if (starClicked)
                 ToggleFavourite(character, design, starPos + new Vector2(starW, starH) * 0.5f);
 
-            // Favourite icon colour: Custom theme honours custom.favoriteIcon;
-            // seasonal themes pick a tinted colour matching the glyph swap.
+            // Favourite icon colour
             Vector4 favBase = Boutique.Gold;
             var favPlugin = Plugin.Instance;
             if (favPlugin?.Configuration?.SelectedTheme == ThemeSelection.Custom &&
-                favPlugin.Configuration.CustomTheme != null &&
-                favPlugin.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.favoriteIcon", out var favPacked) &&
-                favPacked.HasValue)
+                favPlugin.Configuration.CustomTheme != null)
             {
-                favBase = CharacterSelectPlugin.Windows.Styles.CustomThemeDefinitions.UnpackColor(favPacked.Value);
+                favBase = favPlugin.Configuration.CustomTheme.ColorOverrides.TryGetValue("custom.favoriteIcon", out var favPacked)
+                    && favPacked.HasValue
+                    ? CharacterSelectPlugin.Windows.Styles.CustomThemeDefinitions.UnpackColor(favPacked.Value)
+                    : new Vector4(1f, 0.85f, 0f, 1f);
             }
             else if (favPlugin?.Configuration != null &&
                      SeasonalThemeManager.IsSeasonalThemeEnabled(favPlugin.Configuration))
@@ -3794,10 +3785,31 @@ namespace CharacterSelectPlugin.Windows.Components
             }
         }
 
+        // Character whose panel is open, else null
+        public Character? CurrentPanelCharacter =>
+            IsOpen && activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count
+                ? plugin.Characters[activeCharacterIndex] : null;
+
+        public void OpenDesignImport(Character c)
+        {
+            targetForDesignImport = c;
+            isImportWindowOpen = true;
+        }
+
+        public void DrawImportPopout(float scale)
+        {
+            if (Plugin.UseClassicLayout) DrawClassicImportWindow(scale);
+            else DrawImportWindow(scale);
+        }
+
+        private int _importDrawnFrame = -1;
         private void DrawImportWindow(float scale)
         {
             if (!isImportWindowOpen || targetForDesignImport == null)
                 return;
+            int frame = ImGui.GetFrameCount();
+            if (_importDrawnFrame == frame) return;
+            _importDrawnFrame = frame;
 
             float winW = 480f * scale;
             float winH = 540f * scale;
@@ -3855,20 +3867,28 @@ namespace CharacterSelectPlugin.Windows.Components
 
             float ribbonH = 28f * scale;
             float headerH = 92f * scale;
+            float tabBarH = 28f * scale;
             float footerH = 48f * scale;
 
             var ribbonMin = winMin;
             var ribbonMax = new Vector2(winMax.X, winMin.Y + ribbonH);
             var headerMin = new Vector2(winMin.X, ribbonMax.Y);
             var headerMax = new Vector2(winMax.X, ribbonMax.Y + headerH);
+            var tabBarMin = new Vector2(winMin.X, headerMax.Y);
+            var tabBarMax = new Vector2(winMax.X, headerMax.Y + tabBarH);
             var footerMin = new Vector2(winMin.X, winMax.Y - footerH);
-            var bodyMin = new Vector2(winMin.X, headerMax.Y);
+            var bodyMin = new Vector2(winMin.X, tabBarMax.Y);
             var bodyMax = new Vector2(winMax.X, footerMin.Y);
 
             DrawImportRibbon(dl, ribbonMin, ribbonMax, scale);
             DrawImportHeader(dl, headerMin, headerMax, scale);
-            DrawImportBody(dl, bodyMin, bodyMax, scale);
+            DrawImportTabBar(dl, tabBarMin, tabBarMax, scale);
+            if (_importActiveTab == 0)
+                DrawImportBody(dl, bodyMin, bodyMax, scale);
+            else
+                DrawImportGlamourerBody(dl, bodyMin, bodyMax, scale);
             DrawImportFooter(dl, footerMin, winMax, scale);
+            DrawGlamImportConfirmPopup();
         }
 
         private void DrawImportRibbon(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale)
@@ -3918,11 +3938,20 @@ namespace CharacterSelectPlugin.Windows.Components
                     right, Boutique.U32(Boutique.Gold), trackPx);
             }
 
-            // Right-side count tag
-            var sources = plugin.Characters.Where(c => c != targetForDesignImport && c.Designs.Count > 0).ToList();
+            // Right-side count tag, reflects the active tab's source count
+            string countText;
+            if (_importActiveTab == 0)
+            {
+                var sources = plugin.Characters.Where(c => c != targetForDesignImport && c.Designs.Count > 0).Count();
+                countText = $"{sources:00} SOURCES";
+            }
+            else
+            {
+                var folderCount = plugin.IntegrationListProvider?.GetGlamourerDesignsGrouped().Count ?? 0;
+                countText = $"{folderCount:00} FOLDERS";
+            }
             using (Plugin.Instance?.OswaldMed10?.Push())
             {
-                string countText = $"{sources.Count:00} SOURCES";
                 float trackPx = 2.4f * scale;
                 float w = Boutique.MeasureTrackedText(countText, trackPx);
                 float h = ImGui.GetFontSize();
@@ -4188,6 +4217,19 @@ namespace CharacterSelectPlugin.Windows.Components
         private readonly Dictionary<Guid, double> _importFlashTimes = new();
         private const float ImportFlashDuration = 1.6f;
 
+        // Glamourer import tab state, keyed by folder path / design key (no Guid available for the flat fallback).
+        private readonly Dictionary<string, bool> _importGlamExpandedFolders = new();
+        private readonly Dictionary<string, double> _importGlamFlashTimes = new();
+
+        // Rebuilt each frame the Glamourer tab draws: the Glamourer design each existing design references, or its
+        // display name when it has none. Keyed on the reference; a row greys when its Glamourer name is in here.
+        private readonly HashSet<string> _glamExistingNames = new(StringComparer.OrdinalIgnoreCase);
+
+        // Pending bulk-import confirmation (set by + ALL, consumed by the confirm popup).
+        private string? _glamConfirmFolder = null;
+        private List<GlamourerDesignEntry>? _glamConfirmDesigns = null;
+        private bool _glamConfirmRequested = false;
+
         private void DrawImportDesignRow(Character src, CharacterDesign design, float scale)
         {
             var dl = ImGui.GetWindowDrawList();
@@ -4353,6 +4395,535 @@ namespace CharacterSelectPlugin.Windows.Components
                 x += plusBox + gap;
                 Boutique.DrawTrackedText(dl, new Vector2(x, midY - h * 0.5f), rightWord, faint, trackPx);
             }
+        }
+
+        // Tab bar between header and body: import from characters | import from Glamourer.
+        private void DrawImportTabBar(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale)
+        {
+            dl.AddRectFilled(min, max, Boutique.U32(new Vector4(0.03f, 0.04f, 0.05f, 0.55f)));
+            dl.AddLine(new Vector2(min.X, max.Y - 1f * scale), new Vector2(max.X, max.Y - 1f * scale),
+                Boutique.U32(Boutique.BorderSoft), 1f * scale);
+
+            (string label, int idx)[] tabs = { ("IMPORT FROM CHARACTERS", 0), ("IMPORT FROM GLAMOURER", 1) };
+            float slotW = (max.X - min.X) / tabs.Length;
+
+            using (Plugin.Instance?.OswaldMed10?.Push())
+            {
+                float fontH = ImGui.GetFontSize();
+                float trackPx = 1.8f * scale;
+                for (int i = 0; i < tabs.Length; i++)
+                {
+                    var t = tabs[i];
+                    bool isActive = _importActiveTab == t.idx;
+                    float slotL = min.X + i * slotW;
+                    float midX = slotL + slotW * 0.5f;
+
+                    ImGui.SetCursorScreenPos(new Vector2(slotL, min.Y));
+                    bool clicked = ImGui.InvisibleButton($"##import_tab_{i}", new Vector2(slotW, max.Y - min.Y));
+                    bool hovered = ImGui.IsItemHovered();
+
+                    float labelW = Boutique.MeasureTrackedText(t.label, trackPx);
+                    float labelX = midX - labelW * 0.5f;
+                    float labelY = min.Y + ((max.Y - min.Y) - fontH) * 0.5f - 1f * scale;
+                    Vector4 ink = isActive ? Boutique.Gold : (hovered ? Boutique.TextDim : Boutique.TextFaint);
+                    Boutique.DrawTrackedText(dl, new Vector2(labelX, labelY), t.label, Boutique.U32(ink), trackPx);
+
+                    if (isActive)
+                    {
+                        float ulY = max.Y - 2f * scale;
+                        float ulHalf = labelW * 0.5f + 4f * scale;
+                        var ulMin = new Vector2(midX - ulHalf, ulY);
+                        var ulMax = new Vector2(midX + ulHalf, ulY + 2f * scale);
+                        for (int g = 3; g > 0; g--)
+                        {
+                            float r = g * 2f * scale;
+                            dl.AddRectFilled(ulMin - new Vector2(r, r * 0.5f), ulMax + new Vector2(r, r * 0.5f),
+                                Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.14f / g)));
+                        }
+                        dl.AddRectFilled(ulMin, ulMax, Boutique.U32(Boutique.Gold));
+                    }
+
+                    if (clicked)
+                        _importActiveTab = t.idx;
+
+                    if (i < tabs.Length - 1)
+                        dl.AddLine(new Vector2(slotL + slotW, min.Y + 7f * scale),
+                                   new Vector2(slotL + slotW, max.Y - 7f * scale),
+                                   Boutique.U32(Boutique.BorderSoft), 1f * scale);
+                }
+            }
+        }
+
+        private void DrawImportGlamourerBody(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale)
+        {
+            ImGui.SetCursorScreenPos(min);
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleVar(ImGuiStyleVar.ScrollbarSize, 4f * scale);
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarBg, new Vector4(0, 0, 0, 0.20f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrab, Boutique.WithAlpha(Boutique.GoldDeep, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabHovered, Boutique.WithAlpha(Boutique.Gold, 0.85f));
+            ImGui.PushStyleColor(ImGuiCol.ScrollbarGrabActive, Boutique.Gold);
+
+            ImGui.BeginChild("##import_glam_body", max - min, false,
+                ImGuiWindowFlags.AlwaysVerticalScrollbar | ImGuiWindowFlags.NoBackground);
+            ImGui.Dummy(new Vector2(0, 8f * scale));
+
+            if (targetForDesignImport != null)
+                RebuildGlamImportState(targetForDesignImport);
+
+            var grouped = plugin.IntegrationListProvider?.GetGlamourerDesignsGrouped();
+            if (grouped == null || grouped.Count == 0)
+            {
+                DrawImportGlamourerEmpty(min, max, scale);
+            }
+            else
+            {
+                foreach (var (folder, designs) in grouped)
+                    DrawImportGlamourerSection(folder, designs, scale);
+            }
+
+            ImGui.Dummy(new Vector2(0, 8f * scale));
+            ImGui.EndChild();
+            ImGui.PopStyleColor(5);
+            ImGui.PopStyleVar();
+        }
+
+        private void DrawImportGlamourerEmpty(Vector2 min, Vector2 max, float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            var centre = (min + max) * 0.5f;
+            using (Plugin.Instance?.OswaldMed11?.Push())
+            {
+                float trackPx = 2.2f * scale;
+                string msg = "NO GLAMOURER DESIGNS AVAILABLE";
+                float w = Boutique.MeasureTrackedText(msg, trackPx);
+                Boutique.DrawTrackedText(dl, new Vector2(centre.X - w * 0.5f, centre.Y - 10f * scale),
+                    msg, Boutique.U32(Boutique.TextFaint), trackPx);
+            }
+            string sub = "Make sure Glamourer is installed and running.";
+            var subSz = ImGui.CalcTextSize(sub);
+            dl.AddText(new Vector2(centre.X - subSz.X * 0.5f, centre.Y + 12f * scale),
+                Boutique.U32(Boutique.WithAlpha(Boutique.TextFaint, 0.75f)), sub);
+        }
+
+        private void DrawImportGlamourerSection(string folderPath, List<GlamourerDesignEntry> designs, float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float headW = ImGui.GetContentRegionAvail().X - 16f * scale;
+            float headH = 36f * scale;
+
+            var headMin = ImGui.GetCursorScreenPos();
+            var headMax = headMin + new Vector2(headW, headH);
+            float midY = (headMin.Y + headMax.Y) * 0.5f;
+
+            string label = folderPath.Length == 0 ? "(No Folder)" : folderPath;
+            string key = folderPath.Length == 0 ? "<root>" : folderPath;
+            if (!_importGlamExpandedFolders.TryGetValue(key, out bool expanded))
+                expanded = false;
+
+            // Import-all pill on the far right, with its own hit area.
+            string pillPlus = FontAwesomeIcon.Plus.ToIconString();
+            string pillText = "ALL";
+            float pillH = 20f * scale;
+            float pillPadX = 7f * scale;
+            float pillGap = 4f * scale;
+            ImGui.PushFont(UiBuilder.IconFont);
+            float plusW = ImGui.CalcTextSize(pillPlus).X;
+            ImGui.PopFont();
+            float pillTextW;
+            using (Plugin.Instance?.OswaldMed10?.Push())
+                pillTextW = Boutique.MeasureTrackedText(pillText, 1.6f * scale);
+            float pillW = pillPadX * 2f + plusW + pillGap + pillTextW;
+            var pillMax = new Vector2(headMax.X - 10f * scale, midY + pillH * 0.5f);
+            var pillMin = new Vector2(pillMax.X - pillW, midY - pillH * 0.5f);
+
+            // Header toggle hit area is everything left of the pill, so the pill is clickable separately.
+            float toggleW = pillMin.X - headMin.X - 6f * scale;
+            ImGui.SetCursorScreenPos(headMin);
+            bool toggleClicked = ImGui.InvisibleButton($"##import_glamfolder_{key}", new Vector2(toggleW, headH));
+            bool toggleHovered = ImGui.IsItemHovered();
+
+            ImGui.SetCursorScreenPos(pillMin);
+            bool pillClicked = ImGui.InvisibleButton($"##import_glamall_{key}", new Vector2(pillW, pillH));
+            bool pillHovered = ImGui.IsItemHovered();
+
+            if (toggleClicked)
+            {
+                expanded = !expanded;
+                _importGlamExpandedFolders[key] = expanded;
+            }
+
+            bool barLit = toggleHovered || pillHovered || expanded;
+            if (toggleHovered || pillHovered)
+            {
+                var s2 = Boutique.Surface2;
+                dl.AddRectFilled(headMin, headMax, Boutique.U32(new Vector4(s2.X, s2.Y, s2.Z, 0.85f)));
+            }
+
+            float barX = headMin.X;
+            float barY0 = headMin.Y + 6f * scale;
+            float barY1 = headMax.Y - 6f * scale;
+            if (barLit)
+            {
+                uint halo = Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.20f));
+                dl.AddRectFilled(new Vector2(barX - 1f * scale, barY0 - 2f * scale),
+                    new Vector2(barX + 5f * scale, barY1 + 2f * scale), halo);
+            }
+            dl.AddRectFilled(new Vector2(barX, barY0), new Vector2(barX + 3f * scale, barY1),
+                Boutique.U32(barLit ? Boutique.Gold : Boutique.GoldDeep));
+            dl.AddLine(new Vector2(headMin.X, headMax.Y), new Vector2(headMax.X, headMax.Y),
+                Boutique.U32(Boutique.WithAlpha(Boutique.BorderSoft, 0.50f)), 1f * scale);
+
+            string folderGlyph = expanded ? FontAwesomeIcon.FolderOpen.ToIconString() : FontAwesomeIcon.Folder.ToIconString();
+            ImGui.PushFont(UiBuilder.IconFont);
+            var folderSz = ImGui.CalcTextSize(folderGlyph);
+            ImGui.PopFont();
+            float folderX = headMin.X + 14f * scale;
+            uint iconCol = barLit ? Boutique.U32(Boutique.Gold) : Boutique.U32(Boutique.GoldDeep);
+            dl.AddText(UiBuilder.IconFont, UiBuilder.IconFont.FontSize,
+                new Vector2(folderX, midY - folderSz.Y * 0.5f), iconCol, folderGlyph);
+
+            // Folder name (no nameplate pip, Glamourer folders are not characters)
+            var nameSize = ImGui.CalcTextSize(label);
+            float nameX = folderX + folderSz.X + 12f * scale;
+            dl.PushClipRect(new Vector2(nameX, headMin.Y), new Vector2(pillMin.X - 56f * scale, headMax.Y), true);
+            dl.AddText(new Vector2(nameX, midY - nameSize.Y * 0.5f), Boutique.U32(Boutique.Text), label);
+            dl.PopClipRect();
+
+            using (Plugin.Instance?.OswaldMed10?.Push())
+            {
+                string count = $"{designs.Count:00}";
+                float trackPx = 2.4f * scale;
+                float w = Boutique.MeasureTrackedText(count, trackPx);
+                float h = ImGui.GetFontSize();
+                float padInX = 6f * scale;
+                float padInY = 2f * scale;
+                var tagMax = new Vector2(pillMin.X - 8f * scale, midY + h * 0.5f + padInY);
+                var tagMin = new Vector2(tagMax.X - w - padInX * 2f, midY - h * 0.5f - padInY);
+                uint badgeBorder = barLit ? Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.60f)) : Boutique.U32(Boutique.WithAlpha(Boutique.GoldDeep, 0.55f));
+                uint badgeText = barLit ? Boutique.U32(Boutique.Gold) : Boutique.U32(Boutique.GoldDeep);
+                dl.AddRect(tagMin, tagMax, badgeBorder, 0f, ImDrawFlags.None, 1f * scale);
+                Boutique.DrawTrackedText(dl, new Vector2(tagMin.X + padInX, midY - h * 0.5f), count, badgeText, trackPx);
+            }
+
+            // Import-all pill
+            uint pillBg = pillHovered ? Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.20f)) : Boutique.U32(new Vector4(0.078f, 0.086f, 0.118f, 0.85f));
+            uint pillBorder = pillHovered ? Boutique.U32(Boutique.Gold) : Boutique.U32(Boutique.WithAlpha(Boutique.GoldDeep, 0.85f));
+            dl.AddRectFilled(pillMin, pillMax, pillBg);
+            dl.AddRect(pillMin, pillMax, pillBorder, 0f, ImDrawFlags.None, 1f * scale);
+            uint pillInk = pillHovered ? Boutique.U32(Boutique.GoldBright) : Boutique.U32(Boutique.Gold);
+            float pillIconSize = UiBuilder.IconFont.FontSize * 0.8f;
+            dl.AddText(UiBuilder.IconFont, pillIconSize,
+                new Vector2(pillMin.X + pillPadX, midY - pillIconSize * 0.5f), pillInk, pillPlus);
+            using (Plugin.Instance?.OswaldMed10?.Push())
+            {
+                float h = ImGui.GetFontSize();
+                Boutique.DrawTrackedText(dl, new Vector2(pillMin.X + pillPadX + plusW + pillGap, midY - h * 0.5f),
+                    pillText, pillInk, 1.6f * scale);
+            }
+            if (pillHovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Import all in '{label}'");
+            if (pillClicked)
+            {
+                _glamConfirmFolder = folderPath;
+                _glamConfirmDesigns = designs;
+                _glamConfirmRequested = true;
+            }
+
+            // Reset cursor to the header bottom (the pill button left it higher), then draw rows.
+            ImGui.SetCursorScreenPos(new Vector2(headMin.X, headMax.Y));
+            if (expanded)
+            {
+                foreach (var entry in designs)
+                    DrawImportGlamourerDesignRow(folderPath, entry, scale);
+                ImGui.Dummy(new Vector2(0, 4f * scale));
+            }
+            else
+            {
+                ImGui.Dummy(new Vector2(0, 1f * scale));
+            }
+        }
+
+        private void DrawImportGlamourerDesignRow(string folderPath, GlamourerDesignEntry entry, float scale)
+        {
+            var dl = ImGui.GetWindowDrawList();
+            float rowW = ImGui.GetContentRegionAvail().X - 16f * scale;
+            float rowH = 30f * scale;
+            float contentInsetX = 20f * scale;
+
+            var rowMin = ImGui.GetCursorScreenPos();
+            var rowMax = rowMin + new Vector2(rowW, rowH);
+            float midY = (rowMin.Y + rowMax.Y) * 0.5f;
+
+            string entryName = entry.Name ?? "";
+            bool importedAlready = _glamExistingNames.Contains(entryName);
+
+            string flashKey = folderPath + "/" + entryName;
+            float flashAlpha = 0f;
+            if (_importGlamFlashTimes.TryGetValue(flashKey, out var startT))
+            {
+                float elapsed = (float)(ImGui.GetTime() - startT);
+                if (elapsed >= ImportFlashDuration)
+                    _importGlamFlashTimes.Remove(flashKey);
+                else
+                    flashAlpha = Math.Max(0f, 0.32f * (1f - elapsed / ImportFlashDuration));
+            }
+
+            bool rowHovered = !importedAlready && ImGui.IsMouseHoveringRect(rowMin, rowMax);
+            if (rowHovered)
+            {
+                var s2 = Boutique.Surface2;
+                dl.AddRectFilled(rowMin, rowMax, Boutique.U32(new Vector4(s2.X, s2.Y, s2.Z, 0.55f)));
+            }
+            if (flashAlpha > 0f)
+                dl.AddRectFilled(rowMin, rowMax, Boutique.U32(Boutique.WithAlpha(Boutique.Gold, flashAlpha)));
+            dl.AddLine(new Vector2(rowMin.X, rowMax.Y), new Vector2(rowMax.X, rowMax.Y),
+                Boutique.U32(Boutique.WithAlpha(Boutique.BorderSoft, 0.30f)), 1f * scale);
+
+            float btnSize = 22f * scale;
+            float btnPad = 6f * scale;
+            var btnMin = new Vector2(rowMax.X - btnPad - btnSize, midY - btnSize * 0.5f);
+            var btnMax = btnMin + new Vector2(btnSize, btnSize);
+
+            if (importedAlready)
+            {
+                // Already a design on this character: inert, dimmed, with a check instead of a plus.
+                string checkGlyph = FontAwesomeIcon.Check.ToIconString();
+                ImGui.PushFont(UiBuilder.IconFont);
+                var checkSz = ImGui.CalcTextSize(checkGlyph);
+                ImGui.PopFont();
+                dl.AddText(UiBuilder.IconFont, UiBuilder.IconFont.FontSize,
+                    new Vector2(btnMin.X + (btnSize - checkSz.X) * 0.5f, btnMin.Y + (btnSize - checkSz.Y) * 0.5f),
+                    Boutique.U32(Boutique.WithAlpha(Boutique.GoldDeep, 0.70f)), checkGlyph);
+                if (ImGui.IsMouseHoveringRect(btnMin, btnMax))
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Already imported into this character");
+            }
+            else
+            {
+            ImGui.SetCursorScreenPos(btnMin);
+            bool btnClicked = ImGui.InvisibleButton($"##import_glambtn_{flashKey}", new Vector2(btnSize, btnSize));
+            bool btnHovered = ImGui.IsItemHovered();
+            if (btnHovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip($"Import '{entry.Name}'");
+
+            uint btnBg = btnHovered ? Boutique.U32(Boutique.WithAlpha(Boutique.Gold, 0.20f)) : Boutique.U32(new Vector4(0.078f, 0.086f, 0.118f, 0.85f));
+            uint btnBorder = btnHovered ? Boutique.U32(Boutique.Gold) : Boutique.U32(Boutique.WithAlpha(Boutique.GoldDeep, 0.85f));
+            dl.AddRectFilled(btnMin, btnMax, btnBg);
+            dl.AddRect(btnMin, btnMax, btnBorder, 0f, ImDrawFlags.None, 1f * scale);
+
+            string plusGlyph = "";
+            ImGui.PushFont(UiBuilder.IconFont);
+            var plusSz = ImGui.CalcTextSize(plusGlyph);
+            ImGui.PopFont();
+            uint plusCol = btnHovered ? Boutique.U32(Boutique.GoldBright) : Boutique.U32(Boutique.Gold);
+            dl.AddText(UiBuilder.IconFont, UiBuilder.IconFont.FontSize,
+                new Vector2(btnMin.X + (btnSize - plusSz.X) * 0.5f, btnMin.Y + (btnSize - plusSz.Y) * 0.5f),
+                plusCol, plusGlyph);
+
+            if (btnClicked)
+            {
+                ImportGlamourerEntry(folderPath, entry);
+                _importGlamFlashTimes[flashKey] = ImGui.GetTime();
+            }
+
+            }
+
+            var nameSize = ImGui.CalcTextSize(entryName);
+            float nameX = rowMin.X + contentInsetX;
+            float nameMaxX = btnMin.X - 8f * scale;
+            dl.PushClipRect(new Vector2(nameX, rowMin.Y), new Vector2(nameMaxX, rowMax.Y), true);
+            uint nameCol;
+            if (importedAlready)
+                nameCol = Boutique.U32(Boutique.TextFaint);
+            else if (flashAlpha > 0.10f)
+                nameCol = Boutique.U32(Boutique.GoldBright);
+            else
+                nameCol = Boutique.U32(rowHovered ? Boutique.Text : Boutique.TextDim);
+            dl.AddText(new Vector2(nameX, midY - nameSize.Y * 0.5f), nameCol, entryName);
+            dl.PopClipRect();
+
+            ImGui.SetCursorScreenPos(new Vector2(rowMin.X, rowMax.Y));
+            ImGui.Dummy(new Vector2(0, 1f * scale));
+        }
+
+        // Create a CS+ design referencing a Glamourer design by name, in a folder mirroring its Glamourer path.
+        private void ImportGlamourerEntry(string folderPath, GlamourerDesignEntry entry)
+        {
+            if (targetForDesignImport == null || string.IsNullOrWhiteSpace(entry.Name))
+                return;
+            if (TargetHasGlamourerDesign(targetForDesignImport, entry.Name))
+                return;
+            var folderId = GetOrCreateDesignFolderPath(targetForDesignImport, folderPath);
+            targetForDesignImport.Designs.Add(new CharacterDesign(
+                entry.Name,
+                BuildImportedGlamourerMacro(targetForDesignImport, entry.Name),
+                glamourerDesign: entry.Name)
+            {
+                DateAdded = DateTime.UtcNow,
+                FolderId = folderId,
+            });
+            plugin.SaveConfiguration();
+            plugin.AchievementTracker?.OnDesignImported();
+            plugin.RefreshTreeItems(targetForDesignImport);
+        }
+
+        // Import every design in a Glamourer folder at once, into the mirrored folder.
+        private void ImportGlamourerFolder(string folderPath, List<GlamourerDesignEntry> designs)
+        {
+            if (targetForDesignImport == null)
+                return;
+            var folderId = GetOrCreateDesignFolderPath(targetForDesignImport, folderPath);
+            foreach (var entry in designs)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Name))
+                    continue;
+                if (TargetHasGlamourerDesign(targetForDesignImport, entry.Name))
+                    continue;
+                targetForDesignImport.Designs.Add(new CharacterDesign(
+                    entry.Name,
+                    BuildImportedGlamourerMacro(targetForDesignImport, entry.Name),
+                    glamourerDesign: entry.Name)
+                {
+                    DateAdded = DateTime.UtcNow,
+                    FolderId = folderId,
+                });
+                _importGlamFlashTimes[folderPath + "/" + entry.Name] = ImGui.GetTime();
+            }
+            plugin.SaveConfiguration();
+            plugin.AchievementTracker?.OnDesignImported();
+            plugin.RefreshTreeItems(targetForDesignImport);
+        }
+
+        // Get-or-create the folder chain matching a Glamourer folder path on the target character.
+        private Guid? GetOrCreateDesignFolderPath(Character character, string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath))
+                return null;
+            Guid? parentId = null;
+            foreach (var raw in folderPath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var segment = raw.Trim();
+                var existing = character.DesignFolders.FirstOrDefault(f =>
+                    f.ParentFolderId == parentId && string.Equals(f.Name, segment, StringComparison.OrdinalIgnoreCase));
+                if (existing != null)
+                {
+                    parentId = existing.Id;
+                }
+                else
+                {
+                    var folder = new DesignFolder(segment, Guid.NewGuid())
+                    {
+                        ParentFolderId = parentId,
+                        SortOrder = character.DesignFolders.Count,
+                    };
+                    character.DesignFolders.Add(folder);
+                    parentId = folder.Id;
+                }
+            }
+            return parentId;
+        }
+
+        // Apply macro for an imported Glamourer design, matching the shape of a hand-made design.
+        private string BuildImportedGlamourerMacro(Character character, string glamourerName)
+        {
+            if (string.IsNullOrWhiteSpace(glamourerName))
+                return "";
+            string macro = $"/glamour apply {glamourerName} | self";
+            if (plugin.Configuration.EnableAutomations)
+            {
+                string automation = !string.IsNullOrWhiteSpace(character.CharacterAutomation) ? character.CharacterAutomation : "None";
+                macro += $"\n/glamour automation enable {automation}";
+            }
+            macro += "\n/customize profile disable <me>";
+            if (!string.IsNullOrWhiteSpace(character.CustomizeProfile))
+                macro += $"\n/customize profile enable <me>, {character.CustomizeProfile}";
+            macro += "\n/penumbra redraw self";
+            return macro;
+        }
+
+        // Recompute, from the target's current designs, every name (and referenced Glamourer design) it already owns.
+        private void RebuildGlamImportState(Character target)
+        {
+            _glamExistingNames.Clear();
+            foreach (var d in target.Designs)
+            {
+                // The Glamourer reference is the real identity; fall back to the display name only when there is none.
+                if (!string.IsNullOrWhiteSpace(d.GlamourerDesign))
+                    _glamExistingNames.Add(d.GlamourerDesign);
+                else if (!string.IsNullOrWhiteSpace(d.Name))
+                    _glamExistingNames.Add(d.Name);
+            }
+        }
+
+        // True if the target already owns this Glamourer design: by its referenced Glamourer design, or by display
+        // name only when a design carries no reference. Exact case-insensitive match, never substring or fuzzy.
+        private bool TargetHasGlamourerDesign(Character character, string name)
+        {
+            foreach (var d in character.Designs)
+            {
+                if (!string.IsNullOrWhiteSpace(d.GlamourerDesign))
+                {
+                    if (string.Equals(d.GlamourerDesign, name, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                else if (string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Confirmation for a bulk "+ ALL" import. Shared by Modern and Classic; OpenPopup is raised here at window
+        // scope (the + ALL buttons only set _glamConfirmRequested, since they fire from inside a child region).
+        private void DrawGlamImportConfirmPopup()
+        {
+            if (_glamConfirmRequested)
+            {
+                ImGui.OpenPopup("##ConfirmGlamImportAll");
+                _glamConfirmRequested = false;
+            }
+
+            bool open = true;
+            if (!ImGui.BeginPopupModal("##ConfirmGlamImportAll", ref open,
+                ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoTitleBar))
+                return;
+
+            int newCount = 0;
+            if (_glamConfirmDesigns != null && targetForDesignImport != null)
+            {
+                foreach (var e in _glamConfirmDesigns)
+                    if (!string.IsNullOrWhiteSpace(e.Name) && !TargetHasGlamourerDesign(targetForDesignImport, e.Name))
+                        newCount++;
+            }
+            string folderLabel = string.IsNullOrEmpty(_glamConfirmFolder) ? "(No Folder)" : _glamConfirmFolder;
+            string charName = targetForDesignImport?.Name ?? "this character";
+
+            ImGui.TextColored(new Vector4(1f, 0.84f, 0.2f, 1f), "Import Glamourer Folder");
+            ImGui.Separator();
+            if (newCount == 0)
+                ImGui.Text($"Every design in \"{folderLabel}\" is already on {charName}.");
+            else
+                ImGui.Text($"Import {newCount} new design{(newCount == 1 ? "" : "s")} from \"{folderLabel}\" into {charName}?");
+            ImGui.Spacing();
+
+            if (newCount > 0)
+            {
+                if (ImGui.Button("Import", new Vector2(120, 0)))
+                {
+                    if (_glamConfirmFolder != null && _glamConfirmDesigns != null)
+                        ImportGlamourerFolder(_glamConfirmFolder, _glamConfirmDesigns);
+                    _glamConfirmFolder = null;
+                    _glamConfirmDesigns = null;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+            }
+            if (ImGui.Button(newCount == 0 ? "Close" : "Cancel", new Vector2(120, 0)))
+            {
+                _glamConfirmFolder = null;
+                _glamConfirmDesigns = null;
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
         }
 
         private void DrawAdvancedModeWindow(float scale)
@@ -4779,7 +5350,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void SaveDesign(Character character)
         {
-            if (string.IsNullOrWhiteSpace(editedDesignName) || string.IsNullOrWhiteSpace(editedGlamourerDesign))
+            bool hasGlamourer = !string.IsNullOrWhiteSpace(editedGlamourerDesign)
+                || (plugin.Configuration.EnableAutomations && !string.IsNullOrWhiteSpace(editedAutomation));
+            if (string.IsNullOrWhiteSpace(editedDesignName) || !hasGlamourer)
                 return;
 
             var existingDesign = !isNewDesign
@@ -5020,10 +5593,13 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private string GenerateDesignMacro(Character character)
         {
-            if (string.IsNullOrWhiteSpace(editedGlamourerDesign))
+            bool hasAutomation = plugin.Configuration.EnableAutomations && !string.IsNullOrWhiteSpace(editedAutomation);
+            if (string.IsNullOrWhiteSpace(editedGlamourerDesign) && !hasAutomation)
                 return "";
 
-            string macro = $"/glamour apply {editedGlamourerDesign} | self";
+            string macro = "";
+            if (!string.IsNullOrWhiteSpace(editedGlamourerDesign))
+                macro = $"/glamour apply {editedGlamourerDesign} | self";
 
             // Conditionally include automation line
             if (plugin.Configuration.EnableAutomations)
@@ -5034,7 +5610,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         ? character.CharacterAutomation
                         : "None");
 
-                macro += $"\n/glamour automation enable {automationToUse}";
+                macro += $"{(macro.Length > 0 ? "\n" : "")}/glamour automation enable {automationToUse}";
             }
 
             // Always disable Customize+ first
@@ -5071,7 +5647,7 @@ namespace CharacterSelectPlugin.Windows.Components
             var sb = new System.Text.StringBuilder();
 
             // Only add bulk-tag lines if Conflict Resolution is disabled
-            if (!plugin.Configuration.EnableConflictResolution)
+            if (!plugin.Configuration.EnableConflictResolution && !string.IsNullOrWhiteSpace(design))
             {
                 sb.AppendLine($"/penumbra bulktag disable {collection} | gear");
                 sb.AppendLine($"/penumbra bulktag disable {collection} | hair");
@@ -5081,7 +5657,8 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             // Glamourer design
-            sb.AppendLine($"/glamour apply {design} | self");
+            if (!string.IsNullOrWhiteSpace(design))
+                sb.AppendLine($"/glamour apply {design} | self");
 
             // Automation (if enabled)
             if (plugin.Configuration.EnableAutomations)
@@ -6076,36 +6653,35 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     Plugin.Log.Information($"Starting smart snapshot for character '{character.Name}' with CR: {useConflictResolution}");
 
-                    // Get the most recently created Glamourer design
-                    var recentDesign = await GetMostRecentGlamourerDesign();
-                    if (recentDesign == null)
+                    var candidates = await FindAppliedGlamourerDesigns();
+                    var exact = candidates.Where(c => c.Score >= 0.999f).ToList();
+
+                    // partials also hit 100%, most fields wins
+                    if (exact.Count == 1 || (exact.Count > 1 && exact[0].Fields >= exact[1].Fields * 2))
                     {
-                        Plugin.ChatGui.PrintError("[Character Select+] No recent Glamourer design found. Please create a design in Glamourer first or use the regular snapshot dialog.");
+                        Plugin.Log.Information($"Matched applied Glamourer design: '{exact[0].Name}' ({exact[0].Fields} fields)");
+                        await RunSmartSnapshot(character, useConflictResolution, exact[0].Name, exact[0].Id);
                         return;
                     }
 
-                    Plugin.Log.Information($"Found recent Glamourer design: '{recentDesign.Value.Name}' created on {recentDesign.Value.CreationDate}");
-
-                    // Set snapshot data using the recent design
-                    snapshotTargetCharacter = character;
-                    snapshotDesignName = recentDesign.Value.Name;
-                    snapshotUseConflictResolution = useConflictResolution;
-                    snapshotIsProcessing = true;
-
-                    // Auto-detect current state
-                    var detectionTasks = new Task[]
+                    if (candidates.Count == 0)
                     {
-                        DetectGlamourerState(),
-                        DetectCustomizePlusProfile(),
-                        Task.Run(() => CheckClipboardForImage())
-                    };
+                        // No designs to score, use the newest
+                        var recentDesign = await GetMostRecentGlamourerDesign();
+                        if (recentDesign == null || string.IsNullOrEmpty(recentDesign.Value.Name))
+                        {
+                            Plugin.ChatGui.PrintError("[Character Select+] No Glamourer designs found. Please create a design in Glamourer first.");
+                            return;
+                        }
+                        await RunSmartSnapshot(character, useConflictResolution, recentDesign.Value.Name, recentDesign.Value.Id);
+                        return;
+                    }
 
-                    await Task.WhenAll(detectionTasks);
-
-                    // Create the CS+ design with the Glamourer design field populated
-                    CreateSmartSnapshotDesign(recentDesign.Value);
-
-                    Plugin.ChatGui.Print($"[Character Select+] Smart snapshot created: '{recentDesign.Value.Name}' {(useConflictResolution ? "with" : "without")} CR");
+                    snapshotPickerCandidates = (exact.Count > 1 ? exact : candidates).Take(5).ToList();
+                    snapshotPickerHadExactTie = exact.Count > 1;
+                    snapshotPickerCharacter = character;
+                    snapshotPickerUseCR = useConflictResolution;
+                    isSnapshotPickerOpen = true;
                 }
                 catch (Exception ex)
                 {

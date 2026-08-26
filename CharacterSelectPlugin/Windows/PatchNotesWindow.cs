@@ -126,7 +126,6 @@ namespace CharacterSelectPlugin.Windows
                 DrawParticleEffects(drawList, headerStart, new Vector2(headerWidth, bannerHeight));
             }
 
-            // Drop the version line right below the banner with a tight gap.
             ImGui.SetCursorPosY(headerEnd.Y - windowPos.Y + 4f * totalScale);
 
             ImGui.SetCursorPosX(9);
@@ -141,7 +140,7 @@ namespace CharacterSelectPlugin.Windows
 
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Classic Mode");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Glamourer Bulk Import, Wardrobe Picker & Penumbra 1.7");
 
             ImGui.Separator();
             ImGui.Spacing();
@@ -170,7 +169,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor();
 
             ImGui.SetCursorPos(new Vector2(20, 55));
-            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Classic Mode");
+            ImGui.TextColored(new Vector4(0.75f, 0.75f, 0.85f, 1.0f), "Glamourer Bulk Import, Wardrobe Picker & Penumbra 1.7");
         }
 
         private void DrawPatchNotes(float totalScale)
@@ -183,15 +182,11 @@ namespace CharacterSelectPlugin.Windows
             if (maxScrollY > 0 && currentScrollY >= (maxScrollY * 0.85f))
                 hasScrolledToEnd = true;
 
-            // v2.1.1.1 announcement
-            DrawClassicModeAnnouncementBox(totalScale);
-
             ImGui.PushTextWrapPos();
 
-            // Latest Patch Notes - v2.1.1.0
-            if (DrawModernCollapsingHeader("v2.1.1.0 - Achievements, Wardrobe, QoL & Optimizations", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
+            if (DrawModernCollapsingHeader("v2.1.2.0 - Custom Theme, Fonts, Icon Bar & Roster Pages", new Vector4(0.4f, 0.9f, 0.4f, 1.0f), true))
             {
-                Draw211Notes();
+                Draw212Notes();
 
                 if (!hasScrolledToEnd)
                 {
@@ -204,7 +199,11 @@ namespace CharacterSelectPlugin.Windows
                 }
             }
 
-            // Previous Patch Notes - v2.1.0.0
+            if (DrawModernCollapsingHeader("v2.1.1.0 - Achievements, Wardrobe, QoL & Optimizations", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
+            {
+                Draw211Notes();
+            }
+
             if (DrawModernCollapsingHeader("v2.1.0.0 - Name Sync, Expanded RP Profiles, Custom Themes, and more", new Vector4(0.75f, 0.75f, 0.85f, 1.0f), false))
             {
                 Draw210Notes();
@@ -298,6 +297,101 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopTextWrapPos();
 
             ImGui.EndChild();
+            ImGui.Spacing();
+        }
+
+        private void Draw212Notes()
+        {
+            // Custom Theme
+            DrawFeatureSection("", "Custom Theme", new Vector4(1.0f, 0.37f, 0.54f, 1.0f));
+            ImGui.BulletText("The Custom Theme editor has been reworked to hopefully make a bit more sense");
+            ImGui.BulletText("Match the UI's colours to your active Character's nameplate colour");
+            ImGui.BulletText("Added an atmosphere intensity slider");
+            ImGui.Spacing();
+
+            // Custom Fonts
+            DrawFeatureSection("", "Custom Fonts", new Vector4(0.16f, 0.71f, 0.96f, 1.0f));
+            ImGui.BulletText("Change the plugin's fonts in Settings > Visual");
+            ImGui.BulletText("Pick any font installed on your PC, with separate choices and sizes");
+            ImGui.Spacing();
+
+            // Icon Bar
+            DrawFeatureSection("", "Icon Bar", new Vector4(1.0f, 0.7f, 0.3f, 1.0f));
+            ImGui.BulletText("Added a hotbar-like strip of Character portraits");
+            ImGui.BulletText("Left click a portrait to apply that Character, right click to show their Designs");
+            ImGui.BulletText("Ctrl+Right click applies a Character, or one of their Designs, to your target");
+            ImGui.BulletText("Toggle it with /selecticons or in Settings > Behaviour");
+            ImGui.Spacing();
+
+            // Custom Roster Pages
+            DrawFeatureSection("", "Custom Roster Pages", new Vector4(0.2f, 0.8f, 0.85f, 1.0f));
+            ImGui.BulletText("The Reorder window is now a page manager: sort your Characters onto pages");
+            ImGui.BulletText("Pages can hold any number of Characters");
+            ImGui.BulletText("Drag Characters to reorder them or move them between pages, Ctrl+Click selects several at once");
+            ImGui.BulletText("Double-click a page tab to rename it, and drag page tabs to reorder them");
+            ImGui.BulletText("The main window rearranges live while you work, nothing saves until you click Save");
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.75f, 1.0f));
+            ImGui.TextWrapped("Classic Mode gets the same drag and drop page manager in its own styling.");
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+
+            // Job Icons
+            DrawFeatureSection("", "Job Icons on Cards", new Vector4(0.85f, 0.95f, 0.3f, 1.0f));
+            ImGui.BulletText("Characters with job, role, or gearset assignments can show those job icons on their card");
+            ImGui.BulletText("Off by default: turn it on in Settings > Job Assignments");
+            ImGui.BulletText("Optional monochrome style");
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.75f, 1.0f));
+            ImGui.TextWrapped("Icons from Material UI - Reborn by valeriae, Sevii, and skotlex.");
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+
+            // Glamourer bulk import
+            DrawFeatureSection("", "Bulk Import From Glamourer", new Vector4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui.BulletText("Import your Glamourer designs into a Character in bulk instead of one at a time");
+            ImGui.BulletText("Use the Import Designs button next to Reorder on the Main Window, then open the Import From Glamourer tab");
+            ImGui.BulletText("Import single Designs or a whole folder at once");
+            ImGui.BulletText("Importing Designs from your other characters now uses the same button (Shift+Click on New is gone)");
+            ImGui.Spacing();
+
+            // Apply to Target
+            DrawFeatureSection("", "Apply to Target", new Vector4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui.BulletText("Apply a Character to an NPC or mannequin, and they'll take on that Character's name");
+            ImGui.BulletText("Enable 'Show CS+ name on Applied Targets' in Settings to use it");
+            ImGui.Spacing();
+
+            // Wardrobe
+            DrawFeatureSection("", "Wardrobe", new Vector4(0.16f, 0.71f, 0.96f, 1.0f));
+            ImGui.BulletText("A new button in the Wardrobe's top-left corner lets you view another Character's wardrobe");
+            ImGui.Spacing();
+
+            // Penumbra 1.7
+            DrawFeatureSection("", "Penumbra 1.7 Ready", new Vector4(0.49f, 0.34f, 0.76f, 1.0f));
+            ImGui.BulletText("CS+ has been updated to work with the Penumbra 1.7 update");
+            ImGui.Spacing();
+
+            // Conflict Resolution
+            DrawFeatureSection("", "Conflict Resolution Fixes", new Vector4(1.0f, 0.84f, 0.0f, 1.0f));
+            ImGui.BulletText("Fixed CR overwriting mod option settings");
+            ImGui.BulletText("The 'Currently Affecting You' tab's issues have been resolved");
+            ImGui.Spacing();
+
+            // Quality of Life
+            DrawFeatureSection("", "Quality of Life", new Vector4(0.95f, 0.17f, 0.49f, 1.0f));
+            ImGui.BulletText("Reduce Motion option in Visual Settings");
+            ImGui.BulletText("Name Sync: option to show your name as normal when your CS+ Character shares your in-game name");
+            ImGui.BulletText("Option to show Character Names in the UI instead of Aliases");
+            ImGui.BulletText("The snapshot button now detects which Glamourer design you're wearing (Thank you, Solona!)");
+            ImGui.BulletText("With Glamourer Automations enabled, the Design field is optional: use an automation, a design, or both");
+            ImGui.BulletText("Job Assignments now include the base classes (Gladiator, Marauder, Conjurer, and the rest)");
+            ImGui.BulletText("New IPC endpoints for plugin developers");
+            ImGui.Spacing();
+
+            // Fixes
+            DrawFeatureSection("", "Fixes", new Vector4(0.7f, 0.7f, 0.75f, 1.0f));
+            ImGui.BulletText("Name Sync: your name now clears for others when you revert or switch to a Character that doesn't sync");
+            ImGui.BulletText("Name Sync no longer overrides the game's nameplate Display Type setting when it isn't replacing your name");
+            ImGui.BulletText("Resolved the \"X already is the Individual Collection\" chat message when applying designs");
+            ImGui.BulletText("Fixed the Icon Connoisseur and Content Creator achievements not unlocking in some cases");
             ImGui.Spacing();
         }
 

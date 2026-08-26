@@ -45,6 +45,23 @@ namespace CharacterSelectPlugin
     public sealed class Plugin : IDalamudPlugin
     {
         public static Plugin? Instance { get; private set; }
+
+        // Active character nameplate, cached per frame
+        private int activeNameplateFrame = -1;
+        private Vector3? activeNameplateCache;
+        public Vector3? ActiveCharacterNameplate
+        {
+            get
+            {
+                int frame = ImGui.GetFrameCount();
+                if (frame != activeNameplateFrame)
+                {
+                    activeNameplateFrame = frame;
+                    activeNameplateCache = (GetActiveCharacter() ?? activeCharacter)?.NameplateColor;
+                }
+                return activeNameplateCache;
+            }
+        }
         
         [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
         [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
@@ -70,8 +87,8 @@ namespace CharacterSelectPlugin
         private static readonly string Version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "(Unknown Version)";
         public static readonly string CurrentPluginVersion = Version; // Match repo.json and .csproj version
 
-        /// <summary>Patch notes content version. Only bump this when patch notes content actually changes.</summary>
-        public const string PatchNotesVersion = "2.1.1.1";
+        // Decoupled from the assembly version; bump only when patch notes content changes
+        public const string PatchNotesVersion = "2.1.2.0";
         public const bool PatchNotesRequiresAck = false;
 
         /// <summary>
@@ -110,7 +127,9 @@ namespace CharacterSelectPlugin
         public readonly WindowSystem WindowSystem = new("CharacterSelectPlugin");
         public MainWindow MainWindow { get; init; }
         public QuickSwitchWindow QuickSwitchWindow { get; set; } // Quick Switch Window
+        public IconBarWindow IconBarWindow { get; set; }
         public PatchNotesWindow PatchNotesWindow { get; private set; } = null!;
+        public WelcomeWindow WelcomeWindow { get; private set; } = null!;
         public RPProfileWindow RPProfileEditor { get; private set; }
         public RPProfileEditWindow RPProfileEditWindow { get; private set; }
         public RPProfileViewWindow RPProfileViewer { get; private set; }
@@ -144,6 +163,7 @@ namespace CharacterSelectPlugin
         public string NewCharacterName { get; set; } = "";
         public string NewCharacterAlias { get; set; } = "";
         public bool NewCharacterExcludeFromNameSync { get; set; } = false;
+        public bool NewCharacterAccentFollows { get; set; } = false;
         public bool NewCharacterUseGlitchNameEffect { get; set; } = false;
         public string NewCharacterMacros { get; set; } = "";
         public string? NewCharacterImagePath { get; set; }
@@ -187,8 +207,18 @@ namespace CharacterSelectPlugin
         // Integration List Provider for autocomplete dropdowns
         public Managers.IntegrationListProvider? IntegrationListProvider { get; private set; }
 
+#if DEV_BUILD
+        public Managers.VfxManager? VfxManager { get; private set; }
+
+        public Managers.VfxLibrary? VfxLibrary { get; private set; }
+#endif
+
+        public Managers.LocalTargetOverrideManager LocalTargetOverrides { get; } = new();
+
         // IPC Provider for other plugins
         private IPCProvider? ipcProvider;
+
+        public void NotifySyncedNameChanged() => ipcProvider?.NotifySyncedNameChanged();
         
         // Target application safety tracking
         private readonly Dictionary<int, DateTime> lastTargetApplicationTime = new();
@@ -295,6 +325,7 @@ namespace CharacterSelectPlugin
         public IFontHandle OutfitMed12   { get; private set; } // 12px Medium for card descriptions
         public IFontHandle OutfitMed13   { get; private set; }
         public IFontHandle OutfitSemi15  { get; private set; } // 15.5px SemiBold for .card-name
+        public IFontHandle OutfitNameSemi15 { get; private set; } // 15.5px SemiBold, Character Names role
 
         /// <summary>SD Glitch display font for the glitch name effect on character cards.</summary>
         public IFontHandle? GlitchFont      { get; private set; }
@@ -314,44 +345,45 @@ namespace CharacterSelectPlugin
         private string? lastAppliedCharacter = null;
         public float UIScaleMultiplier => Configuration.UIScaleMultiplier;
 
-        // Fonts are built async by Dalamud's FontAtlas; until they're built,
-        // IFontHandle.Push() is a no-op and text falls back to the default ImGui
-        // font which has totally different metrics. Drawing in that window
-        // produces the "load-time scaling snap" the user sees. Once cached, this
-        // is a single boolean check per frame and stays true for the session.
+        // Fonts are built async by Dalamud's FontAtlas
         private bool _fontsReady;
+        // session-only classic fallback
+        internal static bool FontFallbackThisSession = false;
         public bool FontsReady
         {
             get
             {
-                // Classic mode draws without boutique fonts; never gate the UI on them.
-                if (Configuration?.UseClassicLayout == true)
+                // Classic mode draws without boutique fonts, so never gate the UI on them
+                if (Configuration?.UseClassicLayout == true || FontFallbackThisSession)
                     return true;
                 if (_fontsReady) return true;
-                // Gate releases as soon as the fonts the MainWindow + grid
-                // actually push on their first frame are ready. Other
-                // surfaces (mod manager, achievements, RP profile editor)
-                // open later and can wait on their own font subsets without
-                // blocking the main window.
-                if (OutfitSemi15 is { Available: true }
-                    && OswaldSemi9 is { Available: true }
-                    && OswaldSemi11 is { Available: true }
-                    && OswaldSemi13 is { Available: true }
-                    && OswaldSemi14 is { Available: true }
-                    && OswaldMed11 is { Available: true }
-                    && OswaldMed13 is { Available: true })
-                {
+                if (GateFontsAvailable())
                     _fontsReady = true;
-                }
                 return _fontsReady;
             }
         }
-        // Tracks the scale value that the font atlas was last baked at, plus a
-        // debounce timestamp for slider drag. ScaleChangeWatcher (called from
-        // DrawUI) compares the live scale against _lastBakedFontScale and queues
-        // a font atlas rebuild after _scaleChangeStableSinceS seconds of no
-        // further change, so dragging the UIScaleMultiplier slider doesn't
-        // trigger a rebuild on every tick.
+
+        // the handles the first visible frame pushes
+        private bool GateFontsAvailable()
+            => OutfitSemi15 is { Available: true }
+            && OswaldSemi9 is { Available: true }
+            && OswaldSemi11 is { Available: true }
+            && OswaldSemi13 is { Available: true }
+            && OswaldSemi14 is { Available: true }
+            && OswaldMed11 is { Available: true }
+            && OswaldMed13 is { Available: true }
+            && OswaldBody10 is { Available: true }
+            && OswaldBody13 is { Available: true }
+            && OswaldMed9 is { Available: true }
+            && OswaldMed10 is { Available: true }
+            && OswaldSemi10 is { Available: true }
+            && OswaldSemiBig is { Available: true }
+            && OswaldSemiLarge is { Available: true }
+            && OswaldSemiMid is { Available: true }
+            && OswaldSemiTitle is { Available: true }
+            && OutfitBody12 is { Available: true }
+            && OutfitMed12 is { Available: true };
+        // last baked scale + rebuild debounce
         private float _lastBakedFontScale = float.NaN;
         private double _scaleChangeStableSinceS = 0;
         private bool _fontRebuildInFlight = false;
@@ -368,18 +400,40 @@ namespace CharacterSelectPlugin
             return live;
         }
 
-        // Queues an async font atlas rebuild when the live scale (Dalamud
-        // GlobalScale x UIScaleMultiplier) changes, with a 200ms debounce so
-        // dragging the slider doesn't trigger a rebuild on every tick. Without
-        // this, the lambdas in MakeFileFont keep returning the OLD baked size
-        // until something else triggers an atlas rebuild.
+        private enum FontRole { Body, Names, Labels, Display, Title }
+
+        // User override path (null when unset or file missing) and clamped scale for a role.
+        private (string? Path, float Scale) ResolveFontRole(FontRole role)
+        {
+            var cfg = Configuration;
+            string? path;
+            float scale;
+            switch (role)
+            {
+                case FontRole.Body:    path = cfg?.FontBodyPath;    scale = cfg?.FontBodyScale ?? 1f; break;
+                case FontRole.Names:   path = cfg?.FontNamesPath;   scale = cfg?.FontNamesScale ?? 1f; break;
+                case FontRole.Labels:  path = cfg?.FontLabelsPath;  scale = cfg?.FontLabelsScale ?? 1f; break;
+                case FontRole.Display: path = cfg?.FontDisplayPath; scale = cfg?.FontDisplayScale ?? 1f; break;
+                default:               path = cfg?.FontTitlePath;   scale = cfg?.FontTitleScale ?? 1f; break;
+            }
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) path = null;
+            return (path, Math.Clamp(scale, 0.5f, 2f));
+        }
+
+        // Queues an async atlas rebuild when the live scale changes, debounced 200ms.
+        // Without it the MakeFileFont lambdas keep returning the stale baked size
         private void ScaleChangeWatcher()
         {
             float live = GetLiveFontScale();
             if (float.IsNaN(_lastBakedFontScale))
             {
-                // First frame after construction: the initial atlas build
-                // already used GetLiveFontScale, so just record what we used.
+                // The initial atlas build already used GetLiveFontScale, so just record it
+                _lastBakedFontScale = live;
+                return;
+            }
+            // a pending first bake reads the live scale itself
+            if (!_fontsReady && Configuration?.UseClassicLayout == false)
+            {
                 _lastBakedFontScale = live;
                 return;
             }
@@ -415,6 +469,62 @@ namespace CharacterSelectPlugin
                 Log?.Warning($"[CS+] Font atlas rebuild failed: {ex.Message}");
                 _fontRebuildInFlight = false;
             }
+        }
+
+        private Task? _requestedFontRebuildTask;
+        public bool FontsRebuilding => _requestedFontRebuildTask is { IsCompleted: false };
+
+        public void RequestFontRebuild()
+        {
+            if (FontsRebuilding)
+                return;
+            try
+            {
+                _requestedFontRebuildTask = PluginInterface.UiBuilder.FontAtlas.BuildFontsAsync();
+                _requestedFontRebuildTask.ContinueWith(
+                    t => Log?.Warning($"[CS+] Font atlas rebuild failed: {t.Exception?.GetBaseException().Message}"),
+                    TaskContinuationOptions.OnlyOnFaulted);
+            }
+            catch (Exception ex) { Log?.Warning($"[CS+] Font atlas rebuild failed: {ex.Message}"); }
+        }
+
+        private string? FirstGateFontFailure()
+        {
+            foreach (var handle in new[] { OutfitSemi15, OswaldSemi9, OswaldSemi11, OswaldSemi13, OswaldSemi14, OswaldMed11, OswaldMed13 })
+            {
+                if (handle?.LoadException is { } ex)
+                    return ex.GetBaseException().Message;
+            }
+            return null;
+        }
+
+        private string GateFontDiagnostics()
+        {
+            var names = new[] { "OutfitSemi15", "OswaldSemi9", "OswaldSemi11", "OswaldSemi13", "OswaldSemi14", "OswaldMed11", "OswaldMed13" };
+            var handles = new[] { OutfitSemi15, OswaldSemi9, OswaldSemi11, OswaldSemi13, OswaldSemi14, OswaldMed11, OswaldMed13 };
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < handles.Length; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(names[i]).Append('=');
+                if (handles[i] == null) sb.Append("null");
+                else if (handles[i]!.LoadException is { } ex) sb.Append("failed: ").Append(ex.GetBaseException().Message);
+                else sb.Append(handles[i]!.Available ? "ready" : "pending");
+            }
+            try { sb.Append(" | atlas build: ").Append(PluginInterface.UiBuilder.FontAtlas.BuildTask.Status); }
+            catch { }
+            return sb.ToString();
+        }
+
+        // Gives fonts a fresh try when the layout toggle changes
+        public void OnLayoutModeChanged()
+        {
+            FontFallbackThisSession = false;
+            _fontBakeTimeoutHandled = false;
+            _fontFallbackAnnounced = false;
+            _firstDrawUITime = -1.0;
+            _fontsReady = false;
+            RequestFontRebuild();
         }
 
         private string? _pendingSessionCharacterName = null;
@@ -618,6 +728,20 @@ namespace CharacterSelectPlugin
             // Cache for per-character animated portrait wraps (.gif / .webp)
             AnimatedTextureCache = new Managers.AnimatedTextureCache(TextureProvider);
 
+#if DEV_BUILD
+            VfxManager = new Managers.VfxManager(SigScanner);
+
+            var vfxLibPath = System.IO.Path.Combine(PluginInterface.GetPluginConfigDirectory(), "vfx_library_dev.json");
+            VfxLibrary = new Managers.VfxLibrary(vfxLibPath);
+
+            var vfxCuration = new Windows.Dev.VfxCurationWindow(this, VfxLibrary);
+            WindowSystem.AddWindow(vfxCuration);
+            CommandManager.AddHandler("/select-vfxlib", new Dalamud.Game.Command.CommandInfo((_, _) => { vfxCuration.IsOpen = !vfxCuration.IsOpen; })
+            {
+                HelpMessage = "(DEV) Open VFX curation window."
+            });
+#endif
+
             // Initialize mod categorization cache on background thread to prevent UI freeze
             if (Configuration.EnableConflictResolution)
             {
@@ -629,6 +753,8 @@ namespace CharacterSelectPlugin
             MainWindow.SortCharacters();
             QuickSwitchWindow = new QuickSwitchWindow(this); // Quick Switch Window
             QuickSwitchWindow.IsOpen = Configuration.IsQuickSwitchWindowOpen; // Restore last open state
+            IconBarWindow = new IconBarWindow(this);
+            IconBarWindow.IsOpen = Configuration.IsIconBarOpen;
 
             RPProfileEditor = new RPProfileWindow(this);
             WindowSystem.AddWindow(RPProfileEditor);
@@ -765,7 +891,12 @@ namespace CharacterSelectPlugin
 
             WindowSystem.AddWindow(MainWindow);
             WindowSystem.AddWindow(QuickSwitchWindow); // Quick Switch Window
+            WindowSystem.AddWindow(IconBarWindow);
             WindowSystem.AddWindow(PatchNotesWindow); // Patch Notes Window
+            WelcomeWindow = new WelcomeWindow(this);
+            WindowSystem.AddWindow(WelcomeWindow);
+            if (Configuration.ShowWelcomePrompt)
+                WelcomeWindow.IsOpen = true;
 
 
             CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -775,6 +906,11 @@ namespace CharacterSelectPlugin
             CommandManager.AddHandler("/selectswitch", new CommandInfo(OnQuickSwitchCommand)
             {
                 HelpMessage = "Opens the Quick Character Switcher UI."
+            });
+
+            CommandManager.AddHandler("/selecticons", new CommandInfo(OnIconBarCommand)
+            {
+                HelpMessage = "Toggles the character Icon Bar."
             });
 
             CommandManager.AddHandler("/gallery", new CommandInfo(OnGalleryCommand)
@@ -801,10 +937,8 @@ namespace CharacterSelectPlugin
             PluginInterface.UiBuilder.OpenConfigUi += ToggleQuickSwitchUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
             
-            // Initialize custom fonts for RP Profile View. Each lambda reads the
-            // live scale at atlas-build time, so when ScaleChangeWatcher triggers
-            // a rebuild after the user changes Dalamud's UI scale, fonts re-bake
-            // at the new size and stay sharp instead of being bilinear-scaled.
+            // Each lambda reads the live scale at atlas-build time, so a rebuild
+            // re-bakes at the new size instead of bilinear-scaling the old atlas
             NameFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
             {
                 e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, new()
@@ -813,13 +947,6 @@ namespace CharacterSelectPlugin
                 }));
             });
 
-            HeaderFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
-            {
-                e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, new()
-                {
-                    SizePx = MathF.Round(26f * GetLiveFontScale())
-                }));
-            });
             ToastPointsFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
             {
                 e.OnPreBuild(tk => tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, new()
@@ -860,25 +987,61 @@ namespace CharacterSelectPlugin
                 0x25A0, 0x25FF, // Geometric Shapes
                 0x2600, 0x26FF, // Misc Symbols
                 0x2700, 0x27BF, // Dingbats
+                0x3000, 0x303F, // CJK Symbols and Punctuation
+                0x3040, 0x309F, // Hiragana
+                0x30A0, 0x30FF, // Katakana
+                0x31F0, 0x31FF, // Katakana Phonetic Extensions
+                0xFF00, 0xFFEF, // Fullwidth Forms
                 0
             };
 
+            // CJK split: kana/symbols/fullwidth bake into every content font,
+            // the full ideograph block only into OutfitBody13/15 (name surfaces).
+            ushort[] cjkIdeographRange = { 0x4E00, 0x9FFF, 0 };
+
             IFontHandle MakeFileFont(string path, float sizePx, ushort[]? glyphRanges = null)
+                => MakeRoleFont(null, path, sizePx, glyphRanges);
+
+            IFontHandle MakeRoleFont(FontRole? role, string defaultPath, float sizePx, ushort[]? glyphRanges = null, bool cjkNames = false)
             {
-                // Capture the LOGICAL design size (sizePx). The OnPreBuild lambda
-                // reads the live scale every time the font atlas builds, so the
-                // baked atlas size tracks the user's current GlobalScale +
-                // UIScaleMultiplier. Rebuilds are triggered by ScaleChangeWatcher
-                // after a debounce.
+                // Logical design size. OnPreBuild re-resolves scale and role overrides
+                // each atlas build, so a plain rebuild applies changes.
                 return PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
                     e.OnPreBuild(tk =>
                     {
-                        float scaled = MathF.Round(sizePx * GetLiveFontScale());
+                        string path = defaultPath;
+                        float roleScale = 1f;
+                        if (role != null)
+                        {
+                            var resolved = ResolveFontRole(role.Value);
+                            if (resolved.Path != null) path = resolved.Path;
+                            roleScale = resolved.Scale;
+                        }
+                        float scaled = MathF.Round(sizePx * roleScale * GetLiveFontScale());
                         if (scaled < 1f) scaled = 1f; // ImGui rejects sub-pixel atlas sizes
                         var cfg = new SafeFontConfig { SizePx = scaled };
                         if (glyphRanges != null)
                             cfg.GlyphRanges = glyphRanges;
-                        cfg.MergeFont = tk.AddFontFromFile(path, cfg);
+                        try
+                        {
+                            cfg.MergeFont = tk.AddFontFromFile(path, cfg);
+                        }
+                        catch (Exception ex)
+                        {
+                            // a bad font falls back instead of failing the whole build
+                            Log?.Error($"[CS+] Font '{path}' failed to load: {ex.GetBaseException().Message}");
+                            try
+                            {
+                                if (path != defaultPath && File.Exists(defaultPath))
+                                    cfg.MergeFont = tk.AddFontFromFile(defaultPath, cfg);
+                                else
+                                    cfg.MergeFont = tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, cfg);
+                            }
+                            catch
+                            {
+                                cfg.MergeFont = tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, cfg);
+                            }
+                        }
 
                         // Content fonts (no explicit range) get a glyph fallback
                         // from NotoSansJpMedium so user-typed special characters
@@ -894,6 +1057,17 @@ namespace CharacterSelectPlugin
                             };
                             tk.AddDalamudAssetFont(
                                 Dalamud.DalamudAsset.NotoSansCjkMedium, fallbackCfg);
+                            if (cjkNames)
+                            {
+                                var cjkCfg = new SafeFontConfig
+                                {
+                                    SizePx = scaled,
+                                    MergeFont = cfg.MergeFont,
+                                    GlyphRanges = cjkIdeographRange,
+                                };
+                                tk.AddDalamudAssetFont(
+                                    Dalamud.DalamudAsset.NotoSansCjkMedium, cjkCfg);
+                            }
                             // Attach Chinese/Korean/etc. extras for users on those
                             // languages (no-op for English).
                             tk.AttachExtraGlyphsForDalamudLanguage(cfg);
@@ -901,31 +1075,70 @@ namespace CharacterSelectPlugin
                     }));
             }
 
+            HeaderFont = PluginInterface.UiBuilder.FontAtlas.NewDelegateFontHandle(e =>
+            {
+                e.OnPreBuild(tk =>
+                {
+                    var resolved = ResolveFontRole(FontRole.Title);
+                    float scaled = MathF.Round(26f * resolved.Scale * GetLiveFontScale());
+                    if (scaled < 1f) scaled = 1f;
+                    if (resolved.Path != null)
+                    {
+                        var cfg = new SafeFontConfig { SizePx = scaled };
+                        try
+                        {
+                            cfg.MergeFont = tk.AddFontFromFile(resolved.Path, cfg);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log?.Error($"[CS+] Font '{resolved.Path}' failed to load: {ex.GetBaseException().Message}");
+                            cfg.MergeFont = tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, cfg);
+                        }
+                        // Full asset ranges so CJK names keep rendering under a custom title font
+                        var fallbackCfg = new SafeFontConfig
+                        {
+                            SizePx = scaled,
+                            MergeFont = cfg.MergeFont,
+                        };
+                        tk.AddDalamudAssetFont(
+                            Dalamud.DalamudAsset.NotoSansCjkMedium, fallbackCfg);
+                    }
+                    else
+                    {
+                        tk.AddDalamudAssetFont(Dalamud.DalamudAsset.NotoSansCjkMedium, new()
+                        {
+                            SizePx = scaled
+                        });
+                    }
+                });
+            });
+
             const float achUi = 1.30f; // Achievement UI text scale (mockup→in-game)
             const float statBoost = 1.18f;
 
-            OswaldBody9  = MakeFileFont(oswaldPath,  9f  * achUi, asciiOnlyRange);
-            OswaldBody10 = MakeFileFont(oswaldPath, 10f  * achUi, asciiOnlyRange);
-            OswaldBody11 = MakeFileFont(oswaldPath, 11f  * achUi, asciiOnlyRange);
-            OswaldBody13 = MakeFileFont(oswaldPath, 13f  * achUi, asciiOnlyRange);
-            OswaldBody14 = MakeFileFont(oswaldPath, 14f  * achUi, asciiOnlyRange);
-            OswaldMed9   = MakeFileFont(oswaldMedPath,  9f  * achUi, asciiOnlyRange);
-            OswaldMed10  = MakeFileFont(oswaldMedPath, 10f  * achUi, asciiOnlyRange);
-            OswaldMed11  = MakeFileFont(oswaldMedPath, 11f  * achUi, asciiOnlyRange);
-            OswaldMed13  = MakeFileFont(oswaldMedPath, 13f  * achUi, asciiOnlyRange);
-            OswaldSemi9  = MakeFileFont(oswaldSemiPath,  9f  * achUi, asciiOnlyRange);
-            OswaldSemi10 = MakeFileFont(oswaldSemiPath, 10f  * achUi, asciiOnlyRange);
-            OswaldSemi11 = MakeFileFont(oswaldSemiPath, 11f  * achUi, asciiOnlyRange);
-            OswaldSemi12 = MakeFileFont(oswaldSemiPath, 12f  * achUi, asciiOnlyRange);
-            OswaldSemi13 = MakeFileFont(oswaldSemiPath, 13f  * achUi, asciiOnlyRange);
-            OswaldSemi14 = MakeFileFont(oswaldSemiPath, 14f  * achUi, asciiOnlyRange);
+            OswaldBody9  = MakeRoleFont(FontRole.Labels, oswaldPath,  9f  * achUi, asciiOnlyRange);
+            OswaldBody10 = MakeRoleFont(FontRole.Labels, oswaldPath, 10f  * achUi, asciiOnlyRange);
+            OswaldBody11 = MakeRoleFont(FontRole.Labels, oswaldPath, 11f  * achUi, asciiOnlyRange);
+            OswaldBody13 = MakeRoleFont(FontRole.Labels, oswaldPath, 13f  * achUi, asciiOnlyRange);
+            OswaldBody14 = MakeRoleFont(FontRole.Labels, oswaldPath, 14f  * achUi, asciiOnlyRange);
+            OswaldMed9   = MakeRoleFont(FontRole.Labels, oswaldMedPath,  9f  * achUi, asciiOnlyRange);
+            OswaldMed10  = MakeRoleFont(FontRole.Labels, oswaldMedPath, 10f  * achUi, asciiOnlyRange);
+            OswaldMed11  = MakeRoleFont(FontRole.Labels, oswaldMedPath, 11f  * achUi, asciiOnlyRange);
+            OswaldMed13  = MakeRoleFont(FontRole.Labels, oswaldMedPath, 13f  * achUi, asciiOnlyRange);
+            OswaldSemi9  = MakeRoleFont(FontRole.Labels, oswaldSemiPath,  9f  * achUi, asciiOnlyRange);
+            OswaldSemi10 = MakeRoleFont(FontRole.Labels, oswaldSemiPath, 10f  * achUi, asciiOnlyRange);
+            OswaldSemi11 = MakeRoleFont(FontRole.Labels, oswaldSemiPath, 11f  * achUi, asciiOnlyRange);
+            OswaldSemi12 = MakeRoleFont(FontRole.Labels, oswaldSemiPath, 12f  * achUi, asciiOnlyRange);
+            OswaldSemi13 = MakeRoleFont(FontRole.Labels, oswaldSemiPath, 13f  * achUi, asciiOnlyRange);
+            OswaldSemi14 = MakeRoleFont(FontRole.Labels, oswaldSemiPath, 14f  * achUi, asciiOnlyRange);
 
-            OutfitBody12 = MakeFileFont(outfitPath,     12f   * achUi);
-            OutfitBody13 = MakeFileFont(outfitPath,     13f   * achUi);
-            OutfitBody15 = MakeFileFont(outfitPath,     15.5f * achUi);
-            OutfitMed12  = MakeFileFont(outfitMedPath,  12f   * achUi);
-            OutfitMed13  = MakeFileFont(outfitMedPath,  13f   * achUi);
-            OutfitSemi15 = MakeFileFont(outfitSemiPath, 15.5f * achUi);
+            OutfitBody12 = MakeRoleFont(FontRole.Body, outfitPath,     12f   * achUi);
+            OutfitBody13 = MakeRoleFont(FontRole.Body, outfitPath,     13f   * achUi, cjkNames: true);
+            OutfitBody15 = MakeRoleFont(FontRole.Body, outfitPath,     15.5f * achUi, cjkNames: true);
+            OutfitMed12  = MakeRoleFont(FontRole.Body, outfitMedPath,  12f   * achUi);
+            OutfitMed13  = MakeRoleFont(FontRole.Body, outfitMedPath,  13f   * achUi);
+            OutfitSemi15 = MakeRoleFont(FontRole.Body, outfitSemiPath, 15.5f * achUi);
+            OutfitNameSemi15 = MakeRoleFont(FontRole.Names, outfitSemiPath, 15.5f * achUi, cjkNames: true);
 
             string glitchPath = Path.Combine(pluginDir, "Assets", "Fonts", "SDGlitch.ttf");
             if (System.IO.File.Exists(glitchPath))
@@ -934,50 +1147,23 @@ namespace CharacterSelectPlugin
                 GlitchFontLarge = MakeFileFont(glitchPath, 17f * achUi, asciiOnlyRange);
             }
 
-            OswaldSemiLarge    = MakeFileFont(oswaldSemiPath, 28f * achUi * statBoost, asciiOnlyRange);
-            OswaldSemiMid      = MakeFileFont(oswaldSemiPath, 22f * achUi * statBoost, asciiOnlyRange);
-            OswaldSemiMidSmall = MakeFileFont(oswaldSemiPath, 20f * achUi * statBoost, asciiOnlyRange);
-            OswaldSemiSmall    = MakeFileFont(oswaldSemiPath, 16f * achUi * statBoost, asciiOnlyRange);
-            OswaldSemiHero     = MakeFileFont(oswaldSemiPath, 60f * achUi, asciiOnlyRange);
-            OswaldSemiTitle    = MakeFileFont(oswaldSemiPath, 52f * achUi, asciiOnlyRange);
-            OswaldSemiBig      = MakeFileFont(oswaldSemiPath, 44f * achUi, asciiOnlyRange);
+            OswaldSemiLarge    = MakeRoleFont(FontRole.Display, oswaldSemiPath, 28f * achUi * statBoost, asciiOnlyRange);
+            OswaldSemiMid      = MakeRoleFont(FontRole.Display, oswaldSemiPath, 22f * achUi * statBoost, asciiOnlyRange);
+            OswaldSemiMidSmall = MakeRoleFont(FontRole.Display, oswaldSemiPath, 20f * achUi * statBoost, asciiOnlyRange);
+            OswaldSemiSmall    = MakeRoleFont(FontRole.Display, oswaldSemiPath, 16f * achUi * statBoost, asciiOnlyRange);
+            OswaldSemiHero     = MakeRoleFont(FontRole.Display, oswaldSemiPath, 60f * achUi, asciiOnlyRange);
+            OswaldSemiTitle    = MakeRoleFont(FontRole.Display, oswaldSemiPath, 52f * achUi, asciiOnlyRange);
+            OswaldSemiBig      = MakeRoleFont(FontRole.Display, oswaldSemiPath, 44f * achUi, asciiOnlyRange);
             StatLargeFont    = OswaldSemiLarge;
             StatMidFont      = OswaldSemiMid;
             StatMidSmallFont = OswaldSemiMidSmall;
             StatSmallFont    = OswaldSemiSmall;
 
-            // Preload only when starting in boutique mode; classic mode skips the wait to keep startup fast.
-            if (Configuration?.UseClassicLayout != true)
-            {
-                var preloadHandles = new IFontHandle?[]
-                {
-                    OswaldBody9, OswaldBody10, OswaldBody11, OswaldBody13, OswaldBody14,
-                    OswaldMed9, OswaldMed10, OswaldMed11, OswaldMed13,
-                    OswaldSemi9, OswaldSemi10, OswaldSemi11, OswaldSemi12, OswaldSemi13, OswaldSemi14,
-                    OswaldSemiLarge, OswaldSemiMid, OswaldSemiMidSmall, OswaldSemiSmall,
-                    OswaldSemiHero, OswaldSemiTitle, OswaldSemiBig,
-                    OutfitBody12, OutfitBody13, OutfitBody15,
-                    OutfitMed12, OutfitMed13, OutfitSemi15,
-                };
-                try { _ = PluginInterface.UiBuilder.FontAtlas.BuildFontsAsync(); }
-                catch (Exception ex) { Log.Warning($"[CS+] Initial font atlas build failed: {ex.Message}"); }
-
-                _ = Task.Run(() =>
-                {
-                    var tasks = preloadHandles
-                        .Where(h => h != null)
-                        .Select(h =>
-                        {
-                            try { return h!.WaitAsync(); }
-                            catch { return Task.CompletedTask; }
-                        })
-                        .ToArray();
-                    try { Task.WaitAll(tasks); }
-                    catch { /* font build failures shouldn't crash plugin */ }
-                });
-            }
+            // handle creation queues the atlas build on its own
 
             ClientState.Login += OnLogin;
+            ClientState.Logout += OnLogout;
+            ClientState.TerritoryChanged += OnTerritoryChanged;
             Framework.Update += FrameworkUpdate;
             string sessionFilePath = Path.Combine(PluginInterface.GetPluginConfigDirectory(), "boot_session.txt");
 
@@ -999,6 +1185,8 @@ namespace CharacterSelectPlugin
                 {
                     InstallToken = Guid.NewGuid().ToString("N");
                     File.WriteAllText(InstallTokenPath, InstallToken);
+                    Configuration.ShowWelcomePrompt = true;
+                    Configuration.Save();
                 }
                 else
                 {
@@ -1311,7 +1499,7 @@ namespace CharacterSelectPlugin
                 if (frame != _classicLayoutCacheFrame)
                 {
                     _classicLayoutCacheFrame = frame;
-                    _classicLayoutCachedValue = Instance?.Configuration?.UseClassicLayout == true;
+                    _classicLayoutCachedValue = Instance?.Configuration?.UseClassicLayout == true || FontFallbackThisSession;
                 }
                 return _classicLayoutCachedValue;
             }
@@ -1340,6 +1528,20 @@ namespace CharacterSelectPlugin
             request.Headers.TryAddWithoutValidation("X-Character-ContentId", contentId.ToString());
         }
 
+        private void OnTerritoryChanged(uint territoryId)
+        {
+            LocalTargetOverrides.Clear();
+        }
+
+        private string? lastKnownLocalPhysicalName;
+
+        private void OnLogout(int type, int code)
+        {
+            var name = lastKnownLocalPhysicalName;
+            if (!string.IsNullOrWhiteSpace(name))
+                _ = ClearNameSyncAsync(name);
+        }
+
         private void OnLogin()
         {
             if (ObjectTable.LocalPlayer == null || !ClientState.IsLoggedIn)
@@ -1347,6 +1549,9 @@ namespace CharacterSelectPlugin
                 Plugin.Log.Debug("[OnLogin] Ignored - LocalPlayer is null or not logged in.");
                 return;
             }
+
+            if (ObjectTable.LocalPlayer is { } lp && lp.HomeWorld.IsValid)
+                lastKnownLocalPhysicalName = $"{lp.Name.TextValue}@{lp.HomeWorld.Value.Name.ToString()}";
 
             autoLoadAlreadyRanThisStartup = false; // Reset assignment flag for new login
             loginTime = DateTime.Now;
@@ -1617,6 +1822,10 @@ namespace CharacterSelectPlugin
         {
             QuickSwitchWindow.IsOpen = !QuickSwitchWindow.IsOpen; // Toggle Window On/Off
         }
+        private void OnIconBarCommand(string command, string args)
+        {
+            IconBarWindow.IsOpen = !IconBarWindow.IsOpen;
+        }
         private void OnGalleryCommand(string command, string args)
         {
             // Emergency stop if costs are too high, I am broke!
@@ -1670,8 +1879,12 @@ namespace CharacterSelectPlugin
                 foreach (var oldKey in toRemove)
                     ActiveProfilesByPlayerName.Remove(oldKey);
 
-                // Register key
+                lastKnownLocalPhysicalName = fullKey;
                 ActiveProfilesByPlayerName[fullKey] = character.Name;
+                ApplyCharacterAccentPreference(character);
+                ipcProvider?.NotifySyncedNameChanged();
+                var appliedDesignName = designIndex >= 0 && designIndex < character.Designs.Count ? character.Designs[designIndex].Name : "";
+                ipcProvider?.NotifyCharacterChanged(character.Name, appliedDesignName);
                 string pluginCharacterKey = $"{character.Name}@{worldName}"; // plugin character identity
                 // OnInGameApply also detects physical character renames (same ContentId, different Name)
                 // and records the old server fileKey for likes/file migration on the next upload.
@@ -1689,26 +1902,24 @@ namespace CharacterSelectPlugin
                 var profileToSend = BuildProfileForUpload(character);
                 var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
 
-                // Force NeverShare only when the profile is genuinely private or missing.
-                // ExcludeFromNameSync must NOT suppress /viewrp - it only controls Name Sync
-                // visibility via the excludeFromNameSync parameter below (AllowOthersToSeeMyCSName).
+                // ExcludeFromNameSync only gates Name Sync via the parameter below, so it must
+                // not force NeverShare here or /viewrp breaks
                 bool shouldHideName = character.RPProfile == null ||
                                       character.RPProfile.Sharing == ProfileSharing.NeverShare;
 
                 _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
                     sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
-                    excludeFromNameSync: character.ExcludeFromNameSync);
-                Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {character.ExcludeFromNameSync})");
+                    excludeFromNameSync: IsNameSyncExcluded(character));
+                Plugin.Log.Info($"[ApplyProfile] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {IsNameSyncExcluded(character)})");
+
+                if (shouldHideName)
+                    _ = Plugin.ClearNameSyncAsync(fullKey);
             }
             SaveConfiguration();
             if (character == null) return;
 
-            // Capture original mod option state for baseline restoration.
-            // Needed when CR is on (mod enable/disable) OR when any design has
-            // per-design mod option overrides (e.g. Jeans vs Shorts on the same mod).
-            bool hasDesignsWithModOptions = character.Designs?.Any(d => d.ModOptionSettings?.Any() == true) == true;
-            bool hasCharacterModOptions = character.ModOptionSettings?.Any() == true;
-            if ((Configuration.EnableConflictResolution || hasDesignsWithModOptions || hasCharacterModOptions) && character.OriginalCollectionState == null)
+            // Capture baseline mod options for CR restoration.
+            if (Configuration.EnableConflictResolution && character.OriginalCollectionState == null)
             {
                 _ = Task.Run(async () =>
                 {
@@ -1764,7 +1975,7 @@ namespace CharacterSelectPlugin
             if (designIndex >= 0 && designIndex < character.Designs.Count)
             {
                 var design = character.Designs[designIndex];
-                
+
                 // Apply design-specific Secret Mode state using proper design-level conflict resolution
                 if (design.SecretModState != null && design.SecretModState.Any())
                 {
@@ -1776,15 +1987,15 @@ namespace CharacterSelectPlugin
                     _ = ApplySecretModState(character);
                 }
                 
-                // Restore baseline mod options, then apply the new design's overrides.
-                // This runs on EVERY design switch so that mods overridden by the
-                // previous design revert to their collection defaults when the new
-                // design doesn't override them.
                 bool hasOriginalState = character.OriginalCollectionState != null && character.OriginalCollectionState.Any();
                 bool newDesignHasOptions = design.ModOptionSettings != null && design.ModOptionSettings.Any();
+                var prevOverrideKeys = character.ActiveDesignModOverrides ?? new HashSet<string>();
 
-                if (hasOriginalState || newDesignHasOptions)
+                if (Configuration.EnableConflictResolution && (hasOriginalState || newDesignHasOptions || prevOverrideKeys.Count > 0))
                 {
+                    var newOverrideKeys = design.ModOptionSettings?.Keys.ToHashSet() ?? new HashSet<string>();
+                    character.ActiveDesignModOverrides = newOverrideKeys;
+
                     _ = Task.Run(async () =>
                     {
                         try
@@ -1792,13 +2003,23 @@ namespace CharacterSelectPlugin
                             var (success, collectionId, collectionName) = PenumbraIntegration.GetCurrentCollection();
                             if (success)
                             {
-                                // Step 1: restore collection to baseline (before any design overrides)
-                                if (hasOriginalState)
+                                // Revert only mods the previous design overrode that the new design no longer does
+                                var modsToRevert = prevOverrideKeys.Where(k => !newOverrideKeys.Contains(k)).ToList();
+                                if (modsToRevert.Count > 0 && hasOriginalState)
                                 {
-                                    Log.Info($"Restoring baseline mod options before applying design '{design.Name}'");
-                                    await PenumbraIntegration.ApplyModOptionsForDesign(collectionId, character.OriginalCollectionState);
-                                    if (newDesignHasOptions)
-                                        await Task.Delay(100); // brief pause before layering overrides
+                                    var revertState = new Dictionary<string, Dictionary<string, List<string>>>();
+                                    foreach (var modDir in modsToRevert)
+                                    {
+                                        if (character.OriginalCollectionState!.TryGetValue(modDir, out var baseline))
+                                            revertState[modDir] = baseline;
+                                    }
+                                    if (revertState.Count > 0)
+                                    {
+                                        Log.Info($"Reverting {revertState.Count} mod(s) overridden by previous design before applying '{design.Name}'");
+                                        await PenumbraIntegration.ApplyModOptionsForDesign(collectionId, revertState);
+                                        if (newDesignHasOptions)
+                                            await Task.Delay(100); // brief pause before layering overrides
+                                    }
                                 }
 
                                 // Step 2: layer the new design's overrides on top (if any)
@@ -1840,7 +2061,15 @@ namespace CharacterSelectPlugin
                         ApplyGlamourerDesignByName(design.GlamourerDesign);
                     }
 
-                    // Apply Customize+ profile via IPC if set
+                    if (Configuration.EnableAutomations)
+                    {
+                        var automation = !string.IsNullOrWhiteSpace(design.Automation)
+                            ? design.Automation
+                            : character.CharacterAutomation;
+                        if (!string.IsNullOrWhiteSpace(automation))
+                            ExecuteMacro($"/glamour automation enable {automation}", character, design.Name);
+                    }
+
                     if (!string.IsNullOrWhiteSpace(design.CustomizePlusProfile))
                     {
                         ApplyCustomizePlusProfile(design.CustomizePlusProfile);
@@ -1869,8 +2098,7 @@ namespace CharacterSelectPlugin
                     _ = ApplySecretModState(character);
                 }
 
-                // Apply character-level mod option settings (if any)
-                if (character.ModOptionSettings != null && character.ModOptionSettings.Any())
+                if (Configuration.EnableConflictResolution && character.ModOptionSettings != null && character.ModOptionSettings.Any())
                 {
                     _ = Task.Run(async () =>
                     {
@@ -2141,13 +2369,20 @@ namespace CharacterSelectPlugin
 
             WindowSystem.RemoveAllWindows();
             MainWindow.Dispose();
+            IconBarWindow?.Dispose();
             CommandManager.RemoveHandler(CommandName);
             CommandManager.RemoveHandler("/spose");
             CommandManager.RemoveHandler("/gallery");
             CommandManager.RemoveHandler("/wardrobe");
             CommandManager.RemoveHandler("/selectrevert");
+            CommandManager.RemoveHandler("/selecticons");
+#if DEV_BUILD
+            CommandManager.RemoveHandler("/select-vfxlib");
+#endif
             contextMenuManager?.Dispose();
-            Framework.Update -= FrameworkUpdate; // Fixed: should be -= not +=
+            Framework.Update -= FrameworkUpdate;
+            ClientState.Logout -= OnLogout;
+            ClientState.TerritoryChanged -= OnTerritoryChanged;
             PoseManager?.Dispose();
             dialogueProcessor?.Dispose();
             playerNameProcessor?.Dispose();
@@ -2158,6 +2393,10 @@ namespace CharacterSelectPlugin
 
             // Dispose Penumbra integration services
             PenumbraIntegration?.Dispose();
+
+#if DEV_BUILD
+            VfxManager?.Dispose();
+#endif
 
             // Clean up persisted macro memory
             CleanupPersistedMacro();
@@ -2201,6 +2440,22 @@ namespace CharacterSelectPlugin
                 ChatGui.PrintError("[Character Select+] Usage: /select <Character Name> [Design], /select random [Name], /select jobchange on|off, /select idle|sit|groundsit|doze [0-6], /select mods, /select save [CR], or /select whatsnew");
                 return;
             }
+
+#if DEV_BUILD
+            if (args.Trim().StartsWith("testvfx", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = args.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                string vfxPath = parts.Length >= 2 ? parts[1].Trim() : "vfx/common/eff/se_path112k1.avfx";
+                if (VfxManager == null || !VfxManager.Available)
+                {
+                    ChatGui.PrintError("[Character Select+] VFX hook unavailable (sig not found).");
+                    return;
+                }
+                VfxManager.SpawnOnSelf(vfxPath);
+                ChatGui.Print($"[Character Select+] Fired VFX: {vfxPath}");
+                return;
+            }
+#endif
 
             // Handle random selection
             if (args.Trim().StartsWith("random", StringComparison.OrdinalIgnoreCase))
@@ -2355,6 +2610,12 @@ namespace CharacterSelectPlugin
             // Handle mods subcommand
             if (args.Trim().Equals("mods", StringComparison.OrdinalIgnoreCase))
             {
+                if (!Configuration.EnableConflictResolution)
+                {
+                    ChatGui.PrintError("[Character Select+] The Mod Manager is part of Conflict Resolution. Enable it in Settings > Conflict Resolution first.");
+                    return;
+                }
+
                 if (SecretModeModWindow != null)
                 {
                     if (SecretModeModWindow.IsOpen)
@@ -2813,6 +3074,8 @@ namespace CharacterSelectPlugin
 
         private double _firstDrawUITime = -1.0;
         private bool _fontBakeTimeoutHandled = false;
+        private double _fontFallbackStart = 0;
+        private bool _fontFallbackAnnounced = false;
         private const double FontBakeTimeoutSeconds = 15.0;
 
         private void DrawUI()
@@ -2824,15 +3087,49 @@ namespace CharacterSelectPlugin
 
             ScaleChangeWatcher();
 
+            // self-heal out of the fallback
+            if (FontFallbackThisSession)
+            {
+                if (GateFontsAvailable())
+                {
+                    FontFallbackThisSession = false;
+                    _fontsReady = true;
+                    if (_fontFallbackAnnounced)
+                        ChatGui.Print("[CS+] Fonts finished loading, back to your normal layout.");
+                }
+                else if (!_fontFallbackAnnounced && Configuration?.UseClassicLayout == false
+                    && ImGui.GetTime() - _fontFallbackStart > 10.0)
+                {
+                    _fontFallbackAnnounced = true;
+                    ChatGui.Print("[CS+] Fonts are taking longer than usual, showing Classic Mode until they finish.");
+                }
+            }
+
             if (!FontsReady)
             {
-                if (!_fontBakeTimeoutHandled
-                    && Configuration?.UseClassicLayout == false
-                    && ImGui.GetTime() - _firstDrawUITime > FontBakeTimeoutSeconds)
+                // no rescue kicks: every extra BuildFontsAsync supersedes the
+                // in-flight bake and Dalamud discards its result, so the only
+                // winning move is to let the last queued build land
+                if (!_fontBakeTimeoutHandled && Configuration?.UseClassicLayout == false)
                 {
-                    _fontBakeTimeoutHandled = true;
-                    Configuration.UseClassicLayout = true;
-                    ChatGui.Print("[CS+] Fonts didn't load this launch, switched to Classic Mode.");
+                    string? failure = FirstGateFontFailure();
+                    if (failure != null)
+                    {
+                        _fontBakeTimeoutHandled = true;
+                        FontFallbackThisSession = true;
+                        _fontFallbackStart = ImGui.GetTime();
+                        _fontFallbackAnnounced = true;
+                        Log.Error($"[CS+] Font build failed: {failure}");
+                        ChatGui.Print("[CS+] A font failed to load, using Classic Mode for this session.");
+                    }
+                    else if (ImGui.GetTime() - _firstDrawUITime > FontBakeTimeoutSeconds)
+                    {
+                        _fontBakeTimeoutHandled = true;
+                        FontFallbackThisSession = true;
+                        _fontFallbackStart = ImGui.GetTime();
+                        _fontFallbackAnnounced = false;
+                        Log.Warning($"[CS+] Font timeout after {FontBakeTimeoutSeconds}s: {GateFontDiagnostics()}");
+                    }
                 }
                 return;
             }
@@ -2856,6 +3153,13 @@ namespace CharacterSelectPlugin
             if (Configuration.IsQuickSwitchWindowOpen != currentState)
             {
                 Configuration.IsQuickSwitchWindowOpen = currentState;
+                Configuration.Save();
+            }
+
+            bool iconBarState = IconBarWindow.IsOpen;
+            if (Configuration.IsIconBarOpen != iconBarState)
+            {
+                Configuration.IsIconBarOpen = iconBarState;
                 Configuration.Save();
             }
 
@@ -2971,6 +3275,7 @@ namespace CharacterSelectPlugin
                     AssignedGearset = NewCharacterGearset,
                     Alias = string.IsNullOrWhiteSpace(NewCharacterAlias) ? null : NewCharacterAlias,
                     ExcludeFromNameSync = NewCharacterExcludeFromNameSync,
+                    AccentFollowsNameplate = NewCharacterAccentFollows,
                     UseGlitchNameEffect = NewCharacterUseGlitchNameEffect,
                     AnimatedImagePath = NewCharacterAnimatedImagePath,
                     CutoutImagePath = NewCharacterCutoutImagePath,
@@ -2978,9 +3283,14 @@ namespace CharacterSelectPlugin
                 };
 
                 // Auto-create a Design based on Glamourer Design if available
-                if (!string.IsNullOrWhiteSpace(NewGlamourerDesign))
+                bool automationOnly = string.IsNullOrWhiteSpace(NewGlamourerDesign)
+                    && Configuration.EnableAutomations && !string.IsNullOrWhiteSpace(NewCharacterAutomation);
+                if (!string.IsNullOrWhiteSpace(NewGlamourerDesign) || automationOnly)
                 {
-                    string defaultDesignName = $"{NewCharacterName} {NewGlamourerDesign}";
+                    var sourceName = automationOnly ? NewCharacterAutomation : NewGlamourerDesign;
+                    string defaultDesignName = string.Equals(NewCharacterName?.Trim(), sourceName?.Trim(), StringComparison.OrdinalIgnoreCase)
+                        ? NewCharacterName
+                        : $"{NewCharacterName} {sourceName}";
                     var defaultDesign = new CharacterDesign(
                     defaultDesignName,
                     "",  // macro will be filled below
@@ -2990,7 +3300,9 @@ namespace CharacterSelectPlugin
 
                     // Sanitize to include Automation fallback
                     defaultDesign.Macro = SanitizeDesignMacro(
-                        $"/glamour apply {NewGlamourerDesign} | self\n/penumbra redraw self",
+                        automationOnly
+                            ? "/penumbra redraw self"
+                            : $"/glamour apply {NewGlamourerDesign} | self\n/penumbra redraw self",
                         defaultDesign,
                         newCharacter,
                         Configuration.EnableAutomations
@@ -3015,6 +3327,9 @@ namespace CharacterSelectPlugin
                     newCharacter.Designs.Add(defaultDesign); // Automatically add the default design
                 }
 
+                newCharacter.SortOrder = Configuration.Characters.Count > 0
+                    ? Configuration.Characters.Max(c => c.SortOrder) + 1
+                    : 0;
                 Configuration.Characters.Add(newCharacter);
                 SaveConfiguration();
 
@@ -3037,6 +3352,7 @@ namespace CharacterSelectPlugin
                 NewCharacterName = "";
                 NewCharacterAlias = "";
                 NewCharacterExcludeFromNameSync = false;
+                NewCharacterAccentFollows = false;
                 NewCharacterUseGlitchNameEffect = false;
                 NewCharacterMacros = "";
                 NewCharacterImagePath = null;
@@ -3216,7 +3532,13 @@ namespace CharacterSelectPlugin
                     return; // Stop - remaining commands are scheduled
                 }
 
-                // Try as plugin command first, fall back to game macro
+                if (IsRedundantCollectionCommand(cmd))
+                {
+                    Log.Debug($"Skipped redundant collection command: '{cmd}'");
+                    continue;
+                }
+
+                // Plugin command first, native game commands go through the macro system
                 bool handled = CommandManager.ProcessCommand(cmd);
                 if (handled)
                 {
@@ -3228,6 +3550,45 @@ namespace CharacterSelectPlugin
                     ExecuteGameCommands(new List<string> { cmd });
                     Log.Debug($"Game command executed: '{cmd}'");
                 }
+            }
+        }
+
+        // True when the command sets the self individual collection Penumbra already has assigned
+        private bool IsRedundantCollectionCommand(string cmd)
+        {
+            if (!cmd.StartsWith("/penumbra collection individual", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var parts = cmd.Split('|');
+            if (parts.Length != 3 || !string.Equals(parts[2].Trim(), "self", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var target = parts[1].Trim();
+            if (target.Length == 0)
+                return false;
+
+            // Reserved words in Penumbra's handler, never a plain assignment
+            if (string.Equals(target, "delete", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(target, "none", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var currentId = PenumbraIntegration?.GetPlayerIndividualCollectionId();
+            if (currentId == null)
+                return false;
+
+            try
+            {
+                var collections = penumbraGetCollectionsIpc?.InvokeFunc();
+                if (collections == null)
+                    return false;
+
+                // Skip only when the name maps to exactly one collection and it is the assigned one
+                var matches = collections.Where(kvp => string.Equals(kvp.Value, target, StringComparison.OrdinalIgnoreCase)).Take(2).ToList();
+                return matches.Count == 1 && matches[0].Key == currentId.Value;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -4123,8 +4484,6 @@ namespace CharacterSelectPlugin
                     return;
                 }
 
-                ChatGui.Print($"[DEBUG] Target kind: {rawTarget.ObjectKind}, Name: {rawTarget.Name}");
-
                 if (rawTarget.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Pc)
                 {
                     ChatGui.PrintError("[Character Select+] You must target a player.");
@@ -4175,7 +4534,7 @@ namespace CharacterSelectPlugin
                                                            c.LastInGameName.Equals(localName, StringComparison.OrdinalIgnoreCase));
                 if (match == null || match.RPProfile == null || match.RPProfile.IsEmpty())
                 {
-                    ChatGui.PrintError("[DEBUG] No matching Character Select+ profile or RPProfile found.");
+                    ChatGui.PrintError($"[Character Select+] No RP profile set for {targetName}.");
                     return;
                 }
 
@@ -4193,7 +4552,6 @@ namespace CharacterSelectPlugin
                 {
                     RPProfileViewer.SetExternalProfile(profile);
                     RPProfileViewer.IsOpen = true;
-                    ChatGui.Print($"[Character Select+] Received RP profile from {targetName}.");
                 }
                 else
                 {
@@ -4205,6 +4563,29 @@ namespace CharacterSelectPlugin
                 ChatGui.PrintError($"[Character Select+] IPC request failed: {ex.Message}");
             }
         }
+        public string GetRosterDisplayName(Character character)
+            => Configuration.RosterShowsCharacterName || string.IsNullOrWhiteSpace(character.Alias)
+                ? character.Name : character.Alias!;
+
+        // Per-character opt-out, or the applied name already matches the in-game name
+        public bool IsNameSyncExcluded(Character character)
+        {
+            if (character.ExcludeFromNameSync) return true;
+            if (!Configuration.SkipNameSyncWhenNamesMatch) return false;
+            var local = ObjectTable.LocalPlayer;
+            if (local == null) return false;
+            string display = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias! : character.Name;
+            return string.Equals(display.Trim(), local.Name.TextValue.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Per-character checkbox drives the "Match active character's colours" Visual setting
+        private void ApplyCharacterAccentPreference(Character character)
+        {
+            if (Configuration.CustomTheme.AccentFollowsNameplate == character.AccentFollowsNameplate) return;
+            Configuration.CustomTheme.AccentFollowsNameplate = character.AccentFollowsNameplate;
+            Configuration.Save();
+        }
+
         public void SetActiveCharacter(Character character)
         {
             Plugin.Log.Debug("[SetActiveCharacter] CALLED");
@@ -4216,7 +4597,10 @@ namespace CharacterSelectPlugin
                 string fullKey = $"{localName}@{worldName}"; // Who is logged in
                 string pluginCharacterKey = $"{character.Name}@{worldName}"; // CS+ character identity
 
+                lastKnownLocalPhysicalName = fullKey;
                 ActiveProfilesByPlayerName[fullKey] = character.Name;
+                ApplyCharacterAccentPreference(character);
+                ipcProvider?.NotifySyncedNameChanged();
 
                 // Track which physical character last used this profile. OnInGameApply also detects
                 // physical character renames (same ContentId, different Name) for migration.
@@ -4253,16 +4637,18 @@ namespace CharacterSelectPlugin
                 var profileToSend = BuildProfileForUpload(character);
                 var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
 
-                // Force NeverShare only when the profile is genuinely private or missing.
-                // ExcludeFromNameSync must NOT suppress /viewrp - it only controls Name Sync
-                // visibility via the excludeFromNameSync parameter below (AllowOthersToSeeMyCSName).
+                // ExcludeFromNameSync only gates Name Sync via the parameter below, so it must
+                // not force NeverShare here or /viewrp breaks
                 bool shouldHideName = character.RPProfile == null ||
                                       character.RPProfile.Sharing == ProfileSharing.NeverShare;
 
                 _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
                     sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
-                    excludeFromNameSync: character.ExcludeFromNameSync);
-                Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {character.ExcludeFromNameSync})");
+                    excludeFromNameSync: IsNameSyncExcluded(character));
+                Plugin.Log.Info($"[SetActiveCharacter] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {IsNameSyncExcluded(character)})");
+
+                if (shouldHideName)
+                    _ = Plugin.ClearNameSyncAsync(fullKey);
             }
         }
         public async Task TryRequestRPProfile(string targetName)
@@ -4273,7 +4659,6 @@ namespace CharacterSelectPlugin
             {
                 RPProfileViewer.SetExternalProfile(profile);
                 RPProfileViewer.IsOpen = true;
-                ChatGui.Print($"[Character Select+] Received RP profile for {targetName}.");
                 AchievementTracker?.OnViewRPProfile();
             }
             else
@@ -4379,6 +4764,27 @@ namespace CharacterSelectPlugin
                 // Activity tracking
                 LastActiveTime = Configuration.ShowRecentlyActiveStatus ? DateTime.UtcNow : null,
             };
+        }
+
+        public static async Task ClearNameSyncAsync(string physicalName)
+        {
+            if (!IsServerEnabled()) return;
+            if (string.IsNullOrWhiteSpace(physicalName)) return;
+
+            try
+            {
+                using var http = new HttpClient();
+                string urlSafeName = Uri.EscapeDataString(physicalName);
+                var request = new HttpRequestMessage(HttpMethod.Post,
+                    $"https://character-select-profile-server-production.up.railway.app/names/clear/{urlSafeName}");
+                AddCharacterAuthHeaders(request);
+                var response = await http.SendAsync(request);
+                Plugin.Log.Debug($"[ClearNameSync] {physicalName} -> {(int)response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Debug($"[ClearNameSync] Failed (non-blocking): {ex.Message}");
+            }
         }
 
         public static async Task UploadProfileAsync(RPProfile profile, string characterName, bool isCharacterApplication = true, ProfileSharing? sharingOverride = null, bool? excludeFromNameSync = null)
@@ -4848,6 +5254,9 @@ namespace CharacterSelectPlugin
         {
             if (Configuration.EnableSafeMode)
                 return;
+
+            dialogueProcessor?.ApplyConfigurationState();
+
             if (!ClientState.IsLoggedIn || ObjectTable.LocalPlayer == null)
                 return;
 
@@ -4940,7 +5349,8 @@ namespace CharacterSelectPlugin
                         if (design != null)
                         {
                             Plugin.Log.Debug($"[JobSwitch] Reapplying design {design.Name} for {designCharacter.Name} (filtered)");
-                            ExecuteMacro(design.Macro, designCharacter, design.Name, filterJobChanges: true);
+                            var designMacro = design.IsAdvancedMode ? design.AdvancedMacro : design.Macro;
+                            ExecuteMacro(designMacro, designCharacter, design.Name, filterJobChanges: true);
                             reapplied = true;
                         }
                     }
@@ -5937,6 +6347,9 @@ namespace CharacterSelectPlugin
                 string fullKey = $"{localName}@{worldName}";
                 ActiveProfilesByPlayerName.Remove(fullKey);
                 activeCharacter = null;
+                ipcProvider?.NotifySyncedNameChanged();
+
+                _ = ClearNameSyncAsync(fullKey);
 
                 // 8. Refresh party list to restore original name
                 playerNameProcessor?.RefreshPartyList();
@@ -5946,6 +6359,8 @@ namespace CharacterSelectPlugin
                 builder.AddText("[").AddBlue("CS+", true).AddText("] ");
                 builder.AddText("Reverted to default state");
                 ChatGui.Print(builder.BuiltString);
+
+                LocalTargetOverrides.Clear();
 
                 AchievementTracker?.OnRevert();
                 Log.Info("[RevertAllChanges] Successfully reverted all CS+ changes via IPC");
@@ -6016,10 +6431,7 @@ namespace CharacterSelectPlugin
             }
         }
 
-        /// <summary>
-        /// Triggers a Penumbra redraw for the local player.
-        /// </summary>
-        private void TriggerPenumbraRedraw()
+        public void TriggerPenumbraRedraw()
         {
             try
             {
@@ -6077,6 +6489,8 @@ namespace CharacterSelectPlugin
             }
 
             // Apply character first
+            activeCharacter = selectedCharacter;
+            NotifySyncedNameChanged();
             ExecuteMacro(selectedCharacter.Macros, selectedCharacter, null);
 
             // Switch Penumbra UI collection to match the character's collection
@@ -6097,7 +6511,8 @@ namespace CharacterSelectPlugin
             if (availableDesigns.Count > 0)
             {
                 var selectedDesign = availableDesigns[random.Next(availableDesigns.Count)];
-                ExecuteMacro(selectedDesign.Macro, selectedCharacter, selectedDesign.Name);
+                var randomDesignMacro = selectedDesign.IsAdvancedMode ? selectedDesign.AdvancedMacro : selectedDesign.Macro;
+                ExecuteMacro(randomDesignMacro, selectedCharacter, selectedDesign.Name);
 
                 // Apply conflict resolution if enabled
                 if (Configuration.EnableConflictResolution)
@@ -6197,16 +6612,17 @@ namespace CharacterSelectPlugin
                 var profileToSend = BuildProfileForUpload(selectedCharacter);
                 var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
 
-                // Force NeverShare only when the profile is genuinely private or missing.
-                // ExcludeFromNameSync must NOT suppress /viewrp - it only controls Name Sync
-                // visibility via the excludeFromNameSync parameter below (AllowOthersToSeeMyCSName).
+                // ExcludeFromNameSync only gates Name Sync via the parameter below, so it must
+                // not force NeverShare here or /viewrp breaks
                 bool shouldHideName = selectedCharacter.RPProfile == null ||
                                       selectedCharacter.RPProfile.Sharing == ProfileSharing.NeverShare;
 
                 _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name,
                     sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
-                    excludeFromNameSync: selectedCharacter.ExcludeFromNameSync);
-                Log.Info($"[RandomSelect] ✓ Uploaded profile for {selectedCharacter.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {selectedCharacter.ExcludeFromNameSync})");
+                    excludeFromNameSync: IsNameSyncExcluded(selectedCharacter));
+                Log.Info($"[RandomSelect] ✓ Uploaded profile for {selectedCharacter.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {IsNameSyncExcluded(selectedCharacter)})");
+                if (shouldHideName)
+                    _ = Plugin.ClearNameSyncAsync(selectedCharacter.LastInGameName ?? selectedCharacter.Name);
             }
         }
 
@@ -6264,7 +6680,7 @@ namespace CharacterSelectPlugin
             }
             
             // Execute the selected design's macro
-            ExecuteMacro(selectedDesign.Macro, character, selectedDesign.Name);
+            ExecuteMacro(selectedDesign.IsAdvancedMode ? selectedDesign.AdvancedMacro : selectedDesign.Macro, character, selectedDesign.Name);
 
             // Update last used design tracking
             Configuration.LastUsedDesignCharacterKey = character.Name;
@@ -6291,16 +6707,17 @@ namespace CharacterSelectPlugin
                 var profileToSend = BuildProfileForUpload(character);
                 var effectiveSharing = GetEffectiveSharingForUpload(character, fullKey);
 
-                // Force NeverShare only when the profile is genuinely private or missing.
-                // ExcludeFromNameSync must NOT suppress /viewrp - it only controls Name Sync
-                // visibility via the excludeFromNameSync parameter below (AllowOthersToSeeMyCSName).
+                // ExcludeFromNameSync only gates Name Sync via the parameter below, so it must
+                // not force NeverShare here or /viewrp breaks
                 bool shouldHideName = character.RPProfile == null ||
                                       character.RPProfile.Sharing == ProfileSharing.NeverShare;
 
                 _ = Plugin.UploadProfileAsync(profileToSend, character.LastInGameName ?? character.Name,
                     sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
-                    excludeFromNameSync: character.ExcludeFromNameSync);
-                Log.Info($"[RandomDesign] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {character.ExcludeFromNameSync})");
+                    excludeFromNameSync: IsNameSyncExcluded(character));
+                Log.Info($"[RandomDesign] ✓ Uploaded profile for {character.Name} (sharing: {(shouldHideName ? "NeverShare (hidden)" : effectiveSharing.ToString())}, excluded: {IsNameSyncExcluded(character)})");
+                if (shouldHideName)
+                    _ = Plugin.ClearNameSyncAsync(character.LastInGameName ?? character.Name);
             }
         }
 
@@ -6370,7 +6787,7 @@ namespace CharacterSelectPlugin
             // Execute the design's macro if one was selected
             if (selectedDesign != null)
             {
-                ExecuteMacro(selectedDesign.Macro, selectedCharacter, selectedDesign.Name);
+                ExecuteMacro(selectedDesign.IsAdvancedMode ? selectedDesign.AdvancedMacro : selectedDesign.Macro, selectedCharacter, selectedDesign.Name);
 
                 // Update last used design tracking
                 Configuration.LastUsedDesignCharacterKey = selectedCharacter.Name;
@@ -6398,16 +6815,17 @@ namespace CharacterSelectPlugin
                 var profileToSend = BuildProfileForUpload(selectedCharacter);
                 var effectiveSharing = GetEffectiveSharingForUpload(selectedCharacter, fullKey);
 
-                // Force NeverShare only when the profile is genuinely private or missing.
-                // ExcludeFromNameSync must NOT suppress /viewrp - it only controls Name Sync
-                // visibility via the excludeFromNameSync parameter below (AllowOthersToSeeMyCSName).
+                // ExcludeFromNameSync only gates Name Sync via the parameter below, so it must
+                // not force NeverShare here or /viewrp breaks
                 bool shouldHideName = selectedCharacter.RPProfile == null ||
                                       selectedCharacter.RPProfile.Sharing == ProfileSharing.NeverShare;
 
                 _ = Plugin.UploadProfileAsync(profileToSend, selectedCharacter.LastInGameName ?? selectedCharacter.Name,
                     sharingOverride: shouldHideName ? ProfileSharing.NeverShare : effectiveSharing,
-                    excludeFromNameSync: selectedCharacter.ExcludeFromNameSync);
+                    excludeFromNameSync: IsNameSyncExcluded(selectedCharacter));
                 Log.Info($"[RandomGroup] ✓ Selected {selectedCharacter.Name} from group '{group.Name}'");
+                if (shouldHideName)
+                    _ = Plugin.ClearNameSyncAsync(selectedCharacter.LastInGameName ?? selectedCharacter.Name);
             }
         }
 
@@ -6820,7 +7238,7 @@ namespace CharacterSelectPlugin
             }
         }
 
-        public async Task ApplyDesignModState(Character character, CharacterDesign design)
+        public async Task ApplyDesignModState(Character character, CharacterDesign design, Guid? collectionOverride = null)
         {
             // Check if Conflict Resolution is enabled
             if (!Configuration.EnableConflictResolution || design.SecretModState == null)
@@ -6837,9 +7255,13 @@ namespace CharacterSelectPlugin
                     return;
                 }
                 
-                // Resolve the character's collection GUID by name
+                // Resolve the collection GUID by name, or use the caller-provided one if given.
                 Guid collectionId;
-                if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
+                if (collectionOverride.HasValue && collectionOverride.Value != Guid.Empty)
+                {
+                    collectionId = collectionOverride.Value;
+                }
+                else if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
                 {
                     var collections = penumbraGetCollectionsIpc?.InvokeFunc();
                     if (collections == null)
@@ -7045,7 +7467,7 @@ namespace CharacterSelectPlugin
             }
         }
         
-        public async Task ApplySecretModState(Character character)
+        public async Task ApplySecretModState(Character character, Guid? collectionOverride = null)
         {
             // Check if Conflict Resolution is enabled
             if (!Configuration.EnableConflictResolution)
@@ -7058,9 +7480,13 @@ namespace CharacterSelectPlugin
             {
                 Log.Info($"Applying Secret Mode mod state for character: {character.Name}");
 
-                // Resolve the character's collection GUID by name
+                // Resolve the collection GUID by name, or use the caller-provided one if given.
                 Guid collectionId;
-                if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
+                if (collectionOverride.HasValue && collectionOverride.Value != Guid.Empty)
+                {
+                    collectionId = collectionOverride.Value;
+                }
+                else if (!string.IsNullOrWhiteSpace(character.PenumbraCollection))
                 {
                     var collections = penumbraGetCollectionsIpc?.InvokeFunc();
                     if (collections == null)
@@ -7455,8 +7881,8 @@ namespace CharacterSelectPlugin
                         }
                     }
                 }
-                
-                return target;
+
+                return target ?? softTarget ?? mouseOverTarget;
             }
             catch (Exception ex)
             {
@@ -7532,10 +7958,8 @@ namespace CharacterSelectPlugin
             }
         }
         
-        /// <summary>
-        /// Apply character/design to target using direct IPC calls - thread-safe overload
-        /// </summary>
-        public async Task<bool> ApplyToTarget(Character character, int designIndex, int objectIndex, Dalamud.Game.ClientState.Objects.Enums.ObjectKind objectKind, string targetName)
+        // Thread-safe overload
+        public async Task<bool> ApplyToTarget(Character character, int designIndex, int objectIndex, Dalamud.Game.ClientState.Objects.Enums.ObjectKind objectKind, string targetName, bool skipRateLimit = false)
         {
             try
             {
@@ -7553,8 +7977,8 @@ namespace CharacterSelectPlugin
                     return false;
                 }
                 
-                // Check for rapid successive applications to prevent crashes
-                if (lastTargetApplicationTime.TryGetValue(objectIndex, out var lastTime))
+                // Check for rapid successive applications to prevent crashes (skipped for deliberate live re-dress)
+                if (!skipRateLimit && lastTargetApplicationTime.TryGetValue(objectIndex, out var lastTime))
                 {
                     var timeSinceLastApplication = DateTime.Now - lastTime;
                     if (timeSinceLastApplication < minimumTargetApplicationInterval)
@@ -7576,7 +8000,14 @@ namespace CharacterSelectPlugin
                 }
                 
                 Log.Information($"[ApplyToTarget] Applying {character.Name} to target: {targetName} (Index: {objectIndex})");
-                
+
+                if (Configuration.ShowCSNameOnAppliedTargets)
+                {
+                    var preApplyTarget = objectIndex >= 0 && objectIndex < ObjectTable.Length ? ObjectTable[objectIndex] : null;
+                    if (preApplyTarget != null)
+                        LocalTargetOverrides.Register(preApplyTarget.GameObjectId, character);
+                }
+
                 // Get the macro text to parse
                 string macroText;
                 if (designIndex >= 0 && designIndex < character.Designs.Count)
@@ -7598,7 +8029,7 @@ namespace CharacterSelectPlugin
                 // Parse macro text and execute via IPC after conflict resolution has set up mod state
                 var commands = ParseMacroForTargetApplication(macroText);
                 var success = await ExecuteTargetCommands(commands, objectIndex);
-                
+
                 return success;
             }
             catch (Exception ex)
@@ -7608,7 +8039,7 @@ namespace CharacterSelectPlugin
                 return false;
             }
         }
-        
+
         /// <summary>
         /// Apply Conflict Resolution mod state to target object
         /// </summary>
@@ -7680,32 +8111,29 @@ namespace CharacterSelectPlugin
                 
                 // Check if we have any conflict resolution data to apply
                 bool hasCharacterMods = character.SecretModState != null && character.SecretModState.Any();
-                bool hasDesignMods = designIndex >= 0 && designIndex < character.Designs.Count && 
-                                   character.Designs[designIndex].SecretModState != null && 
+                bool hasDesignMods = designIndex >= 0 && designIndex < character.Designs.Count &&
+                                   character.Designs[designIndex].SecretModState != null &&
                                    character.Designs[designIndex].SecretModState.Any();
-                
+
                 if (!hasCharacterMods && !hasDesignMods)
                 {
                     return; // Exit early if no conflict resolution data is available
                 }
-                
-                // Apply character-level mod state first
-                if (hasCharacterMods)
-                {
-                    await ApplyModStateToObject(character, currentCollectionId, objectIndex);
-                }
-                
-                // Apply design-specific mod state if we're applying a specific design
+
+                // Assign the collection to the target first so Penumbra instantiates it; otherwise the
+                // mod-state writes below hit an uncreated collection and return ModMissing (wrong look).
+                penumbraSetCollectionForObjectIpc?.InvokeFunc(objectIndex, currentCollectionId, true, true);
+                await Task.Delay(300);
+
+                // Run CR via the normal apply path (design-level when set, else character-level),
+                // targeting the object's assigned collection.
                 if (hasDesignMods)
                 {
-                    var design = character.Designs[designIndex];
-                    
-                    // Create a temporary character with the design's mod state for ApplyModStateToObject
-                    var tempCharacter = new Character("", "", null, new List<CharacterDesign>(), Vector3.Zero, "", "", "", "", "", "", Vector3.Zero, Vector3.Zero, "", "", "") 
-                    { 
-                        SecretModState = design.SecretModState 
-                    };
-                    await ApplyModStateToObject(tempCharacter, currentCollectionId, objectIndex);
+                    await ApplyDesignModState(character, character.Designs[designIndex], currentCollectionId);
+                }
+                else if (hasCharacterMods)
+                {
+                    await ApplySecretModState(character, currentCollectionId);
                 }
             }
             catch (Exception ex)
@@ -7714,123 +8142,7 @@ namespace CharacterSelectPlugin
             }
         }
         
-        /// <summary>
-        /// Apply mod state to a specific object (target)
-        /// </summary>
-        private async Task ApplyModStateToObject(Character character, Guid collectionId, int objectIndex)
-        {
-            try
-            {
-                if (character.SecretModState == null || !character.SecretModState.Any())
-                    return;
-                
-                // Get all mod settings for the collection using robust method
-                var modSettings = PenumbraIntegration?.GetAllModSettingsRobust(collectionId);
-                if (modSettings == null)
-                {
-                    return;
-                }
-                
-                // Use robust IPC calling for TrySetMod as well - actually test the methods work
-                ICallGateSubscriber<Guid, string, string, bool, int>? trySetModIpc = null;
-                var trySetModMethods = new[] { "Penumbra.TrySetMod.V5", "Penumbra.TrySetMod" };
-                
-                foreach (var method in trySetModMethods)
-                {
-                    try
-                    {
-                        var testIpc = PluginInterface.GetIpcSubscriber<Guid, string, string, bool, int>(method);
-                        if (testIpc != null)
-                        {
-                            // Probe with a dummy call; throws if the IPC method isn't registered
-                            var dummyResult = testIpc.InvokeFunc(Guid.Empty, "", "", false);
-                            // If we get here, the method works (even if it returns an error, it's registered)
-                            trySetModIpc = testIpc;
-                            break;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        continue;
-                    }
-                }
-                
-                if (trySetModIpc == null)
-                {
-                    return;
-                }
-                
-                var modsToDisable = new List<string>();
-                var modsToEnable = new List<string>();
-                
-                // Collect mods that need state changes
-                foreach (var (modDir, shouldEnable) in character.SecretModState)
-                {
-                    if (!modSettings.ContainsKey(modDir))
-                        continue;
-                    
-                    var currentSettings = modSettings[modDir];
-                    var isCurrentlyEnabled = currentSettings.Item1;
-                    
-                    if (isCurrentlyEnabled != shouldEnable)
-                    {
-                        if (shouldEnable)
-                            modsToEnable.Add(modDir);
-                        else
-                            modsToDisable.Add(modDir);
-                    }
-                }
-                
-                // Apply changes with error handling like normal character application
-                var allTasks = new List<Task>();
-                
-                foreach (var modDir in modsToDisable)
-                {
-                    allTasks.Add(Task.Run(() =>
-                    {
-                        try
-                        {
-                            var result = trySetModIpc.InvokeFunc(collectionId, modDir, "", false);
-                            if (result != 0) // 0 = Success
-                            {
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error($"[ApplyToTarget] Error disabling mod {modDir} on object {objectIndex}: {ex.Message}");
-                        }
-                    }));
-                }
-                
-                foreach (var modDir in modsToEnable)
-                {
-                    allTasks.Add(Task.Run(() =>
-                    {
-                        try
-                        {
-                            var result = trySetModIpc.InvokeFunc(collectionId, modDir, "", true);
-                            if (result != 0) // 0 = Success
-                            {
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error($"[ApplyToTarget] Error enabling mod {modDir} on object {objectIndex}: {ex.Message}");
-                        }
-                    }));
-                }
-                
-                await Task.WhenAll(allTasks);
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"Error applying mod state to object: {ex}");
-            }
-        }
-        
-        /// <summary>
-        /// Parse macro text and extract commands for target application
-        /// </summary>
+        // Pulls the commands out of macro text for the target-apply path
         private List<object> ParseMacroForTargetApplication(string macroText)
         {
             var commands = new List<object>();
@@ -8075,12 +8387,14 @@ namespace CharacterSelectPlugin
                     
                     if (targetCollection.Key == Guid.Empty)
                     {
+                        Log.Warning($"[Penumbra] Collection '{command.CollectionName}' not found for object {objectIndex}");
                         return false;
                     }
-                    
+
                     // Apply collection to target object (using collection GUID)
                     var (ec, pair) = penumbraSetCollectionForObjectIpc?.InvokeFunc((int)objectIndex, targetCollection.Key, true, true) ?? (-1, null);
-                    
+                    Log.Info($"[Penumbra] SetCollectionForObject(index={objectIndex}, '{command.CollectionName}') returned ec={ec}");
+
                     if (ec == 0 || ec == 1) // Success or NothingChanged
                     {
                         return true;
@@ -8144,10 +8458,10 @@ namespace CharacterSelectPlugin
                         return false;
                     }
                     
-                    // Apply design via IPC with correct parameters and default flags
-                    // DesignDefault = Once | Equipment | Customization = 0x01 | 0x02 | 0x04 = 0x07
-                    const ulong designDefaultFlags = 0x07uL; // ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization
-                    var result = glamourerApplyDesignIpc!.InvokeFunc(targetDesign.Key, (int)objectIndex, 0u, designDefaultFlags);
+                    const ulong onceFlags = 0x07uL;  // ApplyFlag.Once | ApplyFlag.Equipment | ApplyFlag.Customization
+                    const ulong fixedFlags = 0x06uL; // ApplyFlag.Equipment | ApplyFlag.Customization
+                    var flags = objectIndex >= 200 ? fixedFlags : onceFlags;
+                    var result = glamourerApplyDesignIpc!.InvokeFunc(targetDesign.Key, (int)objectIndex, 0u, flags);
                     
                     return result == 0; // 0 = Success
                 }

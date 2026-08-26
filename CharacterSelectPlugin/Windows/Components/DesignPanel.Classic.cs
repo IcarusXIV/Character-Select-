@@ -102,23 +102,11 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (ImGui.Button("+##AddDesign", new Vector2(buttonSize, buttonSize)))
             {
-                var io = ImGui.GetIO();
-                bool shiftHeld = io.KeyShift;
-
-                if (shiftHeld)
-                {
-                    isSecretDesignMode = false;
-                    isImportWindowOpen = true;
-                    targetForDesignImport = character;
-                }
-                else
-                {
-                    isSecretDesignMode = false;
-                    AddNewDesign();
-                    editedDesignMacro = GenerateDesignMacro(character);
-                    if (isAdvancedModeDesign)
-                        advancedDesignMacroText = editedDesignMacro;
-                }
+                isSecretDesignMode = false;
+                AddNewDesign();
+                editedDesignMacro = GenerateDesignMacro(character);
+                if (isAdvancedModeDesign)
+                    advancedDesignMacroText = editedDesignMacro;
             }
 
             plugin.DesignPanelAddButtonPos = ImGui.GetItemRectMin();
@@ -130,7 +118,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
-                ImGui.Text("Click to add a new design\nHold Shift to import from another character");
+                ImGui.Text("Add a new design");
                 ImGui.EndTooltip();
             }
 
@@ -210,19 +198,8 @@ namespace CharacterSelectPlugin.Windows.Components
             {
                 if (activeCharacterIndex >= 0 && activeCharacterIndex < plugin.Characters.Count)
                 {
-                    var io = ImGui.GetIO();
                     var selectedCharacter = plugin.Characters[activeCharacterIndex];
-                    
-                    if (io.KeyCtrl && io.KeyShift)
-                    {
-                        // Ctrl+Shift: Smart snapshot with CR
-                        CreateSmartSnapshot(selectedCharacter, useConflictResolution: true);
-                    }
-                    else
-                    {
-                        // Regular click: Smart snapshot without CR
-                        CreateSmartSnapshot(selectedCharacter, useConflictResolution: false);
-                    }
+                    CreateSmartSnapshot(selectedCharacter, plugin.Configuration.EnableConflictResolution);
                 }
             }
 
@@ -233,9 +210,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
             if (ImGui.IsItemHovered())
             {
-                string tooltip = "Create Design from Current Look\n• Click: Smart snapshot";
-                if (plugin.Configuration.EnableConflictResolution)
-                    tooltip += "\n• Ctrl+Shift+Click: Smart snapshot with Conflict Resolution";
+                string tooltip = plugin.Configuration.EnableConflictResolution
+                    ? "Snapshot current look as a new Design (with Conflict Resolution)"
+                    : "Snapshot current look as a new Design";
                 ImGui.SetTooltip(tooltip);
             }
 
@@ -404,7 +381,15 @@ namespace CharacterSelectPlugin.Windows.Components
             // Mod Manager (Conflict Resolution)
             if (plugin.Configuration.EnableConflictResolution)
             {
-                if (ImGui.Checkbox("Use Conflict Resolution", ref isSecretDesignMode))
+                bool crDesignNameValid = !string.IsNullOrWhiteSpace(editedDesignName);
+
+                if (!crDesignNameValid)
+                    ImGui.BeginDisabled();
+                bool crCheckboxClicked = ImGui.Checkbox("Use Conflict Resolution", ref isSecretDesignMode);
+                if (!crDesignNameValid)
+                    ImGui.EndDisabled();
+
+                if (crCheckboxClicked)
                 {
                     if (!isAdvancedModeDesign)
                     {
@@ -412,10 +397,15 @@ namespace CharacterSelectPlugin.Windows.Components
                             ? GenerateSecretDesignMacro(character)
                             : GenerateDesignMacro(character);
                     }
+
+                    if (isSecretDesignMode && crDesignNameValid)
+                        PerformQuickGearHairUpdate(character);
                 }
-                if (ImGui.IsItemHovered())
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
-                    ImGui.SetTooltip("Manual mod state for this design.");
+                    ImGui.SetTooltip(crDesignNameValid
+                        ? "Manual mod state for this design."
+                        : "Enter a Design Name first.");
                 }
 
                 if (isSecretDesignMode)
@@ -438,7 +428,7 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void DrawClassicGlamourerField(Character character, float inputWidth, float scale)
 {
-            ImGui.Text("Glamourer Design*");
+            ImGui.Text(plugin.Configuration.EnableAutomations ? "Glamourer Design" : "Glamourer Design*");
 
             // Tooltip
             ImGui.SameLine();
@@ -457,8 +447,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SetCursorPosX(10 * scale);
             var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+            var currentGlamourer = plugin.IntegrationListProvider?.GetCurrentGlamourerDesign();
 
-            if (AutocompleteCombo.Draw("##GlamourerDesign", ref editedGlamourerDesign, glamourerOptions, inputWidth, "Select design..."))
+            if (AutocompleteCombo.Draw("##GlamourerDesign", ref editedGlamourerDesign, glamourerOptions, inputWidth, "Select design...", currentActive: currentGlamourer))
             {
                 plugin.EditedGlamourerDesign = editedGlamourerDesign;
 
@@ -928,7 +919,9 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.SetCursorPosX(buttonPosX);
 
-            bool canSave = !string.IsNullOrWhiteSpace(editedDesignName) && !string.IsNullOrWhiteSpace(editedGlamourerDesign);
+            bool canSave = !string.IsNullOrWhiteSpace(editedDesignName)
+                && (!string.IsNullOrWhiteSpace(editedGlamourerDesign)
+                    || (plugin.Configuration.EnableAutomations && !string.IsNullOrWhiteSpace(editedAutomation)));
 
             // Center text in buttons
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4 * scale, 4 * scale));
@@ -1675,6 +1668,9 @@ namespace CharacterSelectPlugin.Windows.Components
 {
             if (!isImportWindowOpen || targetForDesignImport == null)
                 return;
+            int frame = ImGui.GetFrameCount();
+            if (_importDrawnFrame == frame) return;
+            _importDrawnFrame = frame;
 
             var windowSize = new Vector2(400 * scale, 450 * scale);
             ImGui.SetNextWindowSize(windowSize, ImGuiCond.FirstUseEver);
@@ -1686,60 +1682,20 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.Text($"Import designs to: {targetForDesignImport.Name}");
                 ImGui.Separator();
 
-                ImGui.BeginChild("ImportScrollArea", new Vector2(0, -40 * scale), false);
-
-                var charactersWithDesigns = plugin.Characters
-                    .Where(c => c != targetForDesignImport && c.Designs.Count > 0)
-                    .OrderBy(c => c.Name)
-                    .ToList();
-
-                foreach (var character in charactersWithDesigns)
+                if (ImGui.BeginTabBar("##ClassicImportTabs"))
                 {
-                    if (ImGui.CollapsingHeader($"{character.Name} ({character.Designs.Count} designs)"))
+                    if (ImGui.BeginTabItem("From Characters"))
                     {
-                        float indentAmount = 15f * scale;
-                        ImGui.Indent(indentAmount);
-
-                        foreach (var design in character.Designs)
-                        {
-                            float buttonSize = 18f * scale;
-
-                            // Green plus symbol, use design GUID for unique ID (names can collide)
-                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.2f, 0.8f, 0.2f, 1.0f));
-                            ImGui.PushFont(UiBuilder.IconFont);
-
-                            if (ImGui.Selectable($"\uf067##import_{design.Id}", false, ImGuiSelectableFlags.None, new Vector2(buttonSize, buttonSize)))
-                            {
-                                // Clone the entire design using JSON serialization (exact copy like copy-paste in config)
-                                var json = JsonConvert.SerializeObject(design);
-                                var clone = JsonConvert.DeserializeObject<CharacterDesign>(json);
-                                clone.Name = design.Name + " (Copy)";
-                                clone.Id = Guid.NewGuid();
-                                clone.DateAdded = DateTime.UtcNow;
-                                clone.FolderId = null; // reset so it appears at root level
-
-                                targetForDesignImport.Designs.Add(clone);
-                                plugin.SaveConfiguration();
-                                plugin.AchievementTracker?.OnDesignImported();
-                            }
-
-                            ImGui.PopFont();
-                            ImGui.PopStyleColor();
-
-                            if (ImGui.IsItemHovered())
-                            {
-                                ImGui.SetTooltip($"Import '{design.Name}'");
-                            }
-
-                            ImGui.SameLine();
-                            ImGui.Text(design.Name);
-                        }
-
-                        ImGui.Unindent(indentAmount);
+                        DrawClassicImportCharactersTab(scale);
+                        ImGui.EndTabItem();
                     }
+                    if (ImGui.BeginTabItem("From Glamourer"))
+                    {
+                        DrawClassicImportGlamourerTab(scale);
+                        ImGui.EndTabItem();
+                    }
+                    ImGui.EndTabBar();
                 }
-
-                ImGui.EndChild();
 
                 ImGui.Separator();
                 if (ImGui.Button("Close"))
@@ -1747,9 +1703,147 @@ namespace CharacterSelectPlugin.Windows.Components
                     isImportWindowOpen = false;
                 }
 
+                DrawGlamImportConfirmPopup();
+
                 PopScaledStyles();
             }
             ImGui.End();
+        }
+
+        private void DrawClassicImportCharactersTab(float scale)
+        {
+            if (targetForDesignImport == null)
+                return;
+
+            ImGui.BeginChild("ImportScrollArea", new Vector2(0, -40 * scale), false);
+
+            var charactersWithDesigns = plugin.Characters
+                .Where(c => c != targetForDesignImport && c.Designs.Count > 0)
+                .OrderBy(c => c.Name)
+                .ToList();
+
+            foreach (var character in charactersWithDesigns)
+            {
+                if (ImGui.CollapsingHeader($"{character.Name} ({character.Designs.Count} designs)"))
+                {
+                    float indentAmount = 15f * scale;
+                    ImGui.Indent(indentAmount);
+
+                    foreach (var design in character.Designs)
+                    {
+                        float buttonSize = 18f * scale;
+
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.2f, 0.8f, 0.2f, 1.0f));
+                        ImGui.PushFont(UiBuilder.IconFont);
+
+                        if (ImGui.Selectable($"##import_{design.Id}", false, ImGuiSelectableFlags.None, new Vector2(buttonSize, buttonSize)))
+                        {
+                            var json = JsonConvert.SerializeObject(design);
+                            var clone = JsonConvert.DeserializeObject<CharacterDesign>(json);
+                            clone.Name = design.Name + " (Copy)";
+                            clone.Id = Guid.NewGuid();
+                            clone.DateAdded = DateTime.UtcNow;
+                            clone.FolderId = null;
+
+                            targetForDesignImport.Designs.Add(clone);
+                            plugin.SaveConfiguration();
+                            plugin.AchievementTracker?.OnDesignImported();
+                        }
+
+                        ImGui.PopFont();
+                        ImGui.PopStyleColor();
+
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip($"Import '{design.Name}'");
+
+                        ImGui.SameLine();
+                        ImGui.Text(design.Name);
+                    }
+
+                    ImGui.Unindent(indentAmount);
+                }
+            }
+
+            ImGui.EndChild();
+        }
+
+        private void DrawClassicImportGlamourerTab(float scale)
+        {
+            if (targetForDesignImport == null)
+                return;
+
+            RebuildGlamImportState(targetForDesignImport);
+
+            ImGui.BeginChild("ImportGlamScrollArea", new Vector2(0, -40 * scale), false);
+
+            var grouped = plugin.IntegrationListProvider?.GetGlamourerDesignsGrouped();
+            if (grouped == null || grouped.Count == 0)
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f), "No Glamourer designs available.");
+                ImGui.TextColored(new Vector4(0.5f, 0.5f, 0.5f, 1f), "Make sure Glamourer is installed and running.");
+            }
+            else
+            {
+                foreach (var (folder, designs) in grouped)
+                {
+                    string label = folder.Length == 0 ? "(No Folder)" : folder;
+                    if (ImGui.CollapsingHeader($"{label} ({designs.Count})"))
+                    {
+                        float indentAmount = 15f * scale;
+                        ImGui.Indent(indentAmount);
+
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.84f, 0.2f, 1f));
+                        if (ImGui.SmallButton($"Import all##importglamall_{label}"))
+                        {
+                            _glamConfirmFolder = folder;
+                            _glamConfirmDesigns = designs;
+                            _glamConfirmRequested = true;
+                        }
+                        ImGui.PopStyleColor();
+
+                        foreach (var entry in designs)
+                        {
+                            float buttonSize = 18f * scale;
+                            string entryName = entry.Name ?? "";
+                            bool importedAlready = _glamExistingNames.Contains(entryName);
+
+                            if (importedAlready)
+                            {
+                                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.5f, 1f));
+                                ImGui.PushFont(UiBuilder.IconFont);
+                                ImGui.Text(FontAwesomeIcon.Check.ToIconString());
+                                ImGui.PopFont();
+                                if (ImGui.IsItemHovered())
+                                    ImGui.SetTooltip("Already imported into this character");
+                                ImGui.SameLine();
+                                ImGui.Text(entryName);
+                                ImGui.PopStyleColor();
+                                continue;
+                            }
+
+                            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.2f, 0.8f, 0.2f, 1.0f));
+                            ImGui.PushFont(UiBuilder.IconFont);
+
+                            if (ImGui.Selectable($"##importglam_{label}_{entry.Name}", false, ImGuiSelectableFlags.None, new Vector2(buttonSize, buttonSize)))
+                                ImportGlamourerEntry(folder, entry);
+
+                            ImGui.PopFont();
+                            ImGui.PopStyleColor();
+
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip($"Import '{entry.Name}'");
+
+                            ImGui.SameLine();
+                            ImGui.Text(entry.Name);
+                        }
+
+                        ImGui.Unindent(indentAmount);
+                    }
+                }
+            }
+
+            ImGui.EndChild();
         }
 
         private void DrawClassicAdvancedModeWindow(float scale)

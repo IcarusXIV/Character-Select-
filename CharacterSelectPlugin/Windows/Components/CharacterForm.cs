@@ -71,6 +71,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private string editedCharacterMoodlePreset = "";
         private int? editedCharacterGearset = null;
         private bool editedCharacterExcludeFromNameSync = false;
+        private bool editedCharacterAccentFollows = false;
         private bool editedCharacterUseGlitchNameEffect = false;
         private string editedCharacterAlias = "";
 
@@ -365,16 +366,19 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.Dummy(new Vector2(availW, rowH));
         }
 
-        // Inline footer row: CANCEL (left of save) + SAVE pill (right). No bg, no
-        // hairline, no enclosing footer bar; just two buttons in their natural flow.
+        // Inline footer row: CANCEL + SAVE pill
         private void DrawInlineFooterButtons(float fs)
         {
             string vName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
             string vPenumbra = IsEditWindowOpen ? editedCharacterPenumbra : plugin.NewPenumbraCollection;
             string vGlamourer = IsEditWindowOpen ? editedCharacterGlamourer : plugin.NewGlamourerDesign;
+            string vAutomation = IsEditWindowOpen ? editedCharacterAutomation : plugin.NewCharacterAutomation;
+            bool automationsOn = plugin.Configuration.EnableAutomations;
+            bool hasGlamourer = !string.IsNullOrWhiteSpace(vGlamourer)
+                || (automationsOn && !string.IsNullOrWhiteSpace(vAutomation));
             bool canSave = !string.IsNullOrWhiteSpace(vName)
                         && !string.IsNullOrWhiteSpace(vPenumbra)
-                        && !string.IsNullOrWhiteSpace(vGlamourer)
+                        && hasGlamourer
                         && string.IsNullOrEmpty(nameValidationError);
 
             string disabledReason = null;
@@ -386,8 +390,10 @@ namespace CharacterSelectPlugin.Windows.Components
                     disabledReason = "Enter a character name first.";
                 else if (string.IsNullOrWhiteSpace(vPenumbra))
                     disabledReason = "Pick a Penumbra collection first.";
-                else if (string.IsNullOrWhiteSpace(vGlamourer))
-                    disabledReason = "Pick a Glamourer design first.";
+                else if (!hasGlamourer)
+                    disabledReason = automationsOn
+                        ? "Pick a Glamourer design or automation first."
+                        : "Pick a Glamourer design first.";
             }
 
             // Lift the buttons off the bottom edge, bigger top breathing
@@ -498,8 +504,8 @@ namespace CharacterSelectPlugin.Windows.Components
                     "Affects your character's nameplate under their profile picture.",
                     w => DrawNameplateColourInput(scale)));
 
-            // Per v2-simple spec: Exclude from Name Sync toggle on its own row at the
-            // end of Identity, not inline as the Name field's afterInput.
+            DrawAccentFollowsToggle(scale);
+
             if (plugin.Configuration.AllowOthersToSeeMyCSName)
                 DrawExcludeFromNameSyncToggle(scale);
 
@@ -510,14 +516,14 @@ namespace CharacterSelectPlugin.Windows.Components
             DrawGlitchNameEffectToggle(scale);
 #endif
 
-            // ─── II · INTEGRATIONS ───
+            // Integrations
             Section("Integrations");
 
             DrawFieldRow(scale,
                 Col(1f, "Penumbra Collection", true,
                     "Select the Penumbra collection for this character. Right-click to clear.",
                     w => DrawPenumbraInput(w)),
-                Col(1f, "Glamourer Design", true,
+                Col(1f, "Glamourer Design", !plugin.Configuration.EnableAutomations,
                     "Select the Glamourer design for this character. Right-click to clear.\nYou can add additional designs later.",
                     w => DrawGlamourerInput(w)));
 
@@ -562,12 +568,28 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImFontPtr crLblF, crDescF;
                 using (Plugin.Instance?.OutfitMed13?.Push()) { crLblF  = ImGui.GetFont(); }
                 using (Plugin.Instance?.OutfitMed13?.Push()) { crDescF = ImGui.GetFont(); }
+
+                string crCharName = IsEditWindowOpen ? editedCharacterName : plugin.NewCharacterName;
+                bool crNameValid = !string.IsNullOrWhiteSpace(crCharName);
+
                 ImGui.SetCursorPosX(_formIndent);
+                bool wasSecretMode = isSecretMode;
+
+                if (!crNameValid)
+                    ImGui.BeginDisabled();
                 Boutique.DrawBoutiqueCheckbox(
                     "use_cr", ref isSecretMode,
                     "Use Conflict Resolution",
                     "Manual mod state for this character",
                     scale, crLblF, crDescF);
+                if (!crNameValid)
+                    ImGui.EndDisabled();
+
+                if (!crNameValid && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Enter a Character Name first.");
+
+                if (isSecretMode && !wasSecretMode && crNameValid)
+                    PerformQuickCharacterGearHairUpdate();
 
                 if (isSecretMode)
                 {
@@ -629,6 +651,26 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             if (ImGui.IsItemHovered())
                 CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("When checked, Name Sync won't apply to this character.");
+        }
+
+        private void DrawAccentFollowsToggle(float scale)
+        {
+            bool tempFollow = IsEditWindowOpen ? editedCharacterAccentFollows : plugin.NewCharacterAccentFollows;
+            ImFontPtr labelF, descF;
+            using (Plugin.Instance?.OutfitMed13?.Push()) { labelF = ImGui.GetFont(); }
+            using (Plugin.Instance?.OutfitMed13?.Push()) { descF  = ImGui.GetFont(); }
+            ImGui.SetCursorPosX(_formIndent);
+            if (Boutique.DrawBoutiqueCheckbox(
+                "accent_follows", ref tempFollow,
+                "Match Active Character's Colours",
+                "Applying this character sets the Visual toggle to match",
+                scale, labelF, descF))
+            {
+                if (IsEditWindowOpen) editedCharacterAccentFollows = tempFollow;
+                else plugin.NewCharacterAccentFollows = tempFollow;
+            }
+            if (ImGui.IsItemHovered())
+                CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Checked: applying this character turns 'Match active character's colours' on, tinting the UI with their nameplate colour.\nUnchecked: applying turns it off and the UI uses your plain theme.");
         }
 
         private void DrawGlitchNameEffectToggle(float scale)
@@ -812,8 +854,10 @@ namespace CharacterSelectPlugin.Windows.Components
             string oldValue = tempGlamourer;
 
             var glamourerOptions = plugin.IntegrationListProvider?.GetGlamourerDesigns() ?? Array.Empty<string>();
+            var currentGlamourer = plugin.IntegrationListProvider?.GetCurrentGlamourerDesign();
 
-            bool changed = AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, width, "Select design...");
+            bool changed = AutocompleteCombo.Draw("##GlamourerDesign", ref tempGlamourer, glamourerOptions, width,
+                "Select design...", currentActive: currentGlamourer);
             plugin.GlamourerFieldPos = ImGui.GetItemRectMin();
             plugin.GlamourerFieldSize = ImGui.GetItemRectSize();
 
@@ -922,40 +966,45 @@ namespace CharacterSelectPlugin.Windows.Components
 
         private void DrawIdlePoseInput(float width)
         {
-            string[] poseOptions = { "None", "Pose 1", "Pose 2", "Pose 3", "Pose 4", "Pose 5", "Pose 6", "Pose 7" };
+            string[] poseOptions = { "None", "Pose 0", "Pose 1", "Pose 2", "Pose 3", "Pose 4", "Pose 5", "Pose 6" };
             byte storedIndex = IsEditWindowOpen
                 ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
                 : plugin.NewCharacterIdlePoseIndex;
             int dropdownIndex = storedIndex >= 7 ? 0 : storedIndex + 1;
 
-            string current = poseOptions[dropdownIndex];
-            string previous = current;
-            if (AutocompleteCombo.Draw("##IdlePose", ref current, poseOptions, width, "Select pose...", allowCustomInput: false))
+            ImGui.SetNextItemWidth(width);
+            if (ImGui.BeginCombo("##IdlePose", poseOptions[dropdownIndex]))
             {
-                int newDropdown = Array.IndexOf(poseOptions, current);
-                if (newDropdown < 0) newDropdown = 0;
-                byte newIndex = (byte)(newDropdown == 0 ? 7 : newDropdown - 1);
-
-                byte currentIndex = IsEditWindowOpen
-                    ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
-                    : plugin.NewCharacterIdlePoseIndex;
-
-                if (currentIndex != newIndex)
+                for (int i = 0; i < poseOptions.Length; i++)
                 {
-                    if (IsEditWindowOpen) plugin.Characters[selectedCharacterIndex].IdlePoseIndex = newIndex;
-                    else plugin.NewCharacterIdlePoseIndex = newIndex;
+                    bool selected = i == dropdownIndex;
+                    if (ImGui.Selectable(poseOptions[i], selected))
+                    {
+                        byte newIndex = (byte)(i == 0 ? 7 : i - 1);
+                        byte currentIndex = IsEditWindowOpen
+                            ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex
+                            : plugin.NewCharacterIdlePoseIndex;
 
-                    if (isAdvancedModeCharacter)
-                    {
-                        UpdateAdvancedMacroIdlePose(newIndex);
-                        if (!IsEditWindowOpen) plugin.NewCharacterMacros = advancedCharacterMacroText;
+                        if (currentIndex != newIndex)
+                        {
+                            if (IsEditWindowOpen) plugin.Characters[selectedCharacterIndex].IdlePoseIndex = newIndex;
+                            else plugin.NewCharacterIdlePoseIndex = newIndex;
+
+                            if (isAdvancedModeCharacter)
+                            {
+                                UpdateAdvancedMacroIdlePose(newIndex);
+                                if (!IsEditWindowOpen) plugin.NewCharacterMacros = advancedCharacterMacroText;
+                            }
+                            else
+                            {
+                                if (IsEditWindowOpen) editedCharacterMacros = GenerateMacro();
+                                else plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
+                            }
+                        }
                     }
-                    else
-                    {
-                        if (IsEditWindowOpen) editedCharacterMacros = GenerateMacro();
-                        else plugin.NewCharacterMacros = (isSecretMode && !plugin.Configuration.EnableConflictResolution) ? GenerateSecretMacro() : GenerateMacro();
-                    }
+                    if (selected) ImGui.SetItemDefaultFocus();
                 }
+                ImGui.EndCombo();
             }
         }
 
@@ -1210,8 +1259,7 @@ namespace CharacterSelectPlugin.Windows.Components
                     }
                 }
 
-                // Quick update refresh button - same pattern as the Designs panel. Pulls in the
-                // currently-affecting gear/hair mods without having to open the mod manager window.
+                // Quick update: pulls in currently-affecting gear/hair mods without opening the manager
                 ImGui.SameLine(0, buttonGap);
                 ImGui.PushFont(UiBuilder.IconFont);
 
@@ -1220,13 +1268,22 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (!canQuickUpdate)
                     ImGui.BeginDisabled();
 
-                if (ImGui.Button("\uf2f1##CharacterQuickUpdate", new Vector2(refreshButtonWidth, 0)))
+                if (ImGui.Button("##CharacterQuickUpdate", new Vector2(refreshButtonWidth, 0)))
                 {
                     if (canQuickUpdate)
                     {
                         PerformQuickCharacterGearHairUpdate();
                     }
                 }
+
+                var refreshGlyph = "\uf2f1";
+                var refreshGlyphSize = ImGui.CalcTextSize(refreshGlyph);
+                var refreshMin = ImGui.GetItemRectMin();
+                var refreshMax = ImGui.GetItemRectMax();
+                ImGui.GetWindowDrawList().AddText(new Vector2(
+                        refreshMin.X + (refreshMax.X - refreshMin.X - refreshGlyphSize.X) * 0.5f,
+                        refreshMin.Y + (refreshMax.Y - refreshMin.Y - refreshGlyphSize.Y) * 0.5f),
+                    ImGui.GetColorU32(ImGuiCol.Text), refreshGlyph);
 
                 if (!canQuickUpdate)
                     ImGui.EndDisabled();
@@ -3220,11 +3277,13 @@ namespace CharacterSelectPlugin.Windows.Components
             string moodlePreset = IsEditWindowOpen ? editedCharacterMoodlePreset : plugin.NewCharacterMoodlePreset;
             int idlePose = IsEditWindowOpen ? plugin.Characters[selectedCharacterIndex].IdlePoseIndex : plugin.NewCharacterIdlePoseIndex;
 
-            if (string.IsNullOrWhiteSpace(penumbra) || string.IsNullOrWhiteSpace(glamourer))
+            bool hasAutomation = plugin.Configuration.EnableAutomations && !string.IsNullOrWhiteSpace(automation);
+            if (string.IsNullOrWhiteSpace(penumbra) || (string.IsNullOrWhiteSpace(glamourer) && !hasAutomation))
                 return "/penumbra redraw self";
 
             string macro = $"/penumbra collection individual | {penumbra} | self\n";
-            macro += $"/glamour apply {glamourer} | self\n";
+            if (!string.IsNullOrWhiteSpace(glamourer))
+                macro += $"/glamour apply {glamourer} | self\n";
 
             if (plugin.Configuration.EnableAutomations)
             {
@@ -3298,9 +3357,12 @@ namespace CharacterSelectPlugin.Windows.Components
             sb.AppendLine($"/penumbra collection individual | {penumbra} | self");
             sb.AppendLine($"/penumbra bulktag disable {penumbra} | gear");
             sb.AppendLine($"/penumbra bulktag disable {penumbra} | hair");
-            sb.AppendLine($"/penumbra bulktag enable {penumbra} | {glamourer}");
-            sb.AppendLine("/glamour apply no clothes | self");
-            sb.AppendLine($"/glamour apply {glamourer} | self");
+            if (!string.IsNullOrWhiteSpace(glamourer))
+            {
+                sb.AppendLine($"/penumbra bulktag enable {penumbra} | {glamourer}");
+                sb.AppendLine("/glamour apply no clothes | self");
+                sb.AppendLine($"/glamour apply {glamourer} | self");
+            }
 
             if (plugin.Configuration.EnableAutomations)
             {
@@ -3385,6 +3447,7 @@ namespace CharacterSelectPlugin.Windows.Components
             plugin.NewCharacterName = "";
             plugin.NewCharacterAlias = "";
             plugin.NewCharacterExcludeFromNameSync = false;
+            plugin.NewCharacterAccentFollows = false;
             plugin.NewCharacterUseGlitchNameEffect = false;
             plugin.NewCharacterColor = new Vector3(1.0f, 1.0f, 1.0f);
             plugin.NewPenumbraCollection = "";
@@ -3444,6 +3507,7 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterMoodlePreset = "";
             editedCharacterGearset = null;
             editedCharacterExcludeFromNameSync = false;
+            editedCharacterAccentFollows = false;
             editedCharacterUseGlitchNameEffect = false;
             editedCharacterAlias = "";
             editedCharacterHonorificTitle = "";
@@ -3525,12 +3589,15 @@ namespace CharacterSelectPlugin.Windows.Components
             character.MoodlePreset = editedCharacterMoodlePreset;
             character.AssignedGearset = editedCharacterGearset;
             character.ExcludeFromNameSync = editedCharacterExcludeFromNameSync;
+            character.AccentFollowsNameplate = editedCharacterAccentFollows;
             character.UseGlitchNameEffect = editedCharacterUseGlitchNameEffect;
             // Mirror the glitch toggle into the RP profile so other users see the
             // pack applied when they view this character's profile.
             if (character.RPProfile != null)
                 character.RPProfile.AppliedPack = editedCharacterUseGlitchNameEffect ? "glitch" : null;
             character.Alias = string.IsNullOrWhiteSpace(editedCharacterAlias) ? null : editedCharacterAlias;
+            if (ReferenceEquals(plugin.activeCharacter, character))
+                plugin.NotifySyncedNameChanged();
 
             // Keep rp.CharacterName aligned with Name/Alias so renames and alias changes don't
             // leave stale values behind. Stale rp.CharacterName can collide across characters on
@@ -3772,6 +3839,7 @@ namespace CharacterSelectPlugin.Windows.Components
             editedCharacterMoodlePreset = character.MoodlePreset ?? "";
             editedCharacterGearset = character.AssignedGearset;
             editedCharacterExcludeFromNameSync = character.ExcludeFromNameSync;
+            editedCharacterAccentFollows = character.AccentFollowsNameplate;
             editedCharacterUseGlitchNameEffect = character.UseGlitchNameEffect;
             editedCharacterAlias = character.Alias ?? "";
 

@@ -85,7 +85,7 @@ public static class CodexChassis
     public static readonly Vector4 CatDiscovery     = Rgb(0xAD, 0xFF, 0x61);
 
     // Patch-notes-only accent additions
-    public static readonly Vector4 CatFeatured = Gold;        // hero tier
+    public static Vector4 CatFeatured => Gold;        // hero tier
     public static readonly Vector4 CatBehind   = Rgb(0x6A, 0x7B, 0x8F);
     public static readonly Vector4 CatRandom   = Rgb(0xFF, 0x88, 0x70);
 

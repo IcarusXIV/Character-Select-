@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -35,7 +35,7 @@ public class AchievementWindow : Window, IDisposable
 
     // Colour palette
     private static readonly Vector4 WinBg     = new(0.055f, 0.063f, 0.078f, 1f);
-    private static readonly Vector4 Gold      = new(1.00f, 0.84f, 0.00f, 1f);
+    private static Vector4 Gold => Boutique.Gold;
     private static readonly Vector4 GreenOk   = new(0.25f, 0.95f, 0.45f, 1f);
     private static readonly Vector4 TxBright  = new(0.97f, 0.97f, 1.00f, 1f);
     private static readonly Vector4 TxMid     = new(0.68f, 0.68f, 0.76f, 0.90f);
@@ -481,13 +481,11 @@ public class AchievementWindow : Window, IDisposable
         float padX = 14f * s;
         float cursorX = mn.X + padX;
 
-        // ── Trophy pip (18×18) ──
-        // Pulsing core (5×5 gold-warm) + two expanding rings on 1.8s loop.
-        // Ring 1 phase 0, ring 2 phase 0.5 (offset by 0.9s = half loop).
+        // Trophy pip: pulsing core + two expanding rings on a 1.8s loop
         {
             float pipSize = 18f * s;
             var pipCentre = new Vector2(cursorX + pipSize * 0.5f, centreY);
-            float t = (float)ImGui.GetTime();
+            float t = (float)Boutique.AnimTime(ImGui.GetTime());
 
             // Core - 5×5 gold-warm SQUARE (not a circle - HTML says
             // `background: var(--gold-warm);` with explicit width/height 5px,
@@ -590,7 +588,7 @@ public class AchievementWindow : Window, IDisposable
                 ImGui.ColorConvertFloat4ToU32(Boutique.GoldDeep), 0f, ImDrawFlags.None, 1f);
 
             // Pulsing dot (scale + alpha, 1.4s ease-in-out)
-            float t = (float)ImGui.GetTime();
+            float t = (float)Boutique.AnimTime(ImGui.GetTime());
             float dotCycle = (t % 1.4f) / 1.4f;
             float dotPulse = 0.5f + 0.5f * MathF.Sin(dotCycle * MathF.Tau - MathF.PI * 0.5f);
             float dotA = 0.5f + 0.5f * dotPulse;
@@ -805,11 +803,7 @@ public class AchievementWindow : Window, IDisposable
         float padTop = 16f * s;
         float padBot = 15f * s;
 
-        // ── Band background: vertical dark gradient + soft gold radial ──
-        // HTML .hero-stats: padding 16px 20px 15px. Interior layout (top→bottom):
-        //   kicker (Oswald 10, height ≈ kickerH) + 4px gap + value (StatLarge,
-        //   ~28×achUi) + 11px margin → progress bar (3px) + 8px gap → caption
-        //   (Oswald 10, height ≈ kickerH) → bottom padding.
+        // Band background: vertical dark gradient + soft gold radial
         float fontH  = ImGui.GetFontSize();
         float bandKickerH = fontH, capH = fontH;
         using (Plugin.Instance?.OswaldMed10?.Push())
@@ -821,9 +815,9 @@ public class AchievementWindow : Window, IDisposable
             valueH = ImGui.GetFontSize();
         float row1H  = bandKickerH + 2f * s + valueH;
         float progH  = 3f * s;
-        float progTopGap = 11f * s; // HTML .hero-row margin-bottom
-        float capTopGap  = 8f * s;  // HTML .progress-caption margin-top
-        float bandH  = padTop + row1H + progTopGap + progH + capTopGap + capH + padBot;
+        float progTopGap = 11f * s;
+        float capTopGap  = 8f * s;
+        float bandH = padTop + row1H + progTopGap + progH + capTopGap + capH + padBot;
         var bandMx   = new Vector2(bandStart.X + availW, bandStart.Y + bandH);
 
         // Dark vertical gradient #0c0e14 → #0a0b10
@@ -1389,11 +1383,10 @@ public class AchievementWindow : Window, IDisposable
         return mn.X;
     }
 
-    // Firework spark at the progress bar's leading edge: pulsing radial core
-    // plus 4 drifting spark dots at per-particle angle/delay.
+    // Firework spark at the progress bar's leading edge: pulsing core + drifting dots
     private void DrawStatsFirework(ImDrawListPtr dl, Vector2 centre, float s)
     {
-        float t = (float)ImGui.GetTime();
+        float t = (float)Boutique.AnimTime(ImGui.GetTime());
 
         // Core - 10×10 radial, pulsing scale 1.0 ↔ 1.4 on 1.3s ease-in-out
         float cycle = (t % 1.3f) / 1.3f;
@@ -1411,8 +1404,9 @@ public class AchievementWindow : Window, IDisposable
         dl.AddCircleFilled(centre, coreR * 1.5f,
             ImGui.ColorConvertFloat4ToU32(Boutique.WithAlpha(Boutique.Gold, 0.15f)), 22);
 
-        // 4 drifting spark particles, each with angle + delay from mockup
-        // .spark-dots i:nth-child(1..4): dx/dy per child, delays 0/0.3/0.7/1.1
+        if (Boutique.ReduceMotion) return;
+
+        // 4 drifting spark particles, each with its own offset and delay
         (float dx, float dy, float delay)[] particles = {
             (  8f, -6f, 0.0f),
             ( 10f,  4f, 0.3f),
@@ -2821,12 +2815,11 @@ public class AchievementWindow : Window, IDisposable
 
         float metaCursorX = bodyX + catTagSz.X + 8f * s;
 
-        // New-pip (blinking green SQUARE for unseen unlocks).
-        // HTML .new-pip - width: 6px; height: 6px; no border-radius.
+        // Blinking green pip for unseen unlocks
         if (isNew)
         {
             float pipSize = 6f * s;
-            float tPip = (float)ImGui.GetTime();
+            float tPip = (float)Boutique.AnimTime(ImGui.GetTime());
             float pipCycle = (tPip % 1.6f) / 1.6f;
             float pipPulse = 0.5f + 0.5f * MathF.Sin(pipCycle * MathF.Tau - MathF.PI * 0.5f);
             float pipA = 0.45f + 0.55f * pipPulse;
@@ -3132,10 +3125,10 @@ public class AchievementWindow : Window, IDisposable
                     new Vector2(barX + fillW, bMx.Y),
                     uMid, uEnd, uEnd, uMid);
 
-                // Spark (2×8 white bar at leading edge, pulsing alpha 1.6s loop)
+                // Spark at the leading edge, pulsing on a 1.6s loop
                 if (inProgress)
                 {
-                    float t = (float)ImGui.GetTime();
+                    float t = (float)Boutique.AnimTime(ImGui.GetTime());
                     float cycle = (t % 1.6f) / 1.6f;
                     float pulse = 0.4f + 0.55f * (0.5f + 0.5f * MathF.Sin(cycle * MathF.Tau - MathF.PI * 0.5f));
                     float sparkX = barX + fillW;
@@ -3251,6 +3244,7 @@ public class AchievementWindow : Window, IDisposable
     // sparkle drops behind the head, larger halo.
     private void DrawCardPerimeterStreak(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float chamfer, Vector4 catCol, string id, float s)
     {
+        if (Boutique.ReduceMotion) return;
         float t = (float)ImGui.GetTime();
         float headFrac = (t / 3.0f) % 1f;        // slightly faster lap (3.0s)
         const int segments = 80;
@@ -3830,6 +3824,7 @@ public class AchievementWindow : Window, IDisposable
 
     private void DrawCardGildedSheen(ImDrawListPtr dl, Vector2 mn, Vector2 mx, float chamfer, Vector4 catCol, string id, float s)
     {
+        if (Boutique.ReduceMotion) return;
         float t = (float)ImGui.GetTime();
         // Sheen start is set on hover-enter from DrawCard. Slightly longer
         // (1.4s) and softer alphas - feels like a wash of light moving across
@@ -4158,19 +4153,13 @@ public class AchievementWindow : Window, IDisposable
         }
     }
 
-    // ═══════════════ AMBIENT LAYER ═══════════════
-    // Drifting radial colour spots + scrolling horizontal hum lines + rising
-    // dust motes. Read as depth behind the cards. Low alpha so they never
-    // compete with the content.
-    // Drifting aurora spots only - used by the shop vault (wants the soft
-    // background atmosphere but NOT the scrolling horizontal hum lines, which
-    // read as random streaks through the comp).
+    // Drifting aurora spots only, no hum lines
     private void DrawAmbientSpots(float s)
     {
         var dl = ImGui.GetWindowDrawList();
         var mn = ImGui.GetWindowPos();
         var mx = mn + ImGui.GetWindowSize();
-        float t = (float)ImGui.GetTime();
+        float t = (float)Boutique.AnimTime(ImGui.GetTime());
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
         var spotPts = new Vector2[48];
@@ -4202,18 +4191,13 @@ public class AchievementWindow : Window, IDisposable
                 dl.AddConvexPolyFilled(ref spotPts[0], spotPts.Length, col);
             }
         }
-        // Bumped peak alphas so the spots are actually visible against the
-        // shop's near-black `--shell` backdrop. Original 0.028/0.020/0.014
-        // values were tuned for the Achievements tab's surface-0 (lighter)
-        // and disappeared on the darker shell.
+        // Higher peak alphas than the window ambient, since the shop shell is darker
         Spot(26f, new Vector2(w * 0.18f, h * 0.22f), new Vector2(200f * s, 90f * s),
-             260f * s, 160f * s, Boutique.Gold,    0.085f);
-        // Was Magenta - read as a red cloud, fights the gold/cyan trio.
-        // Violet (cooler purple) sits cleanly between them.
+             260f * s, 160f * s, Boutique.Gold,          Boutique.AtmosphereAlpha(null, 0.085f, 0.30f));
         Spot(32f, new Vector2(w * 0.78f, h * 0.55f), new Vector2(-160f * s, -70f * s),
-             240f * s, 150f * s, Boutique.Violet,  0.060f);
+             240f * s, 150f * s, Boutique.AmbientViolet, Boutique.AtmosphereAlpha("custom.ambient.violet", 0.060f, 0.30f));
         Spot(38f, new Vector2(w * 0.45f, h * 0.70f), new Vector2(-120f * s, 60f * s),
-             220f * s, 140f * s, Boutique.Cyan,    0.045f);
+             220f * s, 140f * s, Boutique.AmbientCyan,   Boutique.AtmosphereAlpha("custom.ambient.cyan", 0.045f, 0.30f));
     }
 
     private void DrawAmbientLayer(float s)
@@ -4221,7 +4205,7 @@ public class AchievementWindow : Window, IDisposable
         var dl = ImGui.GetWindowDrawList();
         var mn = ImGui.GetWindowPos();
         var mx = mn + ImGui.GetWindowSize();
-        float t = (float)ImGui.GetTime();
+        float t = (float)Boutique.AnimTime(ImGui.GetTime());
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
 
@@ -4261,15 +4245,13 @@ public class AchievementWindow : Window, IDisposable
                 dl.AddConvexPolyFilled(ref spotPts[0], spotPts.Length, col);
             }
         }
-        // HTML dimensions halved to radii. Peak alphas are low to read as
-        // ambient atmosphere, not visible coloured clouds.
+        // Low peak alphas so the spots read as atmosphere, not coloured clouds
         Spot(26f, new Vector2(w * 0.18f, h * 0.22f), new Vector2(200f * s, 90f * s),
-             230f * s, 140f * s, Boutique.Gold, 0.028f);
-        // Was Magenta - read as a red cloud, fights the gold/cyan trio.
+             230f * s, 140f * s, Boutique.Gold, Boutique.AtmosphereAlpha(null, 0.028f, 0.30f));
         Spot(32f, new Vector2(w * 0.75f, h * 0.55f), new Vector2(-160f * s, -70f * s),
-             210f * s, 130f * s, Boutique.Violet, 0.020f);
+             210f * s, 130f * s, Boutique.AmbientViolet, Boutique.AtmosphereAlpha("custom.ambient.violet", 0.020f, 0.30f));
         Spot(38f, new Vector2(w * 0.45f, h * 0.65f), new Vector2(-120f * s, 60f * s),
-             190f * s, 120f * s, Boutique.Cyan, 0.014f);
+             190f * s, 120f * s, Boutique.AmbientCyan, Boutique.AtmosphereAlpha("custom.ambient.cyan", 0.014f, 0.30f));
 
         // ── 3 horizontal hum lines (1px, scrolling at different speeds) ──
         void HumLine(float topFrac, float periodSec, bool reverse, Vector4 col, float peakA)
@@ -4296,19 +4278,23 @@ public class AchievementWindow : Window, IDisposable
                 midR, new Vector2(end.X, yBand + lineH),
                 cMid, cEdge, cEdge, cMid);
         }
-        HumLine(0.28f, 16f, reverse: false, Boutique.Gold, 0.18f);
-        HumLine(0.54f, 22f, reverse: true,  Boutique.MagentaSft, 0.12f);
-        HumLine(0.78f, 26f, reverse: false, Boutique.CyanSoft, 0.09f);
+        if (!Boutique.ReduceMotion)
+        {
+            HumLine(0.28f, 16f, reverse: false, Boutique.Gold, Boutique.AtmosphereAlpha(null, 0.18f, 0.85f));
+            HumLine(0.54f, 22f, reverse: true,  Boutique.AmbientMagentaSoft, Boutique.AtmosphereAlpha("custom.ambient.magenta", 0.12f, 0.85f));
+            HumLine(0.78f, 26f, reverse: false, Boutique.AmbientCyanSoft, Boutique.AtmosphereAlpha("custom.ambient.cyan", 0.09f, 0.85f));
+        }
 
-        // ── 6 rising dust motes ──
+        if (Boutique.ReduceMotion) return;
+
         // Each mote: left%, base delay, period, colour
         (float leftPct, float delay, float period, Vector4 col)[] motes = {
             (0.14f,  0f, 10f, Boutique.GoldWarm),
-            (0.32f,  2f, 12f, Boutique.MagentaSft),
+            (0.32f,  2f, 12f, Boutique.AmbientMagentaSoft),
             (0.48f,  4f, 11f, Boutique.GoldWarm),
-            (0.66f,  1.5f, 13f, Boutique.CyanSoft),
+            (0.66f,  1.5f, 13f, Boutique.AmbientCyanSoft),
             (0.82f,  6f, 10f, Boutique.GoldWarm),
-            (0.24f,  5f, 14f, Boutique.Violet),
+            (0.24f,  5f, 14f, Boutique.AmbientViolet),
         };
         foreach (var (leftPct, delay, period, col) in motes)
         {
@@ -4318,7 +4304,12 @@ public class AchievementWindow : Window, IDisposable
             float a = p < 0.15f ? (p / 0.15f) * 0.7f
                     : p > 0.85f ? ((1f - p) / 0.15f) * 0.7f
                     : 0.7f;
-            // Y rises 0 → -(h + 150) over the period. X drifts slightly leftward.
+            string? moteKey = col == Boutique.AmbientMagentaSoft ? "custom.ambient.magenta"
+                            : col == Boutique.AmbientCyanSoft    ? "custom.ambient.cyan"
+                            : col == Boutique.AmbientViolet      ? "custom.ambient.violet"
+                            : null;
+            a = Boutique.AtmosphereAlpha(moteKey, a, 1f);
+            // Rises past the top over the period, drifting slightly leftward
             float yRise = p * (h + 150f * s);
             float xDrift = -p * 30f * s;
             var pt = new Vector2(mn.X + leftPct * w + xDrift, mx.Y - 10f * s - yRise);
@@ -4329,18 +4320,14 @@ public class AchievementWindow : Window, IDisposable
         }
     }
 
-    // Animated firework spark drawn at the leading edge of an in-progress bar.
-    // Pulsing core + halo + radiating particles using ImGui.GetTime() so it animates
-    // every frame the window is open. Larger/brighter on spotlight (Almost There) cards.
-    // The optional `intensity` (0..1) gradually ramps the effect, lets the top stats
-    // bar build excitement as the user approaches 100% completion. Default 1.0 keeps
-    // existing card call sites at full strength.
+    // Firework spark at the leading edge of an in-progress bar. `intensity`
+    // (0..1) ramps the core, halo and particle count.
     private void DrawProgressSpark(ImDrawListPtr dl, Vector2 center, Vector4 color, float scale, bool large, float intensity = 1f)
     {
         intensity = Math.Clamp(intensity, 0f, 1f);
 
-        double t = ImGui.GetTime();
-        // Pulse cadence ramps up slightly as intensity rises (4.5Hz to 7Hz)
+        double t = Boutique.AnimTime(ImGui.GetTime());
+        // Pulse cadence ramps from 4.5Hz to 7Hz as intensity rises
         float pulseSpeed = 4.5f + intensity * 2.5f;
         float pulse = 0.65f + 0.35f * MathF.Sin((float)t * pulseSpeed);
 
@@ -4358,9 +4345,9 @@ public class AchievementWindow : Window, IDisposable
         dl.AddCircleFilled(center, coreR,         ImGui.ColorConvertFloat4ToU32(A(white, 0.95f * pulse * coreMult)));
         dl.AddCircleFilled(center, coreR * 0.55f, ImGui.ColorConvertFloat4ToU32(A(white, coreMult)));
 
-        // Radiating particles: golden-angle distribution, looping outward with ease-out
-        // Count and reach scale with intensity so a fresh bar has 1-2 quiet sparks and a
-        // near-complete bar has the full firework treatment.
+        if (Boutique.ReduceMotion) return;
+
+        // Radiating particles on a golden-angle distribution, looping outward
         int baseCount = large ? 5 : 4;
         int sparkCount = Math.Max(1, (int)Math.Round(baseCount * (0.45f + 0.55f * intensity)));
         const float period = 1.35f;

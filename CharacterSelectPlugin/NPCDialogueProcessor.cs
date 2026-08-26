@@ -53,9 +53,25 @@ namespace CharacterSelectPlugin
         private static readonly byte[] FirstNameBytes = { 0x02, 0x2C, 0x0D, 0xFF, 0x07, 0x02, 0x29, 0x03, 0xEB, 0x02, 0x03, 0xFF, 0x02, 0x20, 0x02, 0x03 };
         private static readonly byte[] LastNameBytes = { 0x02, 0x2C, 0x0D, 0xFF, 0x07, 0x02, 0x29, 0x03, 0xEB, 0x02, 0x03, 0xFF, 0x02, 0x20, 0x03, 0x03 };
 
+        private Character? _cachedPronounCharacter;
+        private string? _cachedPronounSource;
+        private PronounSet _cachedPronounSet;
+
+        private PronounSet GetActivePronounSet(Character character)
+        {
+            var pronouns = character?.RPProfile?.Pronouns ?? "";
+            if (!ReferenceEquals(_cachedPronounCharacter, character) || _cachedPronounSource != pronouns)
+            {
+                _cachedPronounCharacter = character;
+                _cachedPronounSource = pronouns;
+                _cachedPronounSet = PronounParser.Parse(pronouns);
+            }
+            return _cachedPronounSet;
+        }
+
         private byte[] ProcessGenderFlags(byte[] data, Character character)
         {
-            var pronounSet = PronounParser.Parse(character.RPProfile?.Pronouns ?? "");
+            var pronounSet = GetActivePronounSet(character);
             bool isTheyThem = pronounSet.Subject.Equals("they", StringComparison.OrdinalIgnoreCase);
             
             // log.Info($"[ProcessGenderFlags] Called for pronouns: {character.RPProfile?.Pronouns} | ReplacePronounsInDialogue: {plugin.Configuration.ReplacePronounsInDialogue}");
@@ -940,6 +956,8 @@ namespace CharacterSelectPlugin
         private static readonly Regex SisterRegex = new Regex(@"\bsister\b", RegexOptions.Compiled);
         private static readonly Regex SisterCapitalRegex = new Regex(@"\bSister\b", RegexOptions.Compiled);
 
+        private bool _hooksInstalled = false;
+
         public NPCDialogueProcessor(Plugin plugin, ISigScanner sigScanner, IGameInteropProvider gameInteropProvider,
             IChatGui chatGui, IClientState clientState, IPluginLog log, ICondition condition)
         {
@@ -951,15 +969,50 @@ namespace CharacterSelectPlugin
             this.log = log;
             this.condition = condition;
 
-            try
+            ApplyConfigurationState();
+        }
+
+        // Reconciles hook install state with the EnableDialogueIntegration setting. Safe to call per-frame.
+        public void ApplyConfigurationState()
+        {
+            bool shouldEnable = plugin.Configuration.EnableDialogueIntegration;
+
+            if (shouldEnable && !_hooksInstalled)
             {
-                InitializeHooks();
-                log.Info("[Dialogue] Multi-pronoun dialogue processor initialized.");
+                try
+                {
+                    InitializeHooks();
+                    _hooksInstalled = true;
+                    log.Info("[Dialogue] Multi-pronoun dialogue processor initialized.");
+                }
+                catch (Exception ex)
+                {
+                    log.Error($"[Dialogue] Failed to initialize processor: {ex.Message}");
+                    DisposeHooks();
+                }
             }
-            catch (Exception ex)
+            else if (!shouldEnable && _hooksInstalled)
             {
-                log.Error($"[Dialogue] Failed to initialize processor: {ex.Message}");
+                DisposeHooks();
+                _hooksInstalled = false;
+                log.Info("[Dialogue] Hooks disabled.");
             }
+        }
+
+        private void DisposeHooks()
+        {
+            getStringHook?.Disable();
+            getStringHook?.Dispose();
+            getStringHook = null;
+            getLuaVarHook?.Disable();
+            getLuaVarHook?.Dispose();
+            getLuaVarHook = null;
+            processTextHook?.Disable();
+            processTextHook?.Dispose();
+            processTextHook = null;
+            getCutVoGenderHook?.Disable();
+            getCutVoGenderHook?.Dispose();
+            getCutVoGenderHook = null;
         }
 
         private void InitializeHooks()
@@ -1219,73 +1272,8 @@ namespace CharacterSelectPlugin
             return false;
         }
 
-        /// <summary>Text processing hook for unresolved flags.</summary>
         private nint ProcessTextDetour(nint textPtr, nint length)
         {
-            try
-            {
-                if (!plugin.Configuration.EnableDialogueIntegration)
-                    return processTextHook!.Original(textPtr, length);
-
-                var activeCharacter = plugin.GetActiveCharacter();
-                if (activeCharacter?.RPProfile?.Pronouns == null)
-                    return processTextHook!.Original(textPtr, length);
-
-                var pronounSet = PronounParser.Parse(activeCharacter.RPProfile.Pronouns);
-
-                unsafe
-                {
-                    var span = new Span<byte>((void*)textPtr, (int)length);
-                    var textString = System.Text.Encoding.UTF8.GetString(span);
-
-                    bool hasGenderedContent = textString.Contains("woman", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains("man", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains("lady", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains("lord", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains(" she ", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains(" he ", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains(" her ", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains(" his ", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains(" him ", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains("sister", StringComparison.OrdinalIgnoreCase) ||
-                                             textString.Contains("brother", StringComparison.OrdinalIgnoreCase);
-
-                    if (hasGenderedContent)
-                    {
-                        var hexString = string.Join(" ", span.ToArray().Select(b => b.ToString("X2")));
-                        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-
-                        log.Info($"[GENDER CONTENT] Text: '{textString}'");
-                        log.Info($"[GENDER CONTENT] Hex: {hexString}");
-                        log.Info($"[GENDER CONTENT] Has flags: {span.Contains((byte)0x02)}");
-
-                        try
-                        {
-                            var investigationPath = @"F:\CS+\FFXIV_Dialogue_Investigation.txt";
-                            var entry = $"[{timestamp}] ProcessTextDetour\n" +
-                                       $"Text: {textString}\n" +
-                                       $"Hex: {hexString}\n" +
-                                       $"Has Control Codes (0x02): {span.Contains((byte)0x02)}\n" +
-                                       $"Length: {span.Length}\n" +
-                                       $"---\n";
-                            File.AppendAllText(investigationPath, entry);
-                        }
-                        catch { }
-                    }
-
-                    if (span.Contains((byte)0x02) && !hasGenderedContent)
-                    {
-                        var hexString = string.Join(" ", span.ToArray().Select(b => b.ToString("X2")));
-                        log.Info($"[CONTROL CODES] Text: '{textString}'");
-                        log.Info($"[CONTROL CODES] Hex: {hexString}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                log.Warning($"[Dialogue] Error in ProcessTextDetour: {ex.Message}");
-            }
-
             return processTextHook!.Original(textPtr, length);
         }
 
@@ -1298,12 +1286,18 @@ namespace CharacterSelectPlugin
                     return getStringHook!.Original(textModule, text, decoder, stringStruct);
 
                 var activeCharacter = plugin.GetActiveCharacter();
-                if (activeCharacter?.RPProfile?.Pronouns == null)
+                if (string.IsNullOrWhiteSpace(activeCharacter?.RPProfile?.Pronouns))
                     return getStringHook!.Original(textModule, text, decoder, stringStruct);
 
-                var pronounSet = PronounParser.Parse(activeCharacter.RPProfile.Pronouns);
+                // Skip plain-text input (no SeString control bytes); leaves user chat untouched.
+                var inputSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);
+                if (!inputSpan.Contains((byte)0x02))
+                    return getStringHook!.Original(textModule, text, decoder, stringStruct);
 
-                if (plugin.Configuration.ReplaceNameInDialogue && !string.IsNullOrEmpty(activeCharacter.Name))
+                var pronounSet = GetActivePronounSet(activeCharacter);
+
+                if (plugin.Configuration.ReplaceNameInDialogue
+                    && !(string.IsNullOrWhiteSpace(activeCharacter.Alias) && string.IsNullOrEmpty(activeCharacter.Name)))
                 {
                     var textSpan = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text);
                     ProcessNameReplacementSeString(ref text, activeCharacter, textSpan.Length);
@@ -1386,8 +1380,8 @@ namespace CharacterSelectPlugin
                         processed = processed.Replace("ΞTHEMSELVESΞ", "themselves");
 
                         // Handle contractions
-                        processed = Regex.Replace(processed, @"\bthey's\b", "they're", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\bThey's\b", "They're");
+                        processed = Regex.Replace(processed, @"\bthey's\b", "they're", RegexOptions.IgnoreCase);
 
                         // Neutral title
                         var neutralTitle = plugin.Configuration.GetGenderNeutralTitle();
@@ -1405,14 +1399,14 @@ namespace CharacterSelectPlugin
                         if (hasLuaForcedFemale && !hasPlaceholders && !hasProcessedFlags)
                         {
                             log.Info($"[PostProcess] Processing Lua-forced female variant: '{processed}'");
-                            processed = Regex.Replace(processed, @"\bshe finds\b", "they find", RegexOptions.IgnoreCase);
                             processed = Regex.Replace(processed, @"\bShe finds\b", "They find");
-                            processed = Regex.Replace(processed, @"\bshe is\b", "they are", RegexOptions.IgnoreCase);
+                            processed = Regex.Replace(processed, @"\bshe finds\b", "they find", RegexOptions.IgnoreCase);
                             processed = Regex.Replace(processed, @"\bShe is\b", "They are");
-                            processed = Regex.Replace(processed, @"\bshe was\b", "they were", RegexOptions.IgnoreCase);
+                            processed = Regex.Replace(processed, @"\bshe is\b", "they are", RegexOptions.IgnoreCase);
                             processed = Regex.Replace(processed, @"\bShe was\b", "They were");
-                            processed = Regex.Replace(processed, @"\bshe has\b", "they have", RegexOptions.IgnoreCase);
+                            processed = Regex.Replace(processed, @"\bshe was\b", "they were", RegexOptions.IgnoreCase);
                             processed = Regex.Replace(processed, @"\bShe has\b", "They have");
+                            processed = Regex.Replace(processed, @"\bshe has\b", "they have", RegexOptions.IgnoreCase);
                         }
 
                         if (processed.Contains("ΞNEUTRALΞ"))
@@ -1469,14 +1463,14 @@ namespace CharacterSelectPlugin
                         processed = Regex.Replace(processed, @"\bMore than a hero, (she|he)\b", "More than a hero, they", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\bwhere (she|he) finds\b", "where they find", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\b(She|He) finds\b", "They find");
-                        processed = Regex.Replace(processed, @"\b(she|he) is\b", "they are", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\b(She|He) is\b", "They are");
-                        processed = Regex.Replace(processed, @"\b(she|he) was\b", "they were", RegexOptions.IgnoreCase);
+                        processed = Regex.Replace(processed, @"\b(she|he) is\b", "they are", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\b(She|He) was\b", "They were");
-                        processed = Regex.Replace(processed, @"\b(she|he) has\b", "they have", RegexOptions.IgnoreCase);
+                        processed = Regex.Replace(processed, @"\b(she|he) was\b", "they were", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\b(She|He) has\b", "They have");
-                        processed = Regex.Replace(processed, @"\b(she|he)'s\b", "they're", RegexOptions.IgnoreCase);
+                        processed = Regex.Replace(processed, @"\b(she|he) has\b", "they have", RegexOptions.IgnoreCase);
                         processed = Regex.Replace(processed, @"\b(She|He)'s\b", "They're");
+                        processed = Regex.Replace(processed, @"\b(she|he)'s\b", "they're", RegexOptions.IgnoreCase);
 
                         // Don't replace generic "man/woman" - often refers to NPCs
 
@@ -1806,9 +1800,9 @@ namespace CharacterSelectPlugin
             try
             {
                 var activeCharacter = plugin.GetActiveCharacter();
-                if (activeCharacter?.RPProfile?.Pronouns != null && plugin.Configuration.EnableDialogueIntegration)
+                if (!string.IsNullOrWhiteSpace(activeCharacter?.RPProfile?.Pronouns) && plugin.Configuration.EnableDialogueIntegration)
                 {
-                    var pronounSet = PronounParser.Parse(activeCharacter.RPProfile.Pronouns);
+                    var pronounSet = GetActivePronounSet(activeCharacter);
                     var oldGender = GetLuaVarGender(poolBase);
                     int newGender = oldGender;
 
@@ -1855,10 +1849,10 @@ namespace CharacterSelectPlugin
                     return originalRet;
 
                 var character = plugin.GetActiveCharacter();
-                if (character?.RPProfile?.Pronouns == null)
+                if (string.IsNullOrWhiteSpace(character?.RPProfile?.Pronouns))
                     return originalRet;
 
-                var pronounSet = PronounParser.Parse(character.RPProfile.Pronouns);
+                var pronounSet = GetActivePronounSet(character);
 
                 // Only modify audio for he/him and she/her
                 if (pronounSet.Subject.Equals("she", StringComparison.OrdinalIgnoreCase))
@@ -1944,7 +1938,7 @@ namespace CharacterSelectPlugin
                 var payloads = seString.Payloads;
                 bool replaced = false;
 
-                var csCharacterName = character.Name;
+                var csCharacterName = !string.IsNullOrWhiteSpace(character.Alias) ? character.Alias : character.Name;
                 var nameParts = csCharacterName.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 string csFirstName = "";
                 string csLastName = "";
@@ -2065,7 +2059,7 @@ namespace CharacterSelectPlugin
             if (hasGenderSelectionPatterns)
             {
                 // Neutral terms for they/them
-                if (plugin.Configuration.ReplaceGenderedTerms || pronounSet.Subject.Equals("they", StringComparison.OrdinalIgnoreCase))
+                if (plugin.Configuration.ReplaceGenderedTerms)
                 {
                     processed = Regex.Replace(processed, @"��woman�man|woman�man", neutralTitle, RegexOptions.IgnoreCase);
                     processed = Regex.Replace(processed, @"��man�woman|man�woman", neutralTitle, RegexOptions.IgnoreCase);
@@ -2223,7 +2217,7 @@ namespace CharacterSelectPlugin
                 var payloads = seString.Payloads;
                 bool replaced = false;
 
-                var csCharacterName = activeCharacter.Name;
+                var csCharacterName = !string.IsNullOrWhiteSpace(activeCharacter.Alias) ? activeCharacter.Alias : activeCharacter.Name;
                 var nameParts = csCharacterName.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 string csFirstName = nameParts.Length > 0 ? nameParts[0] : "";
                 string csLastName = nameParts.Length > 1 ? string.Join(" ", nameParts.Skip(1)) : "";
@@ -2414,14 +2408,8 @@ namespace CharacterSelectPlugin
         /// <summary>Disposes hooks.</summary>
         public void Dispose()
         {
-            getStringHook?.Disable();
-            getStringHook?.Dispose();
-            getLuaVarHook?.Disable();
-            getLuaVarHook?.Dispose();
-            processTextHook?.Disable();
-            processTextHook?.Dispose();
-            getCutVoGenderHook?.Disable();
-            getCutVoGenderHook?.Dispose();
+            DisposeHooks();
+            _hooksInstalled = false;
         }
     }
 }

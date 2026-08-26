@@ -302,6 +302,7 @@ namespace CharacterSelectPlugin.Windows
 
                 settingsPanel.Draw();
                 reorderWindow.Draw();
+                designPanel.DrawImportPopout(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
             }
 
             finally
@@ -355,6 +356,17 @@ namespace CharacterSelectPlugin.Windows
             // default falls back to Boutique.Surface0.
             Vector4 chassisBg = GetEffectiveChassisBg();
             dl.AddRectFilled(winPos, winMax, Boutique.U32(chassisBg));
+            if (Boutique.HoveredTokenKey != null)
+            {
+                Boutique.DrawTokenHighlight(dl, winPos, winMax, "color.windowBg");
+                Boutique.DrawTokenHighlight(dl, contentMin, contentMax, "custom.list.bg");
+                Boutique.DrawTokenHighlight(dl, ribbonMin, ribbonMax, "custom.text.subtle");
+                Boutique.DrawTokenHighlight(dl, ribbonMin, ribbonMax, "custom.text.faint");
+                Boutique.DrawTokenHighlight(dl, ribbonMin, ribbonMax, "color.text");
+                Boutique.DrawTokenHighlight(dl, ribbonMin, ribbonMax, "custom.accent.primary");
+                Boutique.DrawTokenHighlight(dl, subbarMin, subbarMax, "custom.text.subtle");
+                Boutique.DrawTokenHighlight(dl, subbarMin, subbarMax, "custom.text.faint");
+            }
 
             // Chrome
             DrawMetaRibbon(dl, ribbonMin, ribbonMax, totalScale, time);
@@ -473,7 +485,7 @@ namespace CharacterSelectPlugin.Windows
                     x += g10;
                     dl.AddText(new Vector2(x, yText), Boutique.U32(Boutique.TextFaint), "·");
                     x += dW + g10;
-                    Boutique.DrawSquarePip(dl, new Vector2(x + 3f * scale * fit, midY), 3f * scale * fit, Boutique.NpCyan);
+                    Boutique.DrawSquarePip(dl, new Vector2(x + 3f * scale * fit, midY), 3f * scale * fit, Boutique.Gold);
                     x += g14;
                     x += Boutique.DrawTrackedText(dl, new Vector2(x, yText), appliedSeg,
                         Boutique.U32(Boutique.Text), tp);
@@ -522,7 +534,7 @@ namespace CharacterSelectPlugin.Windows
         private void DrawActionBar(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale, double time)
         {
             // Background: gold radial wash bottom-left + dark vertical gradient
-            uint topCol = Boutique.U32(new Vector4(0x0C / 255f, 0x0E / 255f, 0x14 / 255f, 1f));
+            uint topCol = Boutique.U32(Boutique.HeaderTop);
             uint botCol = Boutique.U32(Boutique.Bg);
             dl.AddRectFilledMultiColor(min, max, topCol, topCol, botCol, botCol);
             Boutique.DrawAuroraSpot(dl,
@@ -557,6 +569,15 @@ namespace CharacterSelectPlugin.Windows
             Boutique.DrawGoldPill(dl, pillMin, pillMax, "ADD CHARACTER", trackPx, scale, addHovered);
             float sheen = uiStyles.UpdateAndGetHoverSweepProgress("addchar_pill", addHovered);
             if (sheen >= 0f) Windows.Styles.UIStyles.DrawHoverSheen(dl, pillMin, pillMax, sheen, maxAlpha: 0.30f);
+
+            if (Boutique.HoveredTokenKey != null)
+            {
+                Boutique.DrawTokenHighlight(dl, pillMin, pillMax, "custom.accent.primary");
+                Boutique.DrawTokenHighlight(dl, pillMin, pillMax, "custom.button.bg");
+                Boutique.DrawTokenHighlight(dl, pillMin, pillMax, "custom.button.text");
+                Boutique.DrawTokenHighlight(dl, pillMin, pillMax, "custom.button.icon");
+                Boutique.DrawTokenHighlight(dl, min, max, "custom.header.top");
+            }
 
             if (addClicked)
             {
@@ -604,13 +625,11 @@ namespace CharacterSelectPlugin.Windows
                 "Gallery is under construction.\nCheck back in a future update!"
             };
 
-            string[] rightIconGlyphs  = { "", "", "" };
-            string[] rightIconKeys    = { "settings", "revert", "discord" };
-            Vector4[] rightIconHovers = { Boutique.Text, Boutique.Magenta, Boutique.Cyan };
+            string[] rightIconGlyphs  = { "", "", "" };
+            string[] rightIconKeys    = { "revert", "discord", "settings" };
+            Vector4[] rightIconHovers = { Boutique.Magenta, Boutique.Cyan, Boutique.Text };
             string[] rightIconTooltips = {
-                "Open Settings Menu.\nYou can find options for adjusting your Character Grid.\nAs well as the Opt-In for Glamourer Automations.",
-                "Revert All CS+ Changes\n\nReverts:\n• Glamourer → Game state\n• Honorific → Cleared\n• Moodles → All removed\n• Customize+ → Disabled\n• Penumbra → Your Character collection\n• CS+ → No active character\n\nHold Ctrl + Shift and click to revert.",
-                "Join our Discord community!"
+                "Revert All CS+ Changes\n\nReverts:\n• Glamourer → Game state\n• Honorific → Cleared\n• Moodles → All removed\n• Customize+ → Disabled\n• Penumbra → Your Character collection\n• CS+ → No active character\n\nHold Ctrl + Shift and click to revert.", "Join our Discord community!", "Open Settings Menu.\nYou can find options for adjusting your Character Grid.\nAs well as the Opt-In for Glamourer Automations."
             };
 
             int leftCount = leftIconGlyphs.Length;
@@ -662,8 +681,7 @@ namespace CharacterSelectPlugin.Windows
             dl.AddText(UiBuilder.IconFont, UiBuilder.IconFont.FontSize, magPos,
                 Boutique.U32(Boutique.TextFaint), "");
 
-            // Native ImGui input on top. Push FrameBorderSize=0 + transparent
-            // Border colour so the input doesn't overdraw my pill border.
+            // Native ImGui input on top, borderless so it doesn't overdraw the pill border
             float padTextY = MathF.Max(0f, (searchH - ImGui.GetTextLineHeight()) * 0.5f);
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(0f, padTextY));
             ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
@@ -675,8 +693,8 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PushStyleColor(ImGuiCol.FrameBgActive, Vector4.Zero);
             ImGui.PushStyleColor(ImGuiCol.Border, Vector4.Zero);
             ImGui.PushStyleColor(ImGuiCol.BorderShadow, Vector4.Zero);
-            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.Text);
-            ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.TextFaint);
+            ImGui.PushStyleColor(ImGuiCol.Text, Boutique.InputText);
+            ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.InputPlaceholder);
             if (ImGui.InputTextWithHint("##boutique_search", "Search characters...", ref searchInput, 128))
             {
                 characterGrid.SearchQuery = searchInput;
@@ -685,6 +703,13 @@ namespace CharacterSelectPlugin.Windows
             ImGui.PopStyleColor(7);
             ImGui.PopItemWidth();
             ImGui.PopStyleVar(2);
+
+            if (Boutique.HoveredTokenKey != null)
+            {
+                Boutique.DrawTokenHighlight(dl, searchMin, searchMax, "color.frameBg");
+                Boutique.DrawTokenHighlight(dl, searchMin, searchMax, "custom.input.text");
+                Boutique.DrawTokenHighlight(dl, searchMin, searchMax, "custom.input.placeholder");
+            }
         }
 
         // 4-point sparkle star (4 thin triangles meeting at the centre).
@@ -739,7 +764,7 @@ namespace CharacterSelectPlugin.Windows
                     dl.AddText(UiBuilder.IconFont, UiBuilder.IconFont.FontSize, iconPos,
                         Boutique.U32(Boutique.Gold), glyph);
                 }
-                if (hasUnseen)
+                if (hasUnseen && !Boutique.ReduceMotion)
                 {
                     var btnCentre = min + new Vector2(side, side) * 0.5f;
                     float dt = ImGui.GetIO().DeltaTime;
@@ -927,14 +952,30 @@ namespace CharacterSelectPlugin.Windows
             // Reorder icon (28×28)
             float iconSize = 28f * scale;
             float iconY = min.Y + (max.Y - min.Y - iconSize) * 0.5f;
-            float reorderX = rightX - iconSize;
+            float importX = rightX - iconSize;
+            float reorderX = importX - iconSize - 4f * scale;
             var reorderMin = new Vector2(reorderX, iconY);
             ImGui.SetCursorScreenPos(reorderMin);
             bool reorderClicked = ImGui.InvisibleButton("##reorder_btn", new Vector2(iconSize, iconSize));
             bool reorderHovered = ImGui.IsItemHovered();
-            if (reorderHovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Reorder characters - manage display order in a list view");
-            DrawSquareIcon28(dl, reorderMin, scale, "\uf0b2", reorderHovered, Boutique.NpAmber);
+            if (reorderHovered) CharacterSelectPlugin.Windows.Styles.Boutique.Tooltip("Reorder characters - arrange your roster and pages");
+            DrawSquareIcon28(dl, reorderMin, scale, "\uf0cb", reorderHovered, Boutique.NpAmber);
             if (reorderClicked) reorderWindow.Open();
+
+            // Import Designs icon
+            var importChar = designPanel.CurrentPanelCharacter ?? plugin.GetActiveCharacter();
+            var importMin = new Vector2(importX, iconY);
+            ImGui.SetCursorScreenPos(importMin);
+            bool importClicked = ImGui.InvisibleButton("##import_designs_btn", new Vector2(iconSize, iconSize));
+            bool importHovered = ImGui.IsItemHovered();
+            if (importHovered)
+                Boutique.Tooltip(importChar != null
+                    ? $"Import designs into {importChar.Name}, from Glamourer or another character"
+                    : "Import designs (apply a character first)");
+            DrawSquareIcon28(dl, importMin, scale, FontAwesomeIcon.FileImport.ToIconString(),
+                importHovered && importChar != null, Boutique.CyanSoft, importChar != null);
+            if (importClicked && importChar != null)
+                designPanel.OpenDesignImport(importChar);
 
             // Tags pill
             string tagLbl = "TAGS";
@@ -1006,7 +1047,7 @@ namespace CharacterSelectPlugin.Windows
         }
 
         private void DrawSquareIcon28(ImDrawListPtr dl, Vector2 min, float scale,
-            string glyph, bool hovered, Vector4 hoverInk)
+            string glyph, bool hovered, Vector4 hoverInk, bool enabled = true)
         {
             float side = 28f * scale;
             var max = min + new Vector2(side, side);
@@ -1020,12 +1061,12 @@ namespace CharacterSelectPlugin.Windows
             dl.AddRect(min, max, borderCol, 0f, ImDrawFlags.None, 1f * scale);
 
             ImGui.PushFont(UiBuilder.IconFont);
-            var ink = hovered ? hoverInk : Boutique.TextDim;
+            var ink = !enabled ? Boutique.TextGhost : (hovered ? hoverInk : Boutique.TextDim);
             var iconSize = ImGui.CalcTextSize(glyph);
             ImGui.PopFont();
             float fSz = UiBuilder.IconFont.FontSize;
-            var iconPos = new Vector2(min.X + (side - iconSize.X * 0.78f) * 0.5f,
-                                      min.Y + (side - iconSize.Y * 0.78f) * 0.5f);
+            var iconPos = new Vector2(min.X + (side - iconSize.X) * 0.5f,
+                                      min.Y + (side - iconSize.Y) * 0.5f);
             dl.AddText(UiBuilder.IconFont, fSz, iconPos, Boutique.U32(ink), glyph);
         }
 
@@ -1258,9 +1299,7 @@ namespace CharacterSelectPlugin.Windows
             float pageT = characterGrid.PageTransitionT;
             bool isTrans = characterGrid.IsPageTransitioning;
             int fromIdx = isTrans ? prevPage : curPage;
-            // Page row accent follows custom.pageButtonActive so the editor's
-            // "Active Page Button" entry drives the active dot, halo, and
-            // arrow tint instead of leaking off the global Accent token.
+            // Page row accent follows custom.pageButtonActive, not the global Accent token
             Vector4 pageActive = Boutique.SlotOrDefault("custom.pageButtonActive",
                 new Vector4(1f, 214f / 255f, 0f, 1f));
             Vector4 pageActiveWarm = Boutique.Lerp(pageActive,
@@ -1268,7 +1307,7 @@ namespace CharacterSelectPlugin.Windows
             Boutique.DrawWardrobePagerRow(dl, min, max, midY, totalPages,
                 curPage, fromIdx, pageT, isTrans, scale,
                 pageActive, pageActiveWarm, Plugin.Instance?.OswaldMed13,
-                idx => characterGrid.CurrentPage = idx);
+                idx => characterGrid.CurrentPage = idx, "custom.pageButtonActive");
         }
 
         private float DrawFooterLinkButton(ImDrawListPtr dl, float scale, double time, Vector2 midPos,

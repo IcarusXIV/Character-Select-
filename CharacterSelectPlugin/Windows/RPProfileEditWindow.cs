@@ -44,6 +44,13 @@ namespace CharacterSelectPlugin.Windows
         private DateTime lastUpdateTime = DateTime.MinValue;
         private const double UpdateDebounceMs = 50;
 
+        // Last rp values for the mirrored fields; the reconcile only pulls when rp differs
+        private string _lastBio = "";
+        private string _lastAbilities = "";
+        private string _lastTags = "";
+        private string _lastRelationship = "";
+        private string _lastOccupation = "";
+
         private string originalPronouns = "";
         private string originalGender = "";
         private string originalAge = "";
@@ -193,8 +200,8 @@ namespace CharacterSelectPlugin.Windows
             {
                 leftContentBoxes = new List<ContentBox>
                 {
-                    new ContentBox { Title = "Core Identity", Subtitle = "The foundation of who this character is", Content = "", Type = ContentBoxType.CoreIdentity },
-                    new ContentBox { Title = "Combat Prowess", Subtitle = "Skills and techniques honed through experience", Content = "", Type = ContentBoxType.Combat },
+                    new ContentBox { Title = "Core Identity", Subtitle = "Mirrors your RP Profile's Bio field", Content = "", Type = ContentBoxType.CoreIdentity },
+                    new ContentBox { Title = "Combat Prowess", Subtitle = "Mirrors your RP Profile's Abilities field", Content = "", Type = ContentBoxType.Combat },
                     new ContentBox { Title = "Background & Lore", Subtitle = "Where this character came from and what shaped them", Content = "", Type = ContentBoxType.Background },
                     new ContentBox { Title = "RP Hooks", Subtitle = "Ways to start a story with this character", Content = "", Type = ContentBoxType.RPHooks }
                 };
@@ -220,8 +227,8 @@ namespace CharacterSelectPlugin.Windows
                 rightContentBoxes = new List<ContentBox>
                 {
                     new ContentBox { Title = "Quick Info", Subtitle = "Basic character information", Content = "", Type = ContentBoxType.AdditionalDetails },
-                    new ContentBox { Title = "Additional Details", Subtitle = "Key: Value pairs (e.g., Occupation: Adventurer)", Content = "", Type = ContentBoxType.AdditionalDetails, LayoutType = ContentBoxLayoutType.KeyValue },
-                    new ContentBox { Title = "Key Traits", Subtitle = "Same as the mini profile Tags field - comma-separated (e.g., Roleplay, Adventurer, Lore-heavy)", Content = "", Type = ContentBoxType.KeyTraits },
+                    new ContentBox { Title = "Additional Details", Subtitle = "Mirrors your RP Profile's Relationship and Occupation fields", Content = "", Type = ContentBoxType.AdditionalDetails, LayoutType = ContentBoxLayoutType.KeyValue },
+                    new ContentBox { Title = "Key Traits", Subtitle = "Mirrors your RP Profile's Tags field", Content = "", Type = ContentBoxType.KeyTraits },
                     new ContentBox { Title = "Likes & Dislikes", Subtitle = "Preferences that define this character", Content = "", Likes = "", Dislikes = "", Type = ContentBoxType.LikesAndDislikes, LayoutType = ContentBoxLayoutType.LikesDislikes },
                     new ContentBox { Title = "External Links", Subtitle = "Social media, websites, and related content", Content = "", Type = ContentBoxType.ExternalLinks }
                 };
@@ -361,6 +368,12 @@ namespace CharacterSelectPlugin.Windows
             }
 
             LoadContentIntoBoxes(rp);
+
+            _lastBio = rp.Bio ?? "";
+            _lastAbilities = rp.Abilities ?? "";
+            _lastTags = rp.Tags ?? "";
+            _lastRelationship = rp.Relationship ?? "";
+            _lastOccupation = rp.Occupation ?? "";
 
             originalLeftContentBoxes = leftContentBoxes.Select(box => new ContentBox
             {
@@ -512,6 +525,8 @@ namespace CharacterSelectPlugin.Windows
             try
             {
                 var rp = character.RPProfile ??= new RPProfile();
+
+                ReconcileFromMiniFields(rp);
 
                 var contentHeight = ImGui.GetContentRegionAvail().Y - (80 * totalScale);
                 var availableWidth = ImGui.GetContentRegionAvail().X;
@@ -1033,6 +1048,8 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.InputText("##editOccupation", ref occupation, 100))
             {
                 rp.Occupation = occupation;
+                _lastOccupation = occupation;
+                UpdateAdditionalDetailsPair("Occupation", occupation);
                 UpdateExpandedViewIfOpen();
             }
 
@@ -1049,6 +1066,8 @@ namespace CharacterSelectPlugin.Windows
             if (ImGui.InputText("##editRelationship", ref relationship, 100))
             {
                 rp.Relationship = relationship;
+                _lastRelationship = relationship;
+                UpdateAdditionalDetailsPair("Relationship", relationship);
                 UpdateExpandedViewIfOpen();
             }
 
@@ -1240,7 +1259,10 @@ namespace CharacterSelectPlugin.Windows
                     ImGui.Indent();
 
                     if (ContentBoxEditor.DrawContentBoxEditor(box, availableWidth - 20 * totalScale, totalScale))
+                    {
+                        SyncMirroredBoxToFlatField(box);
                         UpdateProfileViewRealTime();
+                    }
 
                     ImGui.Spacing();
                     ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.8f, 0.3f, 0.3f, 0.8f));
@@ -1273,8 +1295,8 @@ namespace CharacterSelectPlugin.Windows
             if (side == "Main")
             {
                 layoutDisplayNames = new string[] {
-                    "Core Identity - Essential character information and defining characteristics",
-                    "Combat Prowess - Fighting style, abilities, and battle expertise",
+                    "Core Identity - Mirrors your RP Profile's Bio field",
+                    "Combat Prowess - Mirrors your RP Profile's Abilities field",
                     "Background & Lore - Character history, origins, and past events",
                     "RP Hooks - Conversation starters and plot hooks for roleplay",
                     "Timeline - Chronological events with dates",
@@ -1314,8 +1336,8 @@ namespace CharacterSelectPlugin.Windows
             {
                 layoutDisplayNames = new string[] {
                     "Quick Info - At-a-glance character facts and statistics",
-                    "Additional Details - Extra information that doesn't fit elsewhere",
-                    "Key Traits - Defining personality traits and characteristics",
+                    "Additional Details - Mirrors your RP Profile's Relationship and Occupation fields",
+                    "Key Traits - Mirrors your RP Profile's Tags field",
                     "Likes & Dislikes - Things your character enjoys or avoids",
                     "External Links - Links to wikis, playlists, or character resources",
                     "Quick List - Bullet points for skills and quick facts",
@@ -1373,7 +1395,9 @@ namespace CharacterSelectPlugin.Windows
                     Likes = "",
                     Dislikes = ""
                 };
-                
+
+                SeedMirroredBoxContent(newBox);
+
                 boxes.Add(newBox);
                 UpdateProfileViewRealTime();
             }
@@ -1423,25 +1447,25 @@ namespace CharacterSelectPlugin.Windows
             rp.IsNSFW = isNSFW;
 
             var coreIdentityBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Core Identity");
-            if (coreIdentityBox != null)
+            if (coreIdentityBox != null && !string.IsNullOrEmpty(coreIdentityBox.Content))
             {
                 rp.Bio = coreIdentityBox.Content;
             }
 
             var combatBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Combat Prowess");
-            if (combatBox != null)
+            if (combatBox != null && !string.IsNullOrEmpty(combatBox.Content))
             {
                 rp.Abilities = combatBox.Content;
             }
 
             var backgroundBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Background & Lore");
-            if (backgroundBox != null)
+            if (backgroundBox != null && !string.IsNullOrEmpty(backgroundBox.Content))
             {
                 rp.GalleryStatus = backgroundBox.Content; // Use GalleryStatus for background content
             }
 
             var rpHooksBox = leftContentBoxes.FirstOrDefault(b => b.Title == "RP Hooks");
-            if (rpHooksBox != null)
+            if (rpHooksBox != null && !string.IsNullOrEmpty(rpHooksBox.Content))
             {
                 rp.RPHooks = rpHooksBox.Content;
             }
@@ -1454,7 +1478,7 @@ namespace CharacterSelectPlugin.Windows
 
             // Key Traits - save back to rp.Tags
             var keyTraitsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Key Traits");
-            if (keyTraitsBox != null)
+            if (keyTraitsBox != null && !string.IsNullOrEmpty(keyTraitsBox.Content))
             {
                 rp.Tags = keyTraitsBox.Content;
             }
@@ -1530,6 +1554,9 @@ namespace CharacterSelectPlugin.Windows
             bool hasBox      = totalBoxes > 0;
             if (hasBio && hasPronouns && hasImage && hasBg && hasBox)
                 plugin.AchievementTracker?.OnProfileCompleted();
+
+            if (character != null)
+                plugin.AchievementTracker?.OnProfileUpdated(character);
 
             plugin.SaveConfiguration();
 
@@ -1781,13 +1808,13 @@ namespace CharacterSelectPlugin.Windows
                     // Start downloading the image if not already downloading
                     Task.Run(async () => await DownloadGalleryImageAsync(galleryImage.Url));
                 }
-                
+
                 if (texture != null)
                 {
                     // Draw actual image thumbnail
                     var cursorPos = ImGui.GetCursorScreenPos();
                     var drawList = ImGui.GetWindowDrawList();
-                    
+
                     // Show thumbnails at default zoom/position for consistency
                     float aspectRatio = (float)texture.Width / texture.Height;
                     Vector2 imageSize;
@@ -1919,7 +1946,7 @@ namespace CharacterSelectPlugin.Windows
                 // Start downloading the image if not already downloading
                 Task.Run(async () => await DownloadGalleryImageAsync(galleryImage.Url));
             }
-            
+
             float previewThumbSize = 100 * totalScale;
             if (texture != null)
             {
@@ -1981,7 +2008,7 @@ namespace CharacterSelectPlugin.Windows
             ImGui.Text("Name:");
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("##editName", ref tempEditName, 100);
-            
+
             // URL input  
             ImGui.Text("URL:");
             ImGui.SetNextItemWidth(-1);
@@ -2389,13 +2416,13 @@ namespace CharacterSelectPlugin.Windows
         {
             return name switch
             {
-                "Core Identity" => "The foundation of who this character is",
-                "Combat Prowess" => "Skills and techniques honed through experience",
+                "Core Identity" => "Mirrors your RP Profile's Bio field",
+                "Combat Prowess" => "Mirrors your RP Profile's Abilities field",
                 "Background & Lore" => "Where this character came from and what shaped them",
                 "RP Hooks" => "Ways to start a story with this character",
                 "Quick Info" => "Basic character information",
-                "Additional Details" => "Key: Value pairs (e.g., Occupation: Adventurer)",
-                "Key Traits" => "Comma-separated traits (e.g., Brave, Loyal, Curious)",
+                "Additional Details" => "Mirrors your RP Profile's Relationship and Occupation fields",
+                "Key Traits" => "Mirrors your RP Profile's Tags field",
                 "External Links" => "Social media, websites, and related content",
                 "Connections" => "Character relationships and connections",
                 _ => GetDefaultSubtitleForLayout(layout)
@@ -2433,8 +2460,8 @@ namespace CharacterSelectPlugin.Windows
             return contentType switch
             {
                 // Main content types
-                "Core Identity" => "Essential character information like name, race, job, and defining characteristics",
-                "Combat Prowess" => "Fighting style, abilities, strengths and weaknesses in battle",
+                "Core Identity" => "Mirrors your RP Profile's Bio field",
+                "Combat Prowess" => "Mirrors your RP Profile's Abilities field",
                 "Background & Lore" => "Character history, origins, and important past events",
                 "RP Hooks" => "Conversation starters and plot hooks for roleplay interactions",
                 "Timeline" => "Chronological events in your character's life with dates",
@@ -2446,8 +2473,8 @@ namespace CharacterSelectPlugin.Windows
                 
                 // Sidebar content types
                 "Quick Info" => "At-a-glance character facts and statistics",
-                "Additional Details" => "Key-value pairs like Relationship, Occupation, and custom entries",
-                "Key Traits" => "Comma-separated personality traits and characteristics",
+                "Additional Details" => "Mirrors your RP Profile's Relationship and Occupation fields",
+                "Key Traits" => "Mirrors your RP Profile's Tags field",
                 "Likes & Dislikes" => "Things your character enjoys or avoids",
                 "External Links" => "Links to wikis, playlists, or other character resources",
                 "Quick List" => "Bullet points for skills, abilities, or quick facts",
@@ -2470,6 +2497,164 @@ namespace CharacterSelectPlugin.Windows
             {
                 plugin.RPProfileViewer.RefreshCharacterData(character);
             }
+        }
+
+        // Pull mirrored fields from rp when they differ from the last-synced value
+        private void ReconcileFromMiniFields(RPProfile rp)
+        {
+            var bioValue = rp.Bio ?? "";
+            if (bioValue != _lastBio)
+            {
+                var coreIdentityBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Core Identity");
+                if (coreIdentityBox != null) coreIdentityBox.Content = bioValue;
+                _lastBio = bioValue;
+            }
+
+            var abilitiesValue = rp.Abilities ?? "";
+            if (abilitiesValue != _lastAbilities)
+            {
+                var combatBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Combat Prowess");
+                if (combatBox != null) combatBox.Content = abilitiesValue;
+                _lastAbilities = abilitiesValue;
+            }
+
+            var tagValue = rp.Tags ?? "";
+            if (tagValue != _lastTags)
+            {
+                var keyTraitsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Key Traits");
+                if (keyTraitsBox != null) keyTraitsBox.Content = tagValue;
+                _lastTags = tagValue;
+            }
+
+            var rel = rp.Relationship ?? "";
+            if (rel != _lastRelationship)
+            {
+                relationship = rel;
+                _lastRelationship = rel;
+                UpdateAdditionalDetailsPair("Relationship", rel);
+            }
+
+            var occ = rp.Occupation ?? "";
+            if (occ != _lastOccupation)
+            {
+                occupation = occ;
+                _lastOccupation = occ;
+                UpdateAdditionalDetailsPair("Occupation", occ);
+            }
+        }
+
+        // Write a mirrored box's edit to its flat rp field and refresh the last-synced value
+        private void SyncMirroredBoxToFlatField(ContentBox box)
+        {
+            if (character?.RPProfile == null) return;
+            var rp = character.RPProfile;
+            switch (box.Title)
+            {
+                case "Core Identity":
+                    rp.Bio = box.Content;
+                    _lastBio = box.Content ?? "";
+                    break;
+                case "Combat Prowess":
+                    rp.Abilities = box.Content;
+                    _lastAbilities = box.Content ?? "";
+                    break;
+                case "Key Traits":
+                    rp.Tags = box.Content;
+                    _lastTags = box.Content ?? "";
+                    break;
+                case "Additional Details":
+                    SyncAdditionalDetailsToRP(box);
+                    break;
+            }
+        }
+
+        private void SyncAdditionalDetailsToRP(ContentBox box)
+        {
+            if (character?.RPProfile == null || string.IsNullOrEmpty(box.LeftColumn)) return;
+            var rp = character.RPProfile;
+            var keys = box.LeftColumn.Split('\n');
+            var values = box.RightColumn?.Split('\n') ?? Array.Empty<string>();
+            for (int i = 0; i < keys.Length; i++)
+            {
+                var key = keys[i].Trim();
+                var value = i < values.Length ? values[i].Trim() : "";
+                if (key.Equals("Relationship", StringComparison.OrdinalIgnoreCase))
+                {
+                    rp.Relationship = value;
+                    relationship = value;
+                    _lastRelationship = value;
+                }
+                else if (key.Equals("Occupation", StringComparison.OrdinalIgnoreCase))
+                {
+                    rp.Occupation = value;
+                    occupation = value;
+                    _lastOccupation = value;
+                }
+            }
+        }
+
+        // Keep the Additional Details Relationship/Occupation pair mirroring the basic field
+        private void UpdateAdditionalDetailsPair(string key, string value)
+        {
+            var box = rightContentBoxes.FirstOrDefault(b => b.Title == "Additional Details");
+            if (box == null) return;
+
+            var keys = string.IsNullOrEmpty(box.LeftColumn) ? new List<string>() : box.LeftColumn.Split('\n').ToList();
+            var values = string.IsNullOrEmpty(box.RightColumn) ? new List<string>() : box.RightColumn.Split('\n').ToList();
+            while (values.Count < keys.Count) values.Add("");
+
+            int idx = keys.FindIndex(k => k.Trim().Equals(key, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                values[idx] = value;
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(value)) return;
+                keys.Add(key);
+                values.Add(value);
+            }
+
+            box.LeftColumn = string.Join("\n", keys);
+            box.RightColumn = string.Join("\n", values);
+        }
+
+        // Seed a mirrored-title box from its current rp field
+        private void SeedMirroredBoxContent(ContentBox box)
+        {
+            if (character?.RPProfile == null) return;
+            var rp = character.RPProfile;
+            switch (box.Title)
+            {
+                case "Core Identity": box.Content = rp.Bio ?? ""; break;
+                case "Combat Prowess": box.Content = rp.Abilities ?? ""; break;
+                case "Key Traits": box.Content = rp.Tags ?? ""; break;
+                case "Background & Lore": box.Content = rp.GalleryStatus ?? ""; break;
+                case "RP Hooks": box.Content = rp.RPHooks ?? ""; break;
+            }
+        }
+
+        // Commits the flat mirrors in memory only, no upload or config save
+        public override void OnClose()
+        {
+            if (character?.RPProfile == null) return;
+            var rp = character.RPProfile;
+
+            var coreIdentityBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Core Identity");
+            if (coreIdentityBox != null && !string.IsNullOrEmpty(coreIdentityBox.Content))
+                rp.Bio = coreIdentityBox.Content;
+
+            var combatBox = leftContentBoxes.FirstOrDefault(b => b.Title == "Combat Prowess");
+            if (combatBox != null && !string.IsNullOrEmpty(combatBox.Content))
+                rp.Abilities = combatBox.Content;
+
+            var keyTraitsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Key Traits");
+            if (keyTraitsBox != null && !string.IsNullOrEmpty(keyTraitsBox.Content))
+                rp.Tags = keyTraitsBox.Content;
+
+            var additionalDetailsBox = rightContentBoxes.FirstOrDefault(b => b.Title == "Additional Details");
+            if (additionalDetailsBox != null && !string.IsNullOrWhiteSpace(additionalDetailsBox.LeftColumn))
+                SyncAdditionalDetailsToRP(additionalDetailsBox);
         }
 
         // Banner URL support methods

@@ -72,34 +72,45 @@ namespace CharacterSelectPlugin.Windows
                 ImGui.SetNextItemWidth(dropdownWidth);
                 int tempCharacterIndex = selectedCharacterIndex;
 
-                if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightRegular))
+                var charComboPos = ImGui.GetCursorScreenPos();
+                float charComboTop = charComboPos.Y;
+                AnchorDropdown(charComboPos.X, charComboTop, charComboTop + ImGui.GetFrameHeight());
+                if (ImGui.BeginCombo("##CharacterDropdown", GetSelectedCharacterName(), ImGuiComboFlags.HeightLargest))
                 {
-                    for (int i = 0; i < plugin.Characters.Count; i++)
+                    int charRows = plugin.Characters.Count(c => MatchesSearch(c.Name, characterSearch));
+                    if (BeginDropdownList(ref characterSearch, charComboTop, charRows, "##charList"))
                     {
-                        var character = plugin.Characters[i];
-                        bool isSelected = (tempCharacterIndex == i);
-
-                        if (ImGui.Selectable(character.Name, isSelected))
+                        for (int i = 0; i < plugin.Characters.Count; i++)
                         {
-                            tempCharacterIndex = i;
+                            var character = plugin.Characters[i];
+                            if (!MatchesSearch(character.Name, characterSearch)) continue;
+                            bool isSelected = (tempCharacterIndex == i);
 
-                            if (character.Designs.Count > 0)
+                            if (ImGui.Selectable(character.Name, isSelected))
                             {
-                                var sortedDesigns = GetSortedDesigns(character);
-                                if (sortedDesigns.Count > 0)
+                                closeDropdown = true;
+                                tempCharacterIndex = i;
+
+                                if (character.Designs.Count > 0)
                                 {
-                                    selectedDesignIndex = GetOriginalIndex(character, sortedDesigns[0]);
+                                    var sortedDesigns = GetSortedDesigns(character);
+                                    if (sortedDesigns.Count > 0)
+                                    {
+                                        selectedDesignIndex = GetOriginalIndex(character, sortedDesigns[0]);
+                                    }
+                                }
+                                else
+                                {
+                                    selectedDesignIndex = -1;
                                 }
                             }
-                            else
-                            {
-                                selectedDesignIndex = -1;
-                            }
-                        }
 
-                        if (isSelected)
-                            ImGui.SetItemDefaultFocus();
+                            if (isSelected)
+                                ImGui.SetItemDefaultFocus();
+                        }
+                        EndDropdownList(ref characterSearch, charComboTop);
                     }
+                    if (closeDropdown) ImGui.CloseCurrentPopup();
                     ImGui.EndCombo();
                 }
 
@@ -117,7 +128,10 @@ namespace CharacterSelectPlugin.Windows
                     int tempDesignIndex = selectedDesignIndex;
 
                     ImGui.SetNextItemWidth(dropdownWidth);
-                    if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightRegular))
+                    var designComboPos = ImGui.GetCursorScreenPos();
+                    float designComboTop = designComboPos.Y;
+                    AnchorDropdown(designComboPos.X, designComboTop, designComboTop + ImGui.GetFrameHeight());
+                    if (ImGui.BeginCombo("##DesignDropdown", GetSelectedDesignName(selectedCharacter), ImGuiComboFlags.HeightLargest))
                     {
                         userIsInteracting = true;
 
@@ -125,13 +139,17 @@ namespace CharacterSelectPlugin.Windows
                             .Select((d, index) => new { Design = d, OriginalIndex = GetOriginalIndex(selectedCharacter, d) })
                             .ToList();
 
-                        for (int j = 0; j < orderedDesigns.Count; j++)
+                        int designRows = orderedDesigns.Count(e => MatchesSearch(e.Design.Name, designSearch));
+                        bool listOpen = BeginDropdownList(ref designSearch, designComboTop, designRows, "##designList");
+                        for (int j = 0; listOpen && j < orderedDesigns.Count; j++)
                         {
                             var entry = orderedDesigns[j];
+                            if (!MatchesSearch(entry.Design.Name, designSearch)) continue;
                             bool isSelected = (tempDesignIndex == entry.OriginalIndex);
 
                             if (ImGui.Selectable(entry.Design.Name, isSelected))
                             {
+                                closeDropdown = true;
                                 tempDesignIndex = entry.OriginalIndex;
                                 userIsInteracting = true;
                                 lastTrackedDesignName = entry.Design.Name;
@@ -173,6 +191,8 @@ namespace CharacterSelectPlugin.Windows
                             if (isSelected)
                                 ImGui.SetItemDefaultFocus();
                         }
+                        if (listOpen) EndDropdownList(ref designSearch, designComboTop);
+                        if (closeDropdown) ImGui.CloseCurrentPopup();
 
                         ImGui.EndCombo();
                     }
@@ -194,7 +214,8 @@ namespace CharacterSelectPlugin.Windows
                     if (ImGui.Button("Apply", new Vector2(50, ImGui.GetFrameHeight())))
                     {
                         userIsInteracting = false;
-                        ApplySelection();
+                        if (ImGui.GetIO().KeyShift) ApplyRandomDesign();
+                        else ApplySelection();
                     }
                     UIStyles.ApplyHoverSheenToLastItemStatic("quickswitch_apply_btn");
 

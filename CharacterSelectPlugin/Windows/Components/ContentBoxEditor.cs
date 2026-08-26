@@ -1234,19 +1234,6 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.BulletText("Gender");
                     ImGui.BulletText("Orientation");
                     break;
-
-                case "Additional Details":
-                    ImGui.TextWrapped("This section automatically displays the following fields from the Basic Info section above:");
-                    ImGui.Spacing();
-                    ImGui.BulletText("Relationship");
-                    ImGui.BulletText("Occupation");
-                    break;
-
-                case "Key Traits":
-                    ImGui.TextWrapped("This section displays tags from your RP Profile.");
-                    ImGui.Spacing();
-                    ImGui.TextDisabled("Edit your character's Tags in the RP Profile section to populate this box.");
-                    break;
             }
             ImGui.PopStyleColor();
 

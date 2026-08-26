@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -39,7 +39,10 @@ namespace CharacterSelectPlugin.Windows.Components
         public void DrawClassicLayout()
 {
             if (!plugin.IsSettingsOpen)
+            {
+                FlushPendingColourSave();
                 return;
+            }
 
             // Calculate dynamic height based on expanded sections
             var totalScale = GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier);
@@ -1334,6 +1337,30 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             DrawTooltip("Allow assigning a gearset to each character/design.\nWhen applied, it will automatically switch to that gearset.\nConfigure gearsets in the Add/Edit Character or Design forms.");
 
+            if (enableJobAssignments || enableGearsetAssignments)
+            {
+                bool showJobIcons = plugin.Configuration.ShowJobIconsOnCards;
+                if (ImGui.Checkbox("Show Job Icons On Character Cards", ref showJobIcons))
+                {
+                    plugin.Configuration.ShowJobIconsOnCards = showJobIcons;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Show icons for job, role, and gearset assignments in the bottom-right corner of character cards.");
+
+                if (showJobIcons)
+                {
+                    ImGui.Indent();
+                    bool monoIcons = plugin.Configuration.JobIconsMonochrome;
+                    if (ImGui.Checkbox("Monochrome Job Icons", ref monoIcons))
+                    {
+                        plugin.Configuration.JobIconsMonochrome = monoIcons;
+                        plugin.Configuration.Save();
+                    }
+                    DrawTooltip("Use dark neutral job icons that blend with the card instead of role-coloured ones.");
+                    ImGui.Unindent();
+                }
+            }
+
             if (!enableJobAssignments && !enableGearsetAssignments)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.65f, 1.0f));
@@ -1716,6 +1743,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 }
                 DrawTooltip("Hide your Free Company tag from your nameplate.\nOnly affects nameplate, not other UI elements.");
 
+                bool skipMatching = plugin.Configuration.SkipNameSyncWhenNamesMatch;
+                if (ImGui.Checkbox("Skip when my name already matches", ref skipMatching))
+                {
+                    plugin.Configuration.SkipNameSyncWhenNamesMatch = skipMatching;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Doesn't sync or replace your name while the applied character's name matches\nyour in-game character's name.");
+
                 ImGui.Unindent(20f);
             }
 
@@ -1736,6 +1771,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.Configuration.AllowOthersToSeeMyCSName = allowOthers;
                 if (allowOthers) plugin.AchievementTracker?.OnSharedNameEnabled();
                 plugin.Configuration.Save();
+                plugin.NotifySyncedNameChanged();
             }
             DrawTooltip("When enabled, other CS+ users who have 'Show other CS+ users' names' turned on\nwill see your CS+ character name instead of your in-game name.\nRequires your profile to be set to 'Direct Sharing' or 'Public'.");
 
@@ -1784,6 +1820,15 @@ namespace CharacterSelectPlugin.Windows.Components
                 DrawTooltip("Use a simple solid glow instead of animated wave effect for other players' nameplates.\n\nThis disables the periodic nameplate refresh that enables smooth animation.\nEnable this if you notice performance issues or crashes with many CS+ users nearby.");
                 ImGui.Unindent(20f);
             }
+
+            bool appliedTargets = plugin.Configuration.ShowCSNameOnAppliedTargets;
+            if (ImGui.Checkbox("Show CS+ name on Applied targets", ref appliedTargets))
+            {
+                plugin.Configuration.ShowCSNameOnAppliedTargets = appliedTargets;
+                if (!appliedTargets) plugin.LocalTargetOverrides.Clear();
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("When Apply to Target is used on an NPC or mannequin, show the applied CS+ character's name above them.\n\nLocal-only - never sent to other players. Clears on zone change.");
 
             // Quick Reveal section
             ImGui.Spacing();
@@ -1991,13 +2036,13 @@ namespace CharacterSelectPlugin.Windows.Components
             if (enabled)
             {
                 ImGui.Spacing();
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Hold Ctrl+Shift while clicking Add Character/Design");
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Auto-categorizes mods in CS+ only (no Penumbra changes)");
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Right-click to move mods if categorization is wrong");
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Auto-manages Gear/Hair mods per character");
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Other categories managed manually");
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Configure individual mod settings per character");
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "• Pin critical mods to keep always active");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Hold Ctrl+Shift while clicking Add Character/Design");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Auto-categorizes mods in CS+ only (no Penumbra changes)");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Right-click to move mods if categorization is wrong");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Auto-manages Gear/Hair mods per character");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Other categories managed manually");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Configure individual mod settings per character");
+                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "- Pin critical mods to keep always active");
 
                 ImGui.Spacing();
                 ImGui.Separator();
@@ -2029,14 +2074,17 @@ namespace CharacterSelectPlugin.Windows.Components
 {
             DrawFixedSetting("Classic Mode:", labelWidth, inputWidth, () =>
             {
-                bool classic = plugin.Configuration.UseClassicLayout;
+                bool classic = plugin.Configuration.UseClassicLayout || Plugin.FontFallbackThisSession;
                 if (ImGui.Checkbox("##UseClassicLayout", ref classic))
                 {
                     plugin.Configuration.UseClassicLayout = classic;
                     plugin.SaveConfiguration();
+                    plugin.OnLayoutModeChanged();
                     mainWindow.InvalidateLayout();
                 }
-                DrawTooltip("Reverts most CS+ windows to their pre-redesign look.");
+                DrawTooltip(Plugin.FontFallbackThisSession
+                    ? "Reverts most CS+ windows to their pre-redesign look.\nCurrently forced on: fonts failed to load this launch. Turn off to retry."
+                    : "Reverts most CS+ windows to their pre-redesign look.");
             });
 
             DrawFixedSetting("UI Scale:", labelWidth, inputWidth, () =>
@@ -2061,11 +2109,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (ImGui.SliderFloat("##ProfileImageScale", ref tempScale, 0.5f, 2.0f, "%.1f"))
                 {
                     plugin.ProfileImageScale = tempScale;
-                    plugin.SaveConfiguration();
-                    // Force MainWindow layout invalidation
                     mainWindow.InvalidateLayout();
-                    Plugin.Log.Debug($"[Settings] Profile Image Scale changed to {tempScale}");
                 }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    plugin.SaveConfiguration();
                 DrawTooltip("Adjusts the size of character profile images in the grid.");
             });
 
@@ -2077,11 +2124,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     tempColumns = Math.Clamp(tempColumns, 1, 6);
                     plugin.ProfileColumns = tempColumns;
-                    plugin.SaveConfiguration();
-                    // Force MainWindow layout invalidation
                     mainWindow.InvalidateLayout();
-                    Plugin.Log.Debug($"[Settings] Profile Columns changed to {tempColumns}");
                 }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    plugin.SaveConfiguration();
                 DrawTooltip("Number of character profiles to display per row.");
             });
 
@@ -2092,11 +2138,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 if (ImGui.SliderFloat("##ProfileSpacing", ref tempSpacing, 0.0f, 50.0f, "%.1f"))
                 {
                     plugin.ProfileSpacing = tempSpacing;
-                    plugin.SaveConfiguration();
-                    // Force MainWindow layout invalidation
                     mainWindow.InvalidateLayout();
-                    Plugin.Log.Debug($"[Settings] Profile Spacing changed to {tempSpacing}");
                 }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    plugin.SaveConfiguration();
                 DrawTooltip("Spacing between character profile cards.");
             });
 
@@ -2150,6 +2195,30 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.SaveConfiguration();
             }
             DrawTooltip("Characters grow slightly when hovered over for visual feedback.");
+
+            bool reduceMotion = plugin.Configuration.ReduceMotion;
+            if (ImGui.Checkbox("Reduce Motion", ref reduceMotion))
+            {
+                plugin.Configuration.ReduceMotion = reduceMotion;
+                plugin.SaveConfiguration();
+            }
+            DrawTooltip("Stops decorative animations: drifting glows, scan lines, dust, card streaks, and hover sheens.");
+
+            bool wardrobeNamesOnly = plugin.Configuration.WardrobeDesignNameOnly;
+            if (ImGui.Checkbox("Wardrobe: Design Names Only", ref wardrobeNamesOnly))
+            {
+                plugin.Configuration.WardrobeDesignNameOnly = wardrobeNamesOnly;
+                plugin.SaveConfiguration();
+            }
+            DrawTooltip("Wardrobe cards show just the design name, without the character name in front.");
+
+            bool rosterName = plugin.Configuration.RosterShowsCharacterName;
+            if (ImGui.Checkbox("Roster Shows Character Name", ref rosterName))
+            {
+                plugin.Configuration.RosterShowsCharacterName = rosterName;
+                plugin.SaveConfiguration();
+            }
+            DrawTooltip("Character cards, the Icon Bar, and the Wardrobe show the Character Name instead of the Alias.\nName Sync and RP profiles keep using the Alias.");
 
             // Custom layout for Theme
             ImGui.AlignTextToFramePadding();
@@ -2280,7 +2349,85 @@ namespace CharacterSelectPlugin.Windows.Components
             }
 
             ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.9f, 0.8f, 0.6f, 1.0f));
+            ImGui.Text("Fonts");
+            ImGui.PopStyleColor();
+            ImGui.Spacing();
+            DrawClassicFontSettings(GetSafeScale(ImGuiHelpers.GlobalScale * plugin.Configuration.UIScaleMultiplier));
+
+            ImGui.Spacing();
         }
+
+        private void DrawClassicFontSettings(float totalScale)
+        {
+            bool rebuilding = Plugin.Instance?.FontsRebuilding == true;
+            if (rebuilding)
+                ImGui.TextColored(new Vector4(1f, 0.85f, 0.4f, 1f), "Rebuilding fonts...");
+            else
+                ImGui.TextDisabled("Changes apply on selection. The UI blinks briefly while fonts rebuild.");
+            ImGui.Spacing();
+
+            float valueCol = 150f * totalScale;
+            for (int i = 0; i < FontRoleLabels.Length; i++)
+            {
+                ImGui.AlignTextToFramePadding();
+                ImGui.Text(FontRoleLabels[i]);
+                ImGui.SameLine(valueCol);
+
+                string current = FontRoleDisplayName(i);
+                ImGui.SetNextItemWidth(240f * totalScale);
+                if (ImGui.BeginCombo($"##classicFontFace{i}", current))
+                {
+                    ImGui.SetNextItemWidth(220f * totalScale);
+                    ImGui.InputTextWithHint($"##classicFontFilter{i}", "Search...", ref _classicFontFilters[i], 128);
+                    ImGui.Separator();
+
+                    string filter = _classicFontFilters[i].Trim();
+                    var options = FontOptions();
+                    for (int o = 0; o < options.Count; o++)
+                    {
+                        var opt = options[o];
+                        // "Default" (index 0) always visible
+                        if (o > 0 && filter.Length > 0 && !opt.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        bool isSel = opt.Equals(current, StringComparison.OrdinalIgnoreCase);
+                        if (ImGui.Selectable(opt, isSel))
+                        {
+                            ApplyFontSelection(i, opt);
+                            _classicFontFilters[i] = "";
+                        }
+                        if (isSel) ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+                else if (_classicFontFilters[i].Length != 0)
+                {
+                    _classicFontFilters[i] = "";
+                }
+
+                ImGui.SameLine();
+                if (ImGui.Button($"Reset##classicFont{i}"))
+                    ResetFontRole(i);
+                DrawTooltip("Reset to the built-in font and 1.00x size.");
+
+                ImGui.SetCursorPosX(valueCol);
+                float sizeMult = GetFontRoleScale(i);
+                ImGui.SetNextItemWidth(240f * totalScale);
+                if (ImGui.SliderFloat($"Size##classicFontScale{i}", ref sizeMult, 0.5f, 2.0f, "%.2fx"))
+                {
+                    SetFontRoleScale(i, sizeMult);
+                    _fontScaleDirty[i] = true;
+                }
+                CommitFontScaleIfReleased(i);
+
+                ImGui.Spacing();
+            }
+        }
+
+        private bool _classicColorSavePending = false;
 
         private void DrawClassicColorOption(CustomThemeDefinitions.ColorOption option, CustomThemeConfig customTheme, float totalScale)
 {
@@ -2309,17 +2456,25 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopStyleColor();
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip(option.Description);
+                    Boutique.HoveredTokenKey = option.Key;
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(300f * totalScale);
+                    ImGui.TextUnformatted(option.Description);
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
                 }
             }
 
-            ImGui.SameLine(200f * totalScale);
+            float labelW = ImGui.CalcTextSize(option.Label).X;
+            if (!string.IsNullOrEmpty(option.Description))
+                labelW += ImGui.GetStyle().ItemSpacing.X + ImGui.CalcTextSize("(?)").X;
+            ImGui.SameLine(Math.Max(200f * totalScale, labelW + 10f + 12f * totalScale));
 
             ImGui.SetNextItemWidth(150f * totalScale);
             if (ImGui.ColorEdit4($"##{option.Key}", ref currentColor, ImGuiColorEditFlags.AlphaBar | ImGuiColorEditFlags.AlphaPreviewHalf | ImGuiColorEditFlags.NoInputs))
             {
                 customTheme.ColorOverrides[option.Key] = CustomThemeDefinitions.PackColor(currentColor);
-                plugin.Configuration.Save();
+                _classicColorSavePending = true;
             }
 
             // Reset button - always visible, disabled when no override
@@ -2360,6 +2515,10 @@ namespace CharacterSelectPlugin.Windows.Components
                 currentColor = option.DefaultValue;
             }
 
+            bool deadInClassic = CustomThemeDefinitions.IsDeadInClassic(option.Key);
+            if (deadInClassic)
+                ImGui.BeginDisabled();
+
             // Label
             ImGui.AlignTextToFramePadding();
             ImGui.Text(option.Label);
@@ -2370,19 +2529,29 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.5f, 0.5f, 1.0f));
                 ImGui.Text("(?)");
                 ImGui.PopStyleColor();
-                if (ImGui.IsItemHovered())
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
-                    ImGui.SetTooltip(option.Description);
+                    Boutique.HoveredTokenKey = option.Key;
+                    ImGui.BeginTooltip();
+                    ImGui.PushTextWrapPos(300f * totalScale);
+                    ImGui.TextUnformatted(deadInClassic
+                        ? option.Description + "\n\nNot used by Classic Mode. This colour only appears in the redesigned layout."
+                        : option.Description);
+                    ImGui.PopTextWrapPos();
+                    ImGui.EndTooltip();
                 }
             }
 
-            ImGui.SameLine(200f * totalScale);
+            float labelW = ImGui.CalcTextSize(option.Label).X;
+            if (!string.IsNullOrEmpty(option.Description))
+                labelW += ImGui.GetStyle().ItemSpacing.X + ImGui.CalcTextSize("(?)").X;
+            ImGui.SameLine(Math.Max(200f * totalScale, labelW + 10f + 12f * totalScale));
 
             ImGui.SetNextItemWidth(150f * totalScale);
             if (ImGui.ColorEdit4($"##{option.Key}", ref currentColor, ImGuiColorEditFlags.AlphaBar | ImGuiColorEditFlags.AlphaPreviewHalf | ImGuiColorEditFlags.NoInputs))
             {
                 customTheme.ColorOverrides[option.Key] = CustomThemeDefinitions.PackColor(currentColor);
-                plugin.Configuration.Save();
+                _classicColorSavePending = true;
             }
 
             // Reset button - always visible, disabled when no override
@@ -2406,6 +2575,9 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.SmallButton($"Reset##{option.Key}");
                 ImGui.EndDisabled();
             }
+
+            if (deadInClassic)
+                ImGui.EndDisabled();
         }
 
         private void DrawClassicPresetManagement(CustomThemeConfig customTheme, float totalScale)
@@ -2616,8 +2788,8 @@ namespace CharacterSelectPlugin.Windows.Components
 
                 ImGui.Spacing();
 
-                // Special handling for Accents category - add card glow toggle
-                if (category == "Accents")
+                // Character Cards hosts the card glow source toggle
+                if (category == "Character Cards")
                 {
                     // Card Glow source toggle
                     var useNameplateColor = customTheme.UseNameplateColorForCardGlow;
@@ -2630,9 +2802,11 @@ namespace CharacterSelectPlugin.Windows.Components
                     ImGui.Spacing();
                 }
 
+
                 foreach (var option in CustomThemeDefinitions.GetCustomColorOptionsForCategory(category))
                 {
-                    if (option.Key == "custom.cardGlow" && customTheme.UseNameplateColorForCardGlow)
+                    if ((option.Key == "custom.cardGlow" && customTheme.UseNameplateColorForCardGlow)
+                        || (option.Key == "custom.accent.primary" && customTheme.AccentFollowsNameplate))
                     {
                         ImGui.BeginDisabled();
                         DrawClassicCustomColorOption(option, customTheme, totalScale);
@@ -2644,7 +2818,22 @@ namespace CharacterSelectPlugin.Windows.Components
                     }
                 }
 
-                // Wardrobe category: include background image controls inline
+                if (category == "Atmosphere")
+                {
+                    ImGui.Spacing();
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.Text("Intensity");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Strength of all atmosphere layers, including the gold ones. 0 turns them off; 12 matches the hover spotlight.");
+                    ImGui.SameLine(Math.Max(200f * totalScale, ImGui.CalcTextSize("Intensity").X + 10f + 12f * totalScale));
+                    ImGui.SetNextItemWidth(150f * totalScale);
+                    float intensity = customTheme.AtmosphereIntensity;
+                    if (ImGui.SliderFloat("##atmoIntensityClassic", ref intensity, 0f, 12f, "%.1fx"))
+                        customTheme.AtmosphereIntensity = intensity;
+                    if (ImGui.IsItemDeactivatedAfterEdit())
+                        plugin.Configuration.Save();
+                }
+
                 if (category == "Wardrobe")
                 {
                     ImGui.Spacing();
@@ -2840,6 +3029,52 @@ namespace CharacterSelectPlugin.Windows.Components
             }
             DrawTooltip("When enabled, the Quick Switch window will hide its title bar and frame, showing only the dropdowns and apply button.");
 
+            bool iconBarOpen = plugin.IconBarWindow?.IsOpen ?? false;
+            if (ImGui.Checkbox("Icon Bar", ref iconBarOpen) && plugin.IconBarWindow != null)
+                plugin.IconBarWindow.IsOpen = iconBarOpen;
+            DrawTooltip("A separate thin strip of character portraits with its own position.\nLeft click applies the character, right click lists their designs.\nAlso toggled with /selecticons.");
+
+            if (plugin.IconBarWindow?.IsOpen == true)
+            {
+                ImGui.Indent();
+
+                float iconScale = plugin.Configuration.QuickSwitchIconBarScale;
+                ImGui.SetNextItemWidth(140f);
+                if (ImGui.SliderFloat("Icon Bar Size", ref iconScale, 0.5f, 3.0f, "%.2fx"))
+                    plugin.Configuration.QuickSwitchIconBarScale = iconScale;
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    plugin.Configuration.Save();
+                DrawTooltip("Scales the icon bar on its own, separate from the other Quick Switch styles.");
+
+                int maxTiles = plugin.Configuration.QuickSwitchIconBarMaxTiles;
+                ImGui.SetNextItemWidth(140f);
+                if (ImGui.SliderInt("Icon Bar Characters", ref maxTiles, 5, 15))
+                    plugin.Configuration.QuickSwitchIconBarMaxTiles = maxTiles;
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    plugin.Configuration.Save();
+                DrawTooltip("How many character icons the bar shows before it scrolls.");
+
+                bool favFirst = plugin.Configuration.QuickSwitchIconBarFavouritesFirst;
+                if (ImGui.Checkbox("Favourites First", ref favFirst))
+                {
+                    plugin.Configuration.QuickSwitchIconBarFavouritesFirst = favFirst;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Shows favourited characters at the start of the bar.");
+
+                var orientLabels = new[] { "Auto", "Horizontal", "Vertical" };
+                int orientIdx = Math.Clamp(plugin.Configuration.QuickSwitchIconBarOrientation, 0, 2);
+                ImGui.SetNextItemWidth(140f);
+                if (ImGui.Combo("Orientation", ref orientIdx, orientLabels, orientLabels.Length))
+                {
+                    plugin.Configuration.QuickSwitchIconBarOrientation = orientIdx;
+                    plugin.Configuration.Save();
+                }
+                DrawTooltip("Auto turns the bar vertical when it sits near the left or right screen edge.\nPick Horizontal or Vertical to lock it.");
+
+                ImGui.Unindent();
+            }
+
             bool quickSwitchIgnoreEscape = plugin.Configuration.QuickSwitchIgnoreEscape;
             if (ImGui.Checkbox("Quick Switch ignores Escape key", ref quickSwitchIgnoreEscape))
             {
@@ -2847,6 +3082,14 @@ namespace CharacterSelectPlugin.Windows.Components
                 plugin.Configuration.Save();
             }
             DrawTooltip("When enabled, pressing Escape won't close the Quick Switch window.\nThis also prevents Quick Switch from stealing focus when opened.");
+
+            bool quickSwitchShowSearch = plugin.Configuration.QuickSwitchShowSearch;
+            if (ImGui.Checkbox("Quick Switch dropdown search", ref quickSwitchShowSearch))
+            {
+                plugin.Configuration.QuickSwitchShowSearch = quickSwitchShowSearch;
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("Shows a search field in the Quick Switch character and design dropdowns.");
 
             bool enableAutoload = plugin.Configuration.EnableLastUsedCharacterAutoload;
             if (ImGui.Checkbox("Auto-Apply Last Used Character on Login", ref enableAutoload))
@@ -3019,8 +3262,8 @@ namespace CharacterSelectPlugin.Windows.Components
             ImGui.PopStyleColor();
 
             // Requirements
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.7f, 0.7f, 0.8f, 1f));
-            ImGui.TextWrapped("Requires: Completed RP Profile (name & pronouns)");
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.85f, 0.4f, 1f));
+            ImGui.TextWrapped("RP Profile required: Each character needs Pronouns set in their RP Profile for this to apply. Characters without pronouns are skipped and the game's default text is shown unchanged.");
             ImGui.PopStyleColor();
 
             // They/Them pronoun chat display warning
@@ -3482,7 +3725,7 @@ namespace CharacterSelectPlugin.Windows.Components
         private void DrawClassicCompactQuickSwitchSettings(CustomThemeConfig customTheme, float totalScale)
 {
             // Use the same expansion tracking as colour categories
-            var categoryKey = "Compact Quick Switch";
+            var categoryKey = "Quick Switch";
             if (!_colorCategoryExpanded.ContainsKey(categoryKey))
             {
                 _colorCategoryExpanded[categoryKey] = false;
@@ -3502,18 +3745,21 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.Indent(10f);
 
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1f));
-                ImGui.TextWrapped("These settings only affect the compact version of the Quick Character Switch bar.");
+                ImGui.TextWrapped("Only affects the compact Quick Switch bar.");
                 ImGui.PopStyleColor();
                 ImGui.Spacing();
 
                 // Button Opacity slider
                 var buttonOpacity = customTheme.CompactQuickSwitchButtonOpacity;
                 ImGui.Text("Button Opacity");
-                ImGui.SameLine();
+                ImGui.SameLine(180f * totalScale);
                 ImGui.SetNextItemWidth(150 * totalScale);
                 if (ImGui.SliderFloat("##CompactButtonOpacity", ref buttonOpacity, 0.0f, 1.0f, "%.2f"))
                 {
                     customTheme.CompactQuickSwitchButtonOpacity = buttonOpacity;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                {
                     plugin.Configuration.Save();
                 }
                 DrawTooltip("Adjusts the transparency of buttons in the compact Quick Switch bar.\n0 = fully transparent, 1 = fully opaque.");
@@ -3665,6 +3911,8 @@ namespace CharacterSelectPlugin.Windows.Components
                 {
                     customTheme.FavoriteIconId = newIcon == FontAwesomeIcon.Star ? 0 : (int)newIcon;
                     plugin.Configuration.Save();
+                    if (newIcon != FontAwesomeIcon.Star)
+                        plugin.AchievementTracker?.OnCustomIconSet();
                 };
 
                 plugin.WindowSystem.AddWindow(_iconPickerWindow);
@@ -3737,16 +3985,30 @@ namespace CharacterSelectPlugin.Windows.Components
 
             ImGui.Spacing();
 
+            Boutique.HoveredTokenKey = null;
+
+            var followNameplate = customTheme.AccentFollowsNameplate;
+            if (ImGui.Checkbox("Match active character's colours", ref followNameplate))
+            {
+                customTheme.AccentFollowsNameplate = followNameplate;
+                plugin.Configuration.Save();
+            }
+            DrawTooltip("The interface follows whoever is currently applied: the accent and everything derived from it, the wardrobe accent, card glows, and the compact Quick Switch all take the active character's nameplate colour.");
+            ImGui.Spacing();
+
+            // Accent first
+            DrawClassicCustomColorCategory("Accent", customTheme, totalScale);
+
             foreach (var category in CustomThemeDefinitions.GetColorCategories())
             {
                 DrawClassicColorCategory(category, customTheme, totalScale);
             }
 
-            // Draw custom colour categories not covered by ImGui categories (skips Backgrounds which already includes its custom colours).
+            // Custom-only categories not already drawn above
             var imguiCategories = CustomThemeDefinitions.GetColorCategories().ToHashSet();
             foreach (var category in CustomThemeDefinitions.GetCustomColorCategories())
             {
-                if (!imguiCategories.Contains(category))
+                if (category != "Accent" && !imguiCategories.Contains(category))
                 {
                     DrawClassicCustomColorCategory(category, customTheme, totalScale);
                 }
@@ -3754,6 +4016,13 @@ namespace CharacterSelectPlugin.Windows.Components
 
             // Draw Compact Quick Switch settings (as collapsible category)
             DrawClassicCompactQuickSwitchSettings(customTheme, totalScale);
+
+            // Deferred colour save, flushed on mouse release
+            if (_classicColorSavePending && !ImGui.IsAnyMouseDown())
+            {
+                plugin.Configuration.Save();
+                _classicColorSavePending = false;
+            }
         }
 
         private void DrawClassicAutomationSettings()

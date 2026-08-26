@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -29,9 +29,9 @@ public static class BoutiqueChassis
         float t = time;
         float ringInnerEdge = ringRadius - ringThickness * 0.5f;
 
-        // ── Aura bloom ──
+        // Aura bloom
         {
-            float pulseSin = 0.5f + 0.5f * MathF.Sin(t * MathF.Tau / 5f);
+            float pulseSin = 0.5f + 0.5f * MathF.Sin((float)Boutique.AnimTime(t) * MathF.Tau / 5f);
             float bloomPulse = 1f + 0.04f * pulseSin;
             float bloomAlpha = 0.90f + 0.10f * pulseSin;
             float maxR = 200f * s * bloomPulse;
@@ -304,10 +304,10 @@ public static class BoutiqueChassis
             goldMid, goldClear, goldClear, goldMid);
     }
 
-    /// <summary>Pulsing gold pip, square (matches patch notes / achievements / wardrobe convention).</summary>
+    // Pulsing gold square pip.
     public static void DrawGoldPip(ImDrawListPtr dl, Vector2 centre, float scale, double time)
     {
-        float pulse = 0.55f + 0.45f * (float)Math.Sin(time * 2.4);
+        float pulse = 0.55f + 0.45f * (float)Math.Sin(Boutique.AnimTime(time) * 2.4);
         var glow = CodexChassis.WithAlpha(CodexChassis.GoldWarm, 0.55f * pulse);
         // Outer glow square (soft), then solid gold core square
         float glowR = 6f * scale;
@@ -360,14 +360,13 @@ public static class BoutiqueChassis
         // Lift on hover
         if (hovered) { min.Y -= 1f * scale; max.Y -= 1f * scale; }
 
-        // Pill fill follows the Buttons category. Defaults are gold by
-        // default; seasonal themes substitute their own primary palette so
-        // the Add Character / New Design / Save / Apply pills match.
+        // Seasonal themes substitute their own primary palette for the gold defaults.
         Vector4 goldDefault      = Rgb(0xFF, 0xD6, 0x00);
         Vector4 goldHoverDefault = Rgb(0xFF, 0xDB, 0x3A);
         Vector4 goldWarmDefault  = Rgb(0xFF, 0xC8, 0x3D);
         var seasonPlugin = Plugin.Instance;
-        if (seasonPlugin?.Configuration != null && SeasonalThemeManager.IsSeasonalThemeEnabled(seasonPlugin.Configuration))
+        bool seasonal = seasonPlugin?.Configuration != null && SeasonalThemeManager.IsSeasonalThemeEnabled(seasonPlugin.Configuration);
+        if (seasonal)
         {
             switch (SeasonalThemeManager.GetEffectiveTheme(seasonPlugin.Configuration))
             {
@@ -393,8 +392,8 @@ public static class BoutiqueChassis
                     break;
             }
         }
-        // Gold pill follows the Primary Accent slot; hover lerps the resolved primary 18% toward white.
-        Vector4 primary = Boutique.SlotOrDefault("custom.accent.primary", goldDefault);
+        // Gold pill follows the action fill token; hover lerps the resolved fill 18% toward white.
+        Vector4 primary = seasonal ? goldDefault : Boutique.ActionFill;
         Vector4 hoverFromPrimary = CodexChassis.Lerp(primary, new Vector4(1f, 1f, 1f, 1f), 0.18f);
         Vector4 fillCol = hovered ? hoverFromPrimary : primary;
         Span<Vector2> pts = stackalloc Vector2[6];
@@ -452,8 +451,7 @@ public static class BoutiqueChassis
         ImFontPtr iconFont, float iconFontSize, string glyph, bool hovered, Vector4 hoverInk)
     {
         var max = min + new Vector2(side, side);
-        // Icon buttons (Random / QuickSwitch / Features / Trophy / Gallery /
-        // Discord / Revert) follow the Buttons category, NOT Input Fields.
+        // Follows the Buttons category, not Input Fields.
         Vector4 bgFill = hovered
             ? Boutique.SlotOrDefault("color.buttonHovered", CodexChassis.Surface1)
             : Boutique.SlotOrDefault("color.button",        new Vector4(20f / 255f, 24f / 255f, 32f / 255f, 0.6f));
@@ -463,7 +461,12 @@ public static class BoutiqueChassis
             : CodexChassis.U32(CodexChassis.BorderSoft);
         dl.AddRect(min, max, borderCol, 0f, ImDrawFlags.None, 1f * scale);
 
-        var inkCol = hovered ? hoverInk : CodexChassis.TextDim;
+        if (Boutique.HoveredTokenKey != null)
+        {
+            Boutique.DrawTokenHighlight(dl, min, max, "color.button");
+            Boutique.DrawTokenHighlight(dl, min, max, "custom.button.menu.icon");
+        }
+        var inkCol = hovered ? hoverInk : Boutique.MenuIcon;
         ImGui.PushFont(iconFont);
         Vector2 iconSize = ImGui.CalcTextSize(glyph);
         ImGui.PopFont();
@@ -490,7 +493,12 @@ public static class BoutiqueChassis
         dl.AddRect(min, max, borderCol, 0f, ImDrawFlags.None, 1f * scale);
 
         // Icon centred, measure with explicit font via push-pop
-        var inkCol = hovered ? hoverInk : CodexChassis.TextDim;
+        if (Boutique.HoveredTokenKey != null)
+        {
+            Boutique.DrawTokenHighlight(dl, min, max, "color.button");
+            Boutique.DrawTokenHighlight(dl, min, max, "custom.button.menu.icon");
+        }
+        var inkCol = hovered ? hoverInk : Boutique.MenuIcon;
         ImGui.PushFont(iconFont);
         Vector2 iconSize = ImGui.CalcTextSize(glyph);
         ImGui.PopFont();
@@ -500,13 +508,13 @@ public static class BoutiqueChassis
         dl.AddText(iconFont, iconFontSize, iconPos, CodexChassis.U32(inkCol), glyph);
     }
 
-    /// <summary>Small notification dot (top-right of an icon button), 6px green pulsing.</summary>
+    // 6px pulsing green dot at the top-right of an icon button.
     public static void DrawNewDot(ImDrawListPtr dl, Vector2 buttonMax, float scale, double time)
     {
         float dotSize = 6f * scale;
         var pos = new Vector2(buttonMax.X - 4f * scale - dotSize * 0.5f,
                               buttonMax.Y - 26f * scale);
-        float blink = 0.7f + 0.3f * (float)Math.Sin(time * 4.0);
+        float blink = 0.7f + 0.3f * (float)Math.Sin(Boutique.AnimTime(time) * 4.0);
         var col = CodexChassis.U32(CodexChassis.WithAlpha(CodexChassis.Green, blink));
         dl.AddCircleFilled(pos, dotSize * 0.5f, col, 12);
         var glow = CodexChassis.U32(CodexChassis.WithAlpha(CodexChassis.Green, 0.35f * blink));
@@ -537,9 +545,7 @@ public static class BoutiqueChassis
 
         if (isActive)
         {
-            // Active sort tab underline + glow follows the Primary Accent slot.
-            Vector4 tabActive = Boutique.SlotOrDefault("custom.accent.primary",
-                new Vector4(1f, 214f / 255f, 0f, 1f));
+            Vector4 tabActive = Boutique.Gold;
 
             float underY = pos.Y + h - 1f * scale;
             var ulMin = new Vector2(pos.X + 10f * scale, underY);
@@ -695,14 +701,11 @@ public static class BoutiqueChassis
 
     // ── Ambient: radial spots, hum lines, dust motes, breathe ──────────
 
-    /// <summary>
-    /// Ambient radial-spot stack, direct port of AchievementWindow's aurora pattern.
-    /// 3 spots (gold, violet, cyan) drifting on per-spot periods, each rendered as
-    /// 24 nested ellipse polygons stacked at low alpha to approximate a CSS blur.
-    /// </summary>
+    // 3 spots (gold, violet, cyan) drifting on per-spot periods, each 24 nested
+    // ellipse polygons at low alpha to approximate a blur.
     public static void DrawAmbientSpots(ImDrawListPtr dl, Vector2 mn, Vector2 mx, double time, float scale)
     {
-        float t = (float)time;
+        float t = (float)Boutique.AnimTime(time);
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
 
@@ -737,25 +740,23 @@ public static class BoutiqueChassis
             }
         }
         Spot(26f, new Vector2(w * 0.18f, h * 0.22f), new Vector2(200f * scale, 90f * scale),
-             230f * scale, 140f * scale, CodexChassis.Gold, 0.028f);
+             230f * scale, 140f * scale, CodexChassis.Gold, Boutique.AtmosphereAlpha(null, 0.028f, 0.30f));
         Spot(32f, new Vector2(w * 0.75f, h * 0.55f), new Vector2(-160f * scale, -70f * scale),
-             210f * scale, 130f * scale, CodexChassis.Violet, 0.020f);
+             210f * scale, 130f * scale, Boutique.AmbientViolet,
+             Boutique.AtmosphereAlpha("custom.ambient.violet", 0.020f, 0.30f));
         Spot(38f, new Vector2(w * 0.45f, h * 0.65f), new Vector2(-120f * scale, 60f * scale),
-             190f * scale, 120f * scale, CodexChassis.Cyan, 0.014f);
+             190f * scale, 120f * scale, Boutique.AmbientCyan,
+             Boutique.AtmosphereAlpha("custom.ambient.cyan", 0.014f, 0.30f));
     }
 
     /// <summary>2-arg overload kept for backwards compat (defaults scale=1).</summary>
     public static void DrawAmbientSpots(ImDrawListPtr dl, Vector2 mn, Vector2 mx, double time)
         => DrawAmbientSpots(dl, mn, mx, time, 1f);
 
-    /// <summary>
-    /// 4th aurora, a soft warm gold wash anchored under the hero prompt area
-    /// (top-centre, ~20% from top). Lower alpha than the main 3 since it
-    /// underlays the hero text directly.
-    /// </summary>
+    // Soft warm gold wash under the hero prompt, top-centre at ~20% from the top.
     public static void DrawCenterAuroraUnderHero(ImDrawListPtr dl, Vector2 mn, Vector2 mx, double time, float scale)
     {
-        float t = (float)time;
+        float t = (float)Boutique.AnimTime(time);
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
         var spotPts = new Vector2[48];
@@ -770,7 +771,7 @@ public static class BoutiqueChassis
         float ryEff = 100f * scale * scalePulse;
 
         const int layers = 24;
-        const float peakA = 0.024f;
+        float peakA = Boutique.AtmosphereAlpha(null, 0.024f, 0.30f);
         uint col = ImGui.ColorConvertFloat4ToU32(CodexChassis.WithAlpha(CodexChassis.GoldWarm, peakA / layers));
         for (int i = 1; i <= layers; i++)
         {
@@ -817,6 +818,7 @@ public static class BoutiqueChassis
 
     public static void DrawHumLines(ImDrawListPtr dl, Vector2 mn, Vector2 mx, double time, float scale)
     {
+        if (Boutique.ReduceMotion) return;
         float t = (float)time;
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
@@ -842,9 +844,9 @@ public static class BoutiqueChassis
                 midR, new Vector2(end.X, yBand + lineH),
                 cMid, cEdge, cEdge, cMid);
         }
-        HumLine(0.28f, 16f, reverse: false, CodexChassis.Gold,       0.18f);
-        HumLine(0.54f, 22f, reverse: true,  CodexChassis.MagentaSft, 0.12f);
-        HumLine(0.78f, 26f, reverse: false, CodexChassis.CyanSoft,   0.09f);
+        HumLine(0.28f, 16f, reverse: false, CodexChassis.Gold, Boutique.AtmosphereAlpha(null, 0.18f, 0.85f));
+        HumLine(0.54f, 22f, reverse: true,  Boutique.AmbientMagentaSoft, Boutique.AtmosphereAlpha("custom.ambient.magenta", 0.12f, 0.85f));
+        HumLine(0.78f, 26f, reverse: false, Boutique.AmbientCyanSoft, Boutique.AtmosphereAlpha("custom.ambient.cyan", 0.09f, 0.85f));
     }
 
     public static void DrawHumLines(ImDrawListPtr dl, Vector2 mn, Vector2 mx, double time)
@@ -852,18 +854,18 @@ public static class BoutiqueChassis
 
     public static void DrawDustMotes(ImDrawListPtr dl, Vector2 mn, Vector2 mx, double time, float scale)
     {
-        // Direct port of AchievementWindow's mote pattern.
+        if (Boutique.ReduceMotion) return;
         float t = (float)time;
         float w = mx.X - mn.X;
         float h = mx.Y - mn.Y;
         var motes = new (float leftPct, float delay, float period, Vector4 col)[]
         {
             (0.14f,  0f,   10f, CodexChassis.GoldWarm),
-            (0.32f,  2f,   12f, CodexChassis.MagentaSft),
+            (0.32f,  2f,   12f, Boutique.AmbientMagentaSoft),
             (0.48f,  4f,   11f, CodexChassis.GoldWarm),
-            (0.66f,  1.5f, 13f, CodexChassis.CyanSoft),
+            (0.66f,  1.5f, 13f, Boutique.AmbientCyanSoft),
             (0.82f,  6f,   10f, CodexChassis.GoldWarm),
-            (0.24f,  5f,   14f, CodexChassis.Violet),
+            (0.24f,  5f,   14f, Boutique.AmbientViolet),
         };
         foreach (var (leftPct, delay, period, col) in motes)
         {
@@ -872,6 +874,11 @@ public static class BoutiqueChassis
             float a = p < 0.15f ? (p / 0.15f) * 0.7f
                     : p > 0.85f ? ((1f - p) / 0.15f) * 0.7f
                     : 0.7f;
+            string? moteKey = col == Boutique.AmbientMagentaSoft ? "custom.ambient.magenta"
+                            : col == Boutique.AmbientCyanSoft    ? "custom.ambient.cyan"
+                            : col == Boutique.AmbientViolet      ? "custom.ambient.violet"
+                            : null;
+            a = Boutique.AtmosphereAlpha(moteKey, a, 1f);
             float yRise = p * (h + 150f * scale);
             float xDrift = -p * 30f * scale;
             var pt = new Vector2(mn.X + leftPct * w + xDrift, mx.Y - 10f * scale - yRise);
@@ -884,10 +891,11 @@ public static class BoutiqueChassis
 
     public static void DrawWindowBreathe(ImDrawListPtr dl, Vector2 min, Vector2 max, double time)
     {
+        time = Boutique.AnimTime(time);
         Vector2 size = max - min;
         float pulse = 0.45f + 0.55f * (0.5f + 0.5f * MathF.Sin((float)time * MathF.PI * 2 / 8f));
-        var goldCol = CodexChassis.WithAlpha(CodexChassis.Gold, 0.05f * pulse);
-        var magCol  = CodexChassis.WithAlpha(CodexChassis.Magenta, 0.035f * pulse);
+        var goldCol = CodexChassis.WithAlpha(CodexChassis.Gold, Boutique.AtmosphereAlpha(null, 0.05f * pulse, 0.30f));
+        var magCol  = CodexChassis.WithAlpha(Boutique.AmbientMagenta, Boutique.AtmosphereAlpha("custom.ambient.magenta", 0.035f * pulse, 0.30f));
         DrawAmbientSpot(dl, min + size * new Vector2(0.22f, 0.28f),
             size.X * 0.35f, size.Y * 0.275f, goldCol, goldCol.W);
         DrawAmbientSpot(dl, min + size * new Vector2(0.78f, 0.72f),
@@ -933,6 +941,8 @@ public static class BoutiqueChassis
     public static void DrawAppliedCornerBrackets(ImDrawListPtr dl, Vector2 min, Vector2 max,
         float scale, double time, Vector4 npCol, float sparkT = -1f, float hoverAmount = 0f)
     {
+        time = Boutique.AnimTime(time);
+        if (Boutique.ReduceMotion) sparkT = -1f;
         float arm = 16f * scale;                   // sharp-corner arm length
         float outset = 2f * scale;                 // bracket sits just outside the slip
         float thickness = 1.5f * scale;
@@ -1130,12 +1140,12 @@ public static class BoutiqueChassis
         dl.AddCircleFilled(pos, pipR, CodexChassis.U32(CodexChassis.Gold), 12);
     }
 
-    // ── Applied state visual flair ──────────────────────────────────────
+    // Applied state visual flair
 
     public static void DrawAppliedHaloRings(ImDrawListPtr dl, Vector2 imgMin, Vector2 imgMax,
         float scale, double time)
     {
-        float pulse = 0.5f + 0.5f * MathF.Sin((float)time * MathF.PI * 2 / 4f);
+        float pulse = 0.5f + 0.5f * MathF.Sin((float)Boutique.AnimTime(time) * MathF.PI * 2 / 4f);
         var rings = new (float offset, float alphaIdle, float alphaPeak)[]
         {
             (1f, 0.42f, 0.60f),
@@ -1156,6 +1166,7 @@ public static class BoutiqueChassis
     public static void DrawAppliedBeatRipple(ImDrawListPtr dl, Vector2 centre, float baseRadius,
         float scale, double time)
     {
+        if (Boutique.ReduceMotion) return;
         for (int phase = 0; phase < 2; phase++)
         {
             float t = (float)((time + phase * 2.2) % 4.4 / 4.4);
@@ -1186,6 +1197,7 @@ public static class BoutiqueChassis
         float sweepX = (float)(((time / 4.2) % 1.0) - 0.2) * (w + 80f * scale);
 
         dl.AddText(textPos, CodexChassis.U32(CodexChassis.Text), text);
+        if (Boutique.ReduceMotion) return;
 
         float x = textPos.X;
         for (int i = 0; i < text.Length; i++)
@@ -1268,9 +1280,8 @@ public static class BoutiqueChassis
     /// </summary>
     public static void DrawPageDot(ImDrawListPtr dl, Vector2 centre, float scale, bool isActive, bool isHovered, double time)
     {
-        // Active page indicator pulls from custom.pageButtonActive when set,
-        // hardcoded gold default otherwise. Decoupled from CodexChassis.Gold
-        // so the editor's Accent override stops driving the active page dot.
+        time = Boutique.AnimTime(time);
+        // Pulls from custom.pageButtonActive when set, gold otherwise.
         Vector4 pageActive = Boutique.SlotOrDefault("custom.pageButtonActive",
             new Vector4(1f, 214f / 255f, 0f, 1f));
         Vector4 pageActiveDeep = CodexChassis.Lerp(pageActive,
@@ -1316,15 +1327,11 @@ public static class BoutiqueChassis
     // so this helper stays stateless.
     private const float PagerTransitionSec = 0.28f;
 
-    /// <summary>
-    /// Wardrobe-style page row: sharp-rect arrows with "<" / ">" glyphs +
-    /// lerping dots + breathing halo + bloom ring on transition. Returns the
-    /// full row width so caller can centre it.
-    /// </summary>
+    // Page row: sharp-rect arrows, lerping dots, breathing halo, bloom on transition.
     public static void DrawWardrobePagerRow(ImDrawListPtr dl, Vector2 stMn, Vector2 stMx,
         float yCenter, int total, int curr, int fromIdx, float t, bool isTransitioning,
         float scale, Vector4 accent, Vector4 accentWarm, IFontHandle? glyphFont,
-        Action<int> onJumpToPage)
+        Action<int> onJumpToPage, string? highlightTokenKey = null)
     {
         if (total <= 0) return;
         float arrSize = 26f * scale;
@@ -1336,6 +1343,11 @@ public static class BoutiqueChassis
         float gap = 10f * scale;
         float rowW = arrSize + gap + dotsW + gap + arrSize;
         float xStart = (stMn.X + stMx.X) * 0.5f - rowW * 0.5f;
+
+        if (highlightTokenKey != null)
+            Boutique.DrawTokenHighlight(dl,
+                new Vector2(xStart, yCenter - arrSize * 0.5f),
+                new Vector2(xStart + rowW, yCenter + arrSize * 0.5f), highlightTokenKey);
 
         var prevPos = new Vector2(xStart, yCenter - arrSize * 0.5f);
         bool prevEnabled = curr > 0;
@@ -1390,7 +1402,7 @@ public static class BoutiqueChassis
 
             if (i == curr && !isTransitioning)
             {
-                float breath = 0.5f + 0.5f * MathF.Sin((float)ImGui.GetTime() * MathF.PI);
+                float breath = 0.5f + 0.5f * MathF.Sin((float)Boutique.AnimTime(ImGui.GetTime()) * MathF.PI);
                 float halo = (0.10f + 0.10f * breath) * 0.4f;
                 float pad = 3f * scale;
                 dl.AddRectFilled(
@@ -1532,8 +1544,8 @@ public static class BoutiqueChassis
         if (isHeart)
         {
             iconInk = hovered ? Rgb(0xFF, 0x6B, 0x6B) : CodexChassis.Red;
-            // Heart pulses ONLY on hover (was always-on which read as nervous noise).
-            float beat = hovered ? HeartBeatScale(time) : 1f;
+            // Heart pulses on hover only.
+            float beat = hovered && !Boutique.ReduceMotion ? HeartBeatScale(time) : 1f;
             float scaled = iconFontSize * beat;
             if (beat > 1.05f)
             {
@@ -1648,10 +1660,12 @@ public static class BoutiqueChassis
     public static void DrawAppliedRowAccent(ImDrawListPtr dl, Vector2 min, Vector2 max, float scale)
     {
         float w = max.X - min.X;
+        Vector4 accent = Boutique.ActiveDesignAccent;
+        Boutique.DrawTokenHighlight(dl, min, max, "custom.designPanel.activeAccent");
         // Horizontal gold fade: gold-at-10% left → gold-at-2% at 70% → transparent right
-        var goldStart = CodexChassis.WithAlpha(CodexChassis.Gold, 0.10f);
-        var goldFade  = CodexChassis.WithAlpha(CodexChassis.Gold, 0.02f);
-        var goldClear = CodexChassis.WithAlpha(CodexChassis.Gold, 0f);
+        var goldStart = CodexChassis.WithAlpha(accent, 0.10f);
+        var goldFade  = CodexChassis.WithAlpha(accent, 0.02f);
+        var goldClear = CodexChassis.WithAlpha(accent, 0f);
         var midX = min.X + w * 0.7f;
         dl.AddRectFilledMultiColor(min, new Vector2(midX, max.Y),
             CodexChassis.U32(goldStart), CodexChassis.U32(goldFade),
@@ -1669,9 +1683,9 @@ public static class BoutiqueChassis
         {
             float r = i * 2.5f * scale;
             dl.AddRectFilled(barMin - new Vector2(r, 0), barMax + new Vector2(r, 0),
-                CodexChassis.U32(CodexChassis.WithAlpha(CodexChassis.Gold, 0.18f / i)));
+                CodexChassis.U32(CodexChassis.WithAlpha(accent, 0.18f / i)));
         }
-        dl.AddRectFilled(barMin, barMax, CodexChassis.U32(CodexChassis.Gold));
+        dl.AddRectFilled(barMin, barMax, CodexChassis.U32(accent));
     }
 
     // ── Design panel: faint gold accent line on left edge of expanded panel ─
@@ -2661,15 +2675,15 @@ public static class BoutiqueChassis
         Vector4 inputBg = ImGui.GetStyle().Colors[(int)ImGuiCol.FrameBg];
         dl.AddRectFilled(pos, max, CodexChassis.U32(inputBg));
 
-        // Overlay an InputText with transparent FrameBg + no border. Pad
-        // horizontally 10px per the mockup; vertical centring via FramePadding.y
-        // matched to (h - fontH) / 2.
+        // Transparent InputText overlay; vertical centring via FramePadding.y.
         float fontH = ImGui.GetFontSize();
         float padY = MathF.Max(0f, (h - fontH) * 0.5f);
 
         ImGui.PushStyleColor(ImGuiCol.FrameBg, new Vector4(0f, 0f, 0f, 0f));
         ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0f, 0f, 0f, 0f));
         ImGui.PushStyleColor(ImGuiCol.FrameBgActive, new Vector4(0f, 0f, 0f, 0f));
+        ImGui.PushStyleColor(ImGuiCol.Text, Boutique.InputText);
+        ImGui.PushStyleColor(ImGuiCol.TextDisabled, Boutique.InputPlaceholder);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0f);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0f);
         ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(10f * fs, padY));
@@ -2684,7 +2698,13 @@ public static class BoutiqueChassis
         bool isHovered = ImGui.IsItemHovered();
 
         ImGui.PopStyleVar(3);
-        ImGui.PopStyleColor(3);
+        ImGui.PopStyleColor(5);
+
+        if (Boutique.HoveredTokenKey != null)
+        {
+            Boutique.DrawTokenHighlight(dl, pos, max, "custom.input.text");
+            Boutique.DrawTokenHighlight(dl, pos, max, "custom.input.placeholder");
+        }
 
         // Frame border, 1px BorderSoft, lifts to gold-deep on focus and a
         // slightly brighter Border on hover.

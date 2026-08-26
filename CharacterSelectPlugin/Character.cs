@@ -16,6 +16,16 @@ namespace CharacterSelectPlugin
 
         /// <summary>When true, this character's name won't be shared via Name Sync regardless of global setting.</summary>
         public bool ExcludeFromNameSync { get; set; } = false;
+        // nullable backing tolerates the nulls left by the pre-release nullable version
+        [JsonProperty("AccentFollowsNameplate")]
+        private bool? accentFollowsNameplateBacking { get; set; }
+
+        [JsonIgnore]
+        public bool AccentFollowsNameplate
+        {
+            get => accentFollowsNameplateBacking ?? false;
+            set => accentFollowsNameplateBacking = value;
+        }
 
         /// <summary>When true, this character's name in the character card and RP profile renders
         /// in the SD Glitch font with a periodic chromatic-burst FX cascade.</summary>
@@ -160,6 +170,10 @@ namespace CharacterSelectPlugin
         /// </summary>
         [JsonIgnore]
         public Dictionary<string, Dictionary<string, List<string>>>? OriginalCollectionState { get; set; }
+
+        // Mod directories the currently-applied design overrides this session.
+        [JsonIgnore]
+        public HashSet<string>? ActiveDesignModOverrides { get; set; }
         public string? Pronouns { get; set; }
         public string? Gender { get; set; }
         public string? Age { get; set; }

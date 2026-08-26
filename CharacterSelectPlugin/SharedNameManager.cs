@@ -38,6 +38,8 @@ namespace CharacterSelectPlugin
         private const string ApiBaseUrl = "https://character-select-profile-server-production.up.railway.app";
         private const int MaxBatchSize = 30; // Increased to reduce number of batches needed
 
+        private bool inFailureState;
+
         public class SharedNameEntry
         {
             public string CSName { get; set; } = "";
@@ -267,7 +269,11 @@ namespace CharacterSelectPlugin
             {
                 // Don't re-queue on failure - prevents retry storm
                 // Stale refresh will naturally retry later
-                log.Debug($"Shared name lookup failed: {ex.Message}");
+                if (!inFailureState)
+                {
+                    inFailureState = true;
+                    log.Debug($"Shared name lookup failing: {ex.Message}. Suppressing further messages until recovery.");
+                }
             }
         }
 
@@ -284,7 +290,11 @@ namespace CharacterSelectPlugin
 
             if (!response.IsSuccessStatusCode)
             {
-                log.Debug($"Names lookup returned {response.StatusCode}");
+                if (!inFailureState)
+                {
+                    inFailureState = true;
+                    log.Debug($"Names lookup returned {response.StatusCode}. Suppressing further messages until recovery.");
+                }
                 return;
             }
 
@@ -296,6 +306,12 @@ namespace CharacterSelectPlugin
 
             if (result?.Results == null)
                 return;
+
+            if (inFailureState)
+            {
+                inFailureState = false;
+                log.Debug("Shared name lookup recovered.");
+            }
 
             lock (cacheLock)
             {

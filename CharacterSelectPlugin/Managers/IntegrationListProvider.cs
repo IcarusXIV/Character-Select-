@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading.Tasks;
 using Dalamud.Plugin.Ipc;
 
 namespace CharacterSelectPlugin.Managers
@@ -17,14 +18,17 @@ namespace CharacterSelectPlugin.Managers
         // IPC Subscribers
         private ICallGateSubscriber<Dictionary<Guid, string>>? penumbraGetCollectionsIpc;
         private ICallGateSubscriber<Dictionary<Guid, string>>? glamourerGetDesignsIpc;
+        private ICallGateSubscriber<Dictionary<Guid, (string, string, uint, bool)>>? glamourerGetDesignsExtendedIpc;
         private ICallGateSubscriber<IList<(Guid, string, string, IList<(string, ushort, byte, ushort)>, int, bool)>>? customizePlusGetProfileListIpc;
         private ICallGateSubscriber<List<(Guid, string)>>? moodlesGetPresetsIpc;
         private ICallGateSubscriber<string, uint, object[]>? honorificGetTitleListIpc;
+        private readonly List<ICallGateSubscriber<nint, object?>> glamourerStateChangedIpcs = new();
 
 
         // Cached lists
         private List<string> cachedPenumbraCollections = new();
         private List<string> cachedGlamourerDesigns = new();
+        private List<GlamourerDesignEntry> cachedGlamourerDesignsExtended = new();
         private List<string> cachedCustomizePlusProfiles = new();
         private List<string> cachedMoodlesPresets = new();
         private List<string> cachedHonorificTitles = new();
@@ -32,6 +36,7 @@ namespace CharacterSelectPlugin.Managers
         // Cache timestamps
         private DateTime lastPenumbraRefresh = DateTime.MinValue;
         private DateTime lastGlamourerRefresh = DateTime.MinValue;
+        private DateTime lastGlamourerExtendedRefresh = DateTime.MinValue;
         private DateTime lastCustomizePlusRefresh = DateTime.MinValue;
         private DateTime lastMoodlesRefresh = DateTime.MinValue;
         private DateTime lastHonorificRefresh = DateTime.MinValue;
@@ -67,6 +72,16 @@ namespace CharacterSelectPlugin.Managers
 
             try
             {
+                // Extended list also carries each design's folder path.
+                glamourerGetDesignsExtendedIpc = Plugin.PluginInterface.GetIpcSubscriber<Dictionary<Guid, (string, string, uint, bool)>>("Glamourer.GetDesignListExtended");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Debug($"[IntegrationListProvider] Glamourer extended IPC not available: {ex.Message}");
+            }
+
+            try
+            {
                 customizePlusGetProfileListIpc = Plugin.PluginInterface.GetIpcSubscriber<IList<(Guid, string, string, IList<(string, ushort, byte, ushort)>, int, bool)>>("CustomizePlus.Profile.GetList");
             }
             catch (Exception ex)
@@ -95,9 +110,35 @@ namespace CharacterSelectPlugin.Managers
                 Plugin.Log.Debug($"[IntegrationListProvider] Honorific IPC not available: {ex.Message}");
             }
 
+            // old + current event names
+            foreach (var label in new[] { "Glamourer.StateChanged", "Glamourer.StateChanged.V2", "Penumbra.StateChanged.V2" })
+            {
+                try
+                {
+                    var sub = Plugin.PluginInterface.GetIpcSubscriber<nint, object?>(label);
+                    sub.Subscribe(OnGlamourerStateChanged);
+                    glamourerStateChangedIpcs.Add(sub);
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Debug($"[IntegrationListProvider] {label} IPC not available: {ex.Message}");
+                }
+            }
         }
 
-        /// <summary>Gets available Penumbra collections.</summary>
+        private void OnGlamourerStateChanged(nint address)
+        {
+            try
+            {
+                var local = Plugin.ObjectTable.LocalPlayer;
+                if (local != null && local.Address == address)
+                    activeGlamourerDirty = true;
+            }
+            catch
+            {
+            }
+        }
+
         public IReadOnlyList<string> GetPenumbraCollections(bool forceRefresh = false)
         {
             if (!forceRefresh && DateTime.Now - lastPenumbraRefresh < CacheDuration && cachedPenumbraCollections.Count > 0)
@@ -151,7 +192,68 @@ namespace CharacterSelectPlugin.Managers
             return cachedGlamourerDesigns;
         }
 
-        /// <summary>Gets available Customize+ profiles.</summary>
+        // Designs with their folder path, falling back to a flat list when the
+        // extended IPC is unavailable
+        public IReadOnlyList<GlamourerDesignEntry> GetGlamourerDesignsExtended(bool forceRefresh = false)
+        {
+            if (!forceRefresh && DateTime.Now - lastGlamourerExtendedRefresh < CacheDuration && cachedGlamourerDesignsExtended.Count > 0)
+            {
+                return cachedGlamourerDesignsExtended;
+            }
+
+            try
+            {
+                var designs = glamourerGetDesignsExtendedIpc?.InvokeFunc();
+                if (designs != null)
+                {
+                    var entries = new List<GlamourerDesignEntry>(designs.Count);
+                    foreach (var kvp in designs)
+                    {
+                        // Item1 = display name, Item2 = full path (folder chain + design name as the leaf).
+                        var fullPath = kvp.Value.Item2 ?? "";
+                        var name = kvp.Value.Item1 ?? "";
+                        var slash = fullPath.LastIndexOf('/');
+                        if (string.IsNullOrEmpty(name))
+                            name = slash >= 0 ? fullPath.Substring(slash + 1) : fullPath;
+                        entries.Add(new GlamourerDesignEntry
+                        {
+                            Id = kvp.Key,
+                            Name = name,
+                            FolderPath = slash > 0 ? fullPath.Substring(0, slash) : "",
+                        });
+                    }
+                    cachedGlamourerDesignsExtended = entries
+                        .OrderBy(e => e.FolderPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    lastGlamourerExtendedRefresh = DateTime.Now;
+                    return cachedGlamourerDesignsExtended;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.Debug($"[IntegrationListProvider] Failed to get extended Glamourer designs: {ex.Message}");
+            }
+
+            // Flat entries from the plain name list, so import still works without folders
+            if (cachedGlamourerDesignsExtended.Count == 0)
+            {
+                cachedGlamourerDesignsExtended = GetGlamourerDesigns(forceRefresh)
+                    .Select(n => new GlamourerDesignEntry { Id = Guid.Empty, Name = n, FolderPath = "" })
+                    .ToList();
+            }
+            return cachedGlamourerDesignsExtended;
+        }
+
+        public IReadOnlyList<(string Folder, List<GlamourerDesignEntry> Designs)> GetGlamourerDesignsGrouped(bool forceRefresh = false)
+        {
+            return GetGlamourerDesignsExtended(forceRefresh)
+                .GroupBy(e => e.FolderPath)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(g => (g.Key, g.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToList()))
+                .ToList();
+        }
+
         public IReadOnlyList<string> GetCustomizePlusProfiles(bool forceRefresh = false)
         {
             if (!forceRefresh && DateTime.Now - lastCustomizePlusRefresh < CacheDuration && cachedCustomizePlusProfiles.Count > 0)
@@ -275,7 +377,41 @@ namespace CharacterSelectPlugin.Managers
             return null;
         }
 
-        /// <summary>Gets the currently active Customize+ profile name for the local player.</summary>
+        // Active Glamourer design for the local player, cached
+        private string? cachedActiveGlamourerDesign;
+        private DateTime lastActiveGlamourerRefresh = DateTime.MinValue;
+        private bool activeGlamourerRefreshRunning;
+        private bool activeGlamourerDirty;
+
+        public string? GetCurrentGlamourerDesign()
+        {
+            double age = (DateTime.Now - lastActiveGlamourerRefresh).TotalSeconds;
+            if ((age > 10 || (activeGlamourerDirty && age > 1)) && !activeGlamourerRefreshRunning)
+            {
+                activeGlamourerDirty = false;
+                activeGlamourerRefreshRunning = true;
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        var candidates = await GlamourerDesignMatcher.FindApplied();
+                        cachedActiveGlamourerDesign = candidates.FirstOrDefault(c => c.Score >= 0.999f).Name;
+                    }
+                    catch
+                    {
+                        cachedActiveGlamourerDesign = null;
+                    }
+                    finally
+                    {
+                        lastActiveGlamourerRefresh = DateTime.Now;
+                        activeGlamourerRefreshRunning = false;
+                    }
+                });
+            }
+            return cachedActiveGlamourerDesign;
+        }
+
+        // Active Customize+ profile name for the local player
         public string? GetCurrentCustomizePlusProfile()
         {
             try
@@ -328,6 +464,7 @@ namespace CharacterSelectPlugin.Managers
         {
             GetPenumbraCollections(true);
             GetGlamourerDesigns(true);
+            GetGlamourerDesignsExtended(true);
             GetCustomizePlusProfiles(true);
             GetMoodlesPresets(true);
             GetHonorificTitles(true);
@@ -338,12 +475,14 @@ namespace CharacterSelectPlugin.Managers
         {
             cachedPenumbraCollections.Clear();
             cachedGlamourerDesigns.Clear();
+            cachedGlamourerDesignsExtended.Clear();
             cachedCustomizePlusProfiles.Clear();
             cachedMoodlesPresets.Clear();
             cachedHonorificTitles.Clear();
 
             lastPenumbraRefresh = DateTime.MinValue;
             lastGlamourerRefresh = DateTime.MinValue;
+            lastGlamourerExtendedRefresh = DateTime.MinValue;
             lastCustomizePlusRefresh = DateTime.MinValue;
             lastMoodlesRefresh = DateTime.MinValue;
             lastHonorificRefresh = DateTime.MinValue;
@@ -351,7 +490,17 @@ namespace CharacterSelectPlugin.Managers
 
         public void Dispose()
         {
+            foreach (var sub in glamourerStateChangedIpcs)
+                sub.Unsubscribe(OnGlamourerStateChanged);
             ClearCaches();
         }
+    }
+
+    // A Glamourer design plus the folder it lives in
+    public sealed class GlamourerDesignEntry
+    {
+        public Guid Id;
+        public string Name = "";
+        public string FolderPath = ""; // parent folder, empty for root-level designs
     }
 }

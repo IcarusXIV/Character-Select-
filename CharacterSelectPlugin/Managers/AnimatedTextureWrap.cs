@@ -14,12 +14,10 @@ using System.Threading.Tasks;
 
 namespace CharacterSelectPlugin.Managers
 {
-    /// <summary>Animated texture wrap for GIF / WebP images.
-    /// Frames advance only while IsHovered is true; un-hovering resets to frame 0
-    /// so the next hover replays the animation from the start.</summary>
+    // GIF / WebP wrap; frames advance only while hovered, un-hover resets to 0
     public sealed class AnimatedTextureWrap : IDalamudTextureWrap
     {
-        private readonly Image image;
+        private readonly Image<Rgba32> image;
         private readonly IDalamudTextureWrap empty;
         private readonly IDalamudTextureWrap?[] frames;
         private readonly int[] frameDelaysMs;
@@ -31,6 +29,9 @@ namespace CharacterSelectPlugin.Managers
 
         // Renderer sets this each frame.  True = advance; false = pause + reset.
         public bool IsHovered { get; set; }
+
+        // False until the first frame decodes
+        public bool IsReady => frames.Length > 0 && frames[0] != null;
 
         public int Width { get; }
         public int Height { get; }
@@ -69,8 +70,7 @@ namespace CharacterSelectPlugin.Managers
 
         public AnimatedTextureWrap(ITextureProvider textureProvider, string filePath)
         {
-            // Synchronous load: typical character GIFs are a few MB; this is fast.
-            image = Image.Load(filePath);
+            image = Image.Load<Rgba32>(filePath);
             Width = image.Width;
             Height = image.Height;
             totalFrames = Math.Max(1, image.Frames.Count);
@@ -82,7 +82,6 @@ namespace CharacterSelectPlugin.Managers
 
             ResolveFrameDelays(filePath);
 
-            // Decode all frames on a background task so the first hover doesn't hitch.
             Task.Run(() => DecodeFramesAsync(textureProvider, cts.Token));
         }
 
@@ -122,11 +121,7 @@ namespace CharacterSelectPlugin.Managers
                 if (token.IsCancellationRequested) return;
                 try
                 {
-                    using var frameImage = new Image<Rgba32>(Width, Height);
-                    frameImage.Frames.AddFrame(image.Frames[i]);
-                    frameImage.Frames.RemoveFrame(0);
-
-                    frameImage.CopyPixelDataTo(pixelBuffer);
+                    image.Frames[i].CopyPixelDataTo(pixelBuffer);
 
                     if (token.IsCancellationRequested) return;
 
@@ -148,6 +143,14 @@ namespace CharacterSelectPlugin.Managers
                     Plugin.Log.Warning($"[AnimatedTextureWrap] Frame {i} decode failed: {ex.Message}");
                 }
             }
+
+            int failed = 0;
+            for (int i = 0; i < totalFrames; i++)
+                if (frames[i] == null) failed++;
+            if (failed > 0)
+                Plugin.Log.Warning($"[AnimatedTextureWrap] {failed}/{totalFrames} frames failed to decode");
+            else
+                Plugin.Log.Information($"[AnimatedTextureWrap] Decoded {totalFrames} frames ({Width}x{Height})");
         }
 
         public void Dispose()

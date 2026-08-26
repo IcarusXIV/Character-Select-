@@ -472,9 +472,9 @@ namespace CharacterSelectPlugin
                 // Use the correct SetCollection API signature
                 // Only set "Current" to update the Penumbra UI display (collection assignment already works)
                 var setCollectionIpc = pluginInterface.GetIpcSubscriber<byte, Guid?, bool, bool, (int, (Guid Id, string Name)?)>("Penumbra.SetCollection");
-                
+
                 log.Debug($"Setting Penumbra UI current collection - Name: {collectionName}, GUID: {targetCollection.Key}");
-                
+
                 // Set the current/UI collection for display only
                 var (resultInt, oldCollection) = setCollectionIpc.InvokeFunc(
                     (byte)ApiCollectionType.Current,  // Set as current collection (controls UI display only)
@@ -635,10 +635,25 @@ namespace CharacterSelectPlugin
                 return GetCurrentCollectionFallback();
             }
         }
-        
-        /// <summary>
-        /// Fallback collection detection method
-        /// </summary>
+
+        // Explicit individual assignment id for the player, null when none is set
+        public Guid? GetPlayerIndividualCollectionId()
+        {
+            if (!IsPenumbraAvailable)
+                return null;
+
+            try
+            {
+                var ipc = pluginInterface.GetIpcSubscriber<int, (bool, bool, (Guid, string))>("Penumbra.GetCollectionForObject.V5");
+                var (objectValid, individualSet, (id, _)) = ipc.InvokeFunc(0);
+                return objectValid && individualSet ? id : (Guid?)null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private (bool success, Guid collectionId, string collectionName) GetCurrentCollectionFallback()
         {
             try
@@ -789,14 +804,14 @@ namespace CharacterSelectPlugin
         {
             if (!IsPenumbraAvailable)
                 return Array.Empty<(string, string)>();
-            
+
             try
             {
                 // Get the function first
                 var ipcFunc = pluginInterface.GetIpcSubscriber<Func<string, (string, string)[]>>(
                     "Penumbra.CheckCurrentChangedItemFunc");
                 var checkFunc = ipcFunc.InvokeFunc();
-                
+
                 // Use the function to check the item
                 return checkFunc(changedItem);
             }
@@ -833,7 +848,7 @@ namespace CharacterSelectPlugin
         {
             // Method removed to reduce log spam
         }
-        
+
         /// <summary>
         /// Log the structure of a resource tree for debugging
         /// </summary>
@@ -959,7 +974,7 @@ namespace CharacterSelectPlugin
         {
             if (!IsPenumbraAvailable)
                 return new Dictionary<string, string>();
-            
+
             try
             {
                 // Try to get resolved paths which should show what mods are actually affecting items
@@ -1068,9 +1083,9 @@ namespace CharacterSelectPlugin
                     var gameObjectTreesIpc = pluginInterface.GetIpcSubscriber<bool, ushort[], Dictionary<ushort, object>>("Penumbra.GetGameObjectResourceTrees.V5");
                     // Get resource trees for all currently loaded game objects (empty array means all)
                     var allResourceTrees = gameObjectTreesIpc.InvokeFunc(true, new ushort[0]);
-                    
+
                     log.Information($"[CRITICAL] GetGameObjectResourceTrees found {allResourceTrees.Count} objects");
-                    
+
                     // Extract mod names from all loaded resource trees
                     foreach (var (objectId, treeObj) in allResourceTrees)
                     {
@@ -1115,7 +1130,7 @@ namespace CharacterSelectPlugin
         }
         
         /// <summary>
-        /// Extract mod name from a file path (e.g., "F:\XIVMODS2\ModName\..." -> "ModName")
+        /// Extract mod name from a file path (e.g., "D:\Mods\ModName\..." -> "ModName")
         /// </summary>
         private string? ExtractModNameFromPath(string filePath)
         {
@@ -1124,12 +1139,12 @@ namespace CharacterSelectPlugin
                 // Log some sample paths to understand the structure
                 
                 var parts = filePath.Split('\\', '/');
-                
+
                 // Look for common mod directory patterns
                 for (int i = 0; i < parts.Length - 1; i++)
                 {
                     var part = parts[i];
-                    
+
                     // Common mod directory names
                     if (part.Contains("XIVMODS", StringComparison.OrdinalIgnoreCase) ||
                         part.Contains("mods", StringComparison.OrdinalIgnoreCase) ||
@@ -1144,11 +1159,11 @@ namespace CharacterSelectPlugin
                         }
                     }
                 }
-                
+
                 // Fallback: if it's a rooted path, try to find the mod name differently
                 if (Path.IsPathRooted(filePath))
                 {
-                    // For paths like F:\XIVMODS2\ModName\..., take the folder after the drive
+                    // For paths like D:\Mods\ModName\..., take the folder after the drive
                     if (parts.Length >= 3)
                     {
                         var modName = parts[2]; // Skip drive and first folder
@@ -1198,7 +1213,7 @@ namespace CharacterSelectPlugin
         private HashSet<string> ExtractModNamesFromResourceTreeJson(JsonElement resourceTree)
         {
             var modNames = new HashSet<string>();
-            
+
             try
             {
                 // Look for Nodes array
@@ -1207,7 +1222,7 @@ namespace CharacterSelectPlugin
                 {
                     return modNames;
                 }
-                
+
                 foreach (var node in nodesElement.EnumerateArray())
                 {
                     ExtractModNamesFromNode(node, modNames);
@@ -1266,11 +1281,41 @@ namespace CharacterSelectPlugin
             }
         }
         
-        /// <summary>Extracts the mod name from a Penumbra On-Screen tab path (e.g. "[M] Shall we Dance v1.0 | top | medium").</summary>
+        private string? cachedPenumbraModRoot;
+        private bool penumbraModRootResolved;
+
+        // Penumbra's mod root, e.g. C:\Penumbra
+        private string? GetPenumbraModRoot()
+        {
+            if (!penumbraModRootResolved)
+            {
+                penumbraModRootResolved = true;
+                var root = GetModDirectory();
+                cachedPenumbraModRoot = string.IsNullOrWhiteSpace(root) ? null : root.Replace('/', '\\').TrimEnd('\\');
+            }
+            return cachedPenumbraModRoot;
+        }
+
+        // Mod folder name from a resolved file path under the mod root
+        private string? ExtractModDirFromPenumbraRoot(string actualPath)
+        {
+            var root = GetPenumbraModRoot();
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(actualPath)) return null;
+
+            var normPath = actualPath.Replace('/', '\\');
+            if (!normPath.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) return null;
+
+            var remainder = normPath.Substring(root.Length + 1);
+            var sep = remainder.IndexOf('\\');
+            if (sep > 0) return remainder.Substring(0, sep);
+            return remainder.Length > 0 ? remainder : null;
+        }
+
+        // Handles On-Screen tab paths like "[M] Shall we Dance v1.0 | top | medium"
         private string? ExtractModNameFromActualPath(string actualPath)
         {
             if (string.IsNullOrEmpty(actualPath)) return null;
-            
+
             try
             {
                 // Method 1: Check for bracketed mod names like "[M] Shall we Dance v1.0"
@@ -1280,7 +1325,7 @@ namespace CharacterSelectPlugin
                     if (closeBracket > 0)
                     {
                         var modPrefix = actualPath.Substring(0, closeBracket + 1);
-                        
+
                         // Look for the mod name after the bracket
                         var afterBracket = actualPath.Substring(closeBracket + 1).Trim();
                         if (afterBracket.Contains(" | "))
@@ -1300,24 +1345,13 @@ namespace CharacterSelectPlugin
                     }
                 }
                 
-                // Method 2: Check for file system paths (fallback to directory extraction)
-                if (actualPath.Contains("\\") && actualPath.Contains("XIVMODS", StringComparison.OrdinalIgnoreCase))
+                // Fall back to resolving against Penumbra's mod root
+                var rootRelativeMod = ExtractModDirFromPenumbraRoot(actualPath);
+                if (!string.IsNullOrEmpty(rootRelativeMod))
                 {
-                    var parts = actualPath.Split('\\', '/');
-                    
-                    // Look for XIVMODS directory and take the next part as mod name
-                    for (int i = 0; i < parts.Length - 1; i++)
-                    {
-                        if (parts[i].Contains("XIVMODS", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (i + 1 < parts.Length)
-                            {
-                                return parts[i + 1];
-                            }
-                        }
-                    }
+                    return rootRelativeMod;
                 }
-                
+
                 log.Debug($"Could not extract mod name from path: {actualPath}");
                 return null;
             }
@@ -1348,7 +1382,7 @@ namespace CharacterSelectPlugin
         private HashSet<string> ExtractModNamesFromResourceTree(JsonElement resourceTree)
         {
             var modNames = new HashSet<string>();
-            
+
             try
             {
                 // Look for Nodes array
@@ -1378,7 +1412,7 @@ namespace CharacterSelectPlugin
         public HashSet<string> GetCurrentlyAffectingMods(Guid? overrideCollectionId = null)
         {
             var affectingMods = new HashSet<string>();
-            
+
             try
             {
                 // Getting currently affecting mods using On-Screen tab method
@@ -1408,7 +1442,7 @@ namespace CharacterSelectPlugin
                 log.Information("[GetCurrentlyAffectingMods] Trying Method 1: Resource tree parsing");
                 var resourceTreeMods = GetOnScreenTabMods();
                 log.Information($"[GetCurrentlyAffectingMods] Resource tree returned {resourceTreeMods.Count} mod names");
-                
+
                 if (resourceTreeMods.Any())
                 {
                     // Resource tree parsing found mods
@@ -1416,7 +1450,7 @@ namespace CharacterSelectPlugin
                     // Now we need to map the extracted mod names to actual mod directory names
                     var modList = GetModList();
                     var modSettings = GetAllModSettingsRobust(collectionId);
-                    
+
                     if (modList.Any() && modSettings != null)
                     {
                         // Debug: Log some sample mod list entries for comparison
@@ -1433,11 +1467,11 @@ namespace CharacterSelectPlugin
                             else
                             {
                                 log.Warning($"❌ Could not find mod directory for extracted name: '{extractedModName}'");
-                                
+
                                 // Debug: Show what the matching function tried
                                 log.Information($"   Cleaned extracted name: '{CleanModName(extractedModName)}'");
                                 log.Information($"   Checking against {modList.Count} mod list entries...");
-                                
+
                                 // Show some partial matches for debugging
                                 var enabledMods = modSettings.Where(kvp => kvp.Value.Item1).Select(kvp => kvp.Key).ToHashSet();
                                 var cleanedExtracted = CleanModName(extractedModName).ToLowerInvariant();
@@ -1494,7 +1528,7 @@ namespace CharacterSelectPlugin
                     foreach (var (objectId, pathMappings) in resourcePaths)
                     {
                         if (objectId != 0) continue; // Only player character
-                        
+
                         foreach (var (actualPath, gamePaths) in pathMappings)
                         {
                             // Only interested in paths that differ from game paths (indicating mod override)
@@ -1595,18 +1629,18 @@ namespace CharacterSelectPlugin
         private string? FindModDirectoryByName(string extractedModName, Dictionary<string, string> modList, Dictionary<string, (bool, int, Dictionary<string, List<string>>, bool, bool)> modSettings, Guid collectionId)
         {
             if (string.IsNullOrEmpty(extractedModName)) return null;
-            
+
             try
             {
                 // Only consider enabled mods in the current collection
                 var enabledMods = modSettings.Where(kvp => kvp.Value.Item1).Select(kvp => kvp.Key).ToHashSet();
-                
+
                 // Strategy 1: Exact directory name match (for cases where the extracted name is the directory)
                 if (modList.ContainsKey(extractedModName) && enabledMods.Contains(extractedModName))
                 {
                     return extractedModName;
                 }
-                
+
                 // Strategy 2: Clean the extracted mod name and try partial matching
                 var cleanedExtracted = CleanModName(extractedModName);
                 
@@ -1672,9 +1706,9 @@ namespace CharacterSelectPlugin
         private string CleanModName(string modName)
         {
             if (string.IsNullOrEmpty(modName)) return "";
-            
+
             var cleaned = modName;
-            
+
             // Remove common prefixes
             if (cleaned.StartsWith("[M] ")) cleaned = cleaned.Substring(4);
             if (cleaned.StartsWith("[")) 
@@ -1696,7 +1730,7 @@ namespace CharacterSelectPlugin
         private List<string> ExtractKeyWords(string text)
         {
             if (string.IsNullOrEmpty(text)) return new List<string>();
-            
+
             // Split on common delimiters and filter out short/common words
             var words = text.Split(new char[] { ' ', '-', '_', '+', '(', ')', '[', ']', '|' }, StringSplitOptions.RemoveEmptyEntries)
                            .Where(w => w.Length >= 3) // Skip very short words
@@ -1766,7 +1800,7 @@ namespace CharacterSelectPlugin
                     }
                     
                     // Recursively check children but keep it simple
-                    if (node.TryGetProperty("Children", out var childrenElement) && 
+                    if (node.TryGetProperty("Children", out var childrenElement) &&
                         childrenElement.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var child in childrenElement.EnumerateArray())
@@ -1795,7 +1829,7 @@ namespace CharacterSelectPlugin
         private HashSet<string> ExtractModDirectoriesFromResourceTree(JsonElement resourceTree)
         {
             var modDirectories = new HashSet<string>();
-            
+
             // Get the Nodes array from the resource tree
             if (!resourceTree.TryGetProperty("Nodes", out var nodesElement))
             {
@@ -1833,7 +1867,7 @@ namespace CharacterSelectPlugin
         {
             // Log properties for first few nodes only
             var properties = node.EnumerateObject().Select(p => p.Name).ToList();
-            
+
             // Get both ActualPath and GamePath to detect modifications
             var hasActualPath = node.TryGetProperty("ActualPath", out var actualPathElement);
             var hasGamePath = node.TryGetProperty("GamePath", out var gamePathElement);
@@ -1844,7 +1878,7 @@ namespace CharacterSelectPlugin
                 var gamePath = gamePathElement.GetString();
                 
                 // If ActualPath differs from GamePath, this file is modded
-                if (!string.IsNullOrEmpty(actualPath) && !string.IsNullOrEmpty(gamePath) && 
+                if (!string.IsNullOrEmpty(actualPath) && !string.IsNullOrEmpty(gamePath) &&
                     !actualPath.Equals(gamePath, StringComparison.OrdinalIgnoreCase))
                 {
                     // Extract mod directory from the actual path
@@ -1868,7 +1902,7 @@ namespace CharacterSelectPlugin
             {
                 var actualPath = actualPathElement.GetString();
                 log.Information($"Node with only ActualPath: {actualPath}");
-                
+
                 // Try to extract mod directory anyway
                 if (!string.IsNullOrEmpty(actualPath))
                 {
@@ -1904,8 +1938,8 @@ namespace CharacterSelectPlugin
             {
                 if (string.IsNullOrEmpty(actualPath))
                     return null;
-                
-                
+
+
                 // Method 1: Standard mod path structure
                 // "C:\path\to\penumbra\mods\ModDirectoryName\subpath\file.ext"
                 if (actualPath.Contains("mods", StringComparison.OrdinalIgnoreCase))
@@ -1933,7 +1967,7 @@ namespace CharacterSelectPlugin
                 if (actualPath.Contains("\\") || actualPath.Contains("/"))
                 {
                     var pathParts = actualPath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-                    
+
                     // Look for common mod directory patterns
                     // If we have a path with multiple parts, the first or second part might be the mod name
                     if (pathParts.Length >= 2)
@@ -1966,7 +2000,7 @@ namespace CharacterSelectPlugin
                         {
                             startIndex = 1;
                         }
-                        
+
                         // Find first directory that looks like a mod name
                         for (int i = startIndex; i < pathParts.Length; i++)
                         {
@@ -1988,7 +2022,7 @@ namespace CharacterSelectPlugin
                             {
                                 break; // We've reached game content, no mod found
                             }
-                            
+
                             // This looks like a mod directory
                             if (!part.Contains("."))
                             {
@@ -2069,7 +2103,7 @@ namespace CharacterSelectPlugin
         {
             if (!IsPenumbraAvailable)
                 return (string.Empty, new List<string>(), new List<string>(), string.Empty, string.Empty, string.Empty);
-            
+
             try
             {
                 // This would need a new Penumbra API method to get mod metadata
@@ -2156,17 +2190,17 @@ namespace CharacterSelectPlugin
         public List<(string name, string iconType, string resourceType, string gamePath)> GetChangedItemsWithDetails(string modDirectory, string modName)
         {
             var items = new List<(string name, string iconType, string resourceType, string gamePath)>();
-            
+
             if (!IsPenumbraAvailable)
                 return items;
-            
+
             try
             {
                 // First get the basic changed items
                 var changedItems = GetModChangedItems(modDirectory, modName);
                 if (changedItems == null || !changedItems.Any())
                     return items;
-                
+
                 // For each changed item, try to get more detailed information
                 foreach (var (path, itemData) in changedItems)
                 {
@@ -2185,7 +2219,7 @@ namespace CharacterSelectPlugin
                             name = dataStr;
                         }
                     }
-                    
+
                     // Analyze the path to determine type
                     iconType = AnalyzePathForIconType(path);
                     resourceType = AnalyzePathForResourceType(path);
@@ -2209,7 +2243,7 @@ namespace CharacterSelectPlugin
         private string AnalyzePathForIconType(string path)
         {
             var pathLower = path.ToLowerInvariant();
-            
+
             // Equipment patterns from Penumbra
             if (pathLower.Contains("chara/equipment/"))
             {
@@ -2452,12 +2486,12 @@ namespace CharacterSelectPlugin
         public ModConflictAnalysisResult AnalyzeModForDependenciesAndConflicts(string modDirectory, string modName, CharacterSelectPlugin.Windows.ModType modType, Dictionary<string, bool> selectedMods)
         {
             var result = new ModConflictAnalysisResult();
-            
+
             // Get changed items for this mod
             var changedItems = GetModChangedItems(modDirectory, modName);
             if (!changedItems.Any())
                 return result;
-            
+
             // Check for dependencies (only for Gear mods)
             if (modType == CharacterSelectPlugin.Windows.ModType.Gear)
             {
@@ -2481,20 +2515,20 @@ namespace CharacterSelectPlugin
             
             // Check for conflicts with other selected mods
             var conflictingMods = new List<string>();
-            
+
             foreach (var selectedMod in selectedMods.Where(kvp => kvp.Value && kvp.Key != modDirectory))
             {
                 var otherModChangedItems = GetModChangedItems(selectedMod.Key, "");
-                
+
                 // Find overlapping paths
                 var overlappingPaths = changedItems.Keys.Intersect(otherModChangedItems.Keys).ToList();
-                
+
                 // For hair mods, filter out skin texture conflicts
                 if (modType == CharacterSelectPlugin.Windows.ModType.Hair)
                 {
                     // Check if the other mod is also a hair mod by examining its changed items
                     var isOtherModHair = IsHairMod(otherModChangedItems.Keys);
-                    
+
                     if (isOtherModHair)
                     {
                         // Both are hair mods - filter out skin texture conflicts
@@ -2526,12 +2560,12 @@ namespace CharacterSelectPlugin
             foreach (var item in changedItems)
             {
                 // Check for hair-related customization items
-                if (item.Contains("Hair", StringComparison.OrdinalIgnoreCase) && 
+                if (item.Contains("Hair", StringComparison.OrdinalIgnoreCase) &&
                     item.Contains("Customization:", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
-                
+
                 // Check for hair file paths
                 if (item.Contains("/hair/", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2548,7 +2582,7 @@ namespace CharacterSelectPlugin
         private bool IsSkinTextureConflict(string path)
         {
             // Check for skin texture customization items
-            if (path.Contains("Customization:", StringComparison.OrdinalIgnoreCase) && 
+            if (path.Contains("Customization:", StringComparison.OrdinalIgnoreCase) &&
                 path.Contains("Skin Textures", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
@@ -2556,7 +2590,7 @@ namespace CharacterSelectPlugin
             
             // Could add more specific skin texture patterns here if needed
             // For example: face textures, body textures that are commonly shared by hair mods
-            
+
             return false;
         }
         
@@ -2575,7 +2609,7 @@ namespace CharacterSelectPlugin
             {
                 log.Warning($"Error during event subscription disposal: {ex.Message}");
             }
-            
+
             // Dispose of IPC subscribers if needed
             penumbraApiVersion = null;
             modAddedSubscriber = null;
@@ -2588,7 +2622,7 @@ namespace CharacterSelectPlugin
     /// <summary>
     /// Result of analyzing a mod for dependencies and conflicts
     /// </summary>
-
+    
     public class ModConflictAnalysisResult
     {
         public bool HasDependency { get; set; }

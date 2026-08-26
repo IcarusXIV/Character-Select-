@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -216,7 +216,7 @@ namespace CharacterSelectPlugin.Windows.Components
             if (plugin.Configuration.SelectedTheme == ThemeSelection.Custom)
             {
                 var customTheme = plugin.Configuration.CustomTheme;
-                if (!customTheme.UseNameplateColorForCardGlow &&
+                if (!customTheme.UseNameplateColorForCardGlow && !customTheme.AccentFollowsNameplate &&
                     customTheme.ColorOverrides.TryGetValue("custom.cardGlow", out var packedGlowColor) && packedGlowColor.HasValue)
                 {
                     var glowColor = CustomThemeDefinitions.UnpackColor(packedGlowColor.Value);
@@ -316,7 +316,7 @@ namespace CharacterSelectPlugin.Windows.Components
                         if (animWrap != null)
                         {
                             animWrap.IsHovered = isHovered;
-                            if (isHovered && animWrap.Width > 0 && animWrap.Height > 0)
+                            if (isHovered && animWrap.IsReady && animWrap.Width > 0 && animWrap.Height > 0)
                             {
                                 renderHandle = animWrap.Handle;
                                 originalWidth = animWrap.Width;
@@ -973,6 +973,11 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.SetWindowFontScale(iconScale);
                 ImGui.PushFont(UiBuilder.IconFont);
             }
+            bool deleteArmed = ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift;
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, deleteArmed
+                ? new Vector4(0.75f, 0.18f, 0.18f, 1f)
+                : new Vector4(0.45f, 0.14f, 0.14f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.85f, 0.22f, 0.22f, 1f));
             if (ImGui.Button(useIcons ? $"{deleteIcon}##{character.Name}" : $"Delete##{character.Name}", new Vector2(btnWidth, btnHeight)))
             {
                 if (ImGui.GetIO().KeyCtrl && ImGui.GetIO().KeyShift)
@@ -1002,6 +1007,7 @@ namespace CharacterSelectPlugin.Windows.Components
                 ImGui.PopFont();
                 ImGui.SetWindowFontScale(1.0f);
             }
+            ImGui.PopStyleColor(2);
             uiStyles.ApplyHoverSheenToLastItem($"charbtn_delete_{character.Name}");
 
             if (ImGui.IsItemHovered())
