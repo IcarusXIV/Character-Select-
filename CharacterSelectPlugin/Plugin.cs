@@ -53,6 +53,9 @@ namespace CharacterSelectPlugin
         {
             get
             {
+                if (!Framework.IsInFrameworkUpdateThread)
+                    return activeCharacter?.NameplateColor;
+
                 int frame = ImGui.GetFrameCount();
                 if (frame != activeNameplateFrame)
                 {
@@ -345,7 +348,11 @@ namespace CharacterSelectPlugin
         private string? lastAppliedCharacter = null;
         public float UIScaleMultiplier => Configuration.UIScaleMultiplier;
 
-        // Fonts are built async by Dalamud's FontAtlas
+        // Fonts are built async by Dalamud's FontAtlas; until they're built,
+        // IFontHandle.Push() is a no-op and text falls back to the default ImGui
+        // font which has totally different metrics. Drawing in that window
+        // produces the "load-time scaling snap" the user sees. Once cached, this
+        // is a single boolean check per frame and stays true for the session.
         private bool _fontsReady;
         // session-only classic fallback
         internal static bool FontFallbackThisSession = false;
@@ -372,6 +379,7 @@ namespace CharacterSelectPlugin
             && OswaldSemi14 is { Available: true }
             && OswaldMed11 is { Available: true }
             && OswaldMed13 is { Available: true }
+            // the achievements page draws with these too, and renders unstyled glyphs without them
             && OswaldBody10 is { Available: true }
             && OswaldBody13 is { Available: true }
             && OswaldMed9 is { Available: true }
@@ -1411,8 +1419,8 @@ namespace CharacterSelectPlugin
                 var seString = new SeStringBuilder()
                     .AddUiForeground("[CS+] ", 35)
                     .AddText("A new version is available: ")
-                    .AddUiForeground($"v{remoteVersion.ToString(3)}", 45)
-                    .AddText($" (current: v{localVersion.ToString(3)})")
+                    .AddUiForeground($"v{remoteVersion.ToString(4)}", 45)
+                    .AddText($" (current: v{localVersion.ToString(4)})")
                     .Build();
 
                 ChatGui.Print(new Dalamud.Game.Text.XivChatEntry
@@ -1537,9 +1545,6 @@ namespace CharacterSelectPlugin
 
         private void OnLogout(int type, int code)
         {
-            var name = lastKnownLocalPhysicalName;
-            if (!string.IsNullOrWhiteSpace(name))
-                _ = ClearNameSyncAsync(name);
         }
 
         private void OnLogin()
